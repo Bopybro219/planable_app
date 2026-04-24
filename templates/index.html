@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block content %} <section class="hero">
+  <h1>Accessibility info before you arrive.</h1>
+  <p>Search toilets, step-free access, baby changing, stairs, comments, and last verified data.</p>
+  <form class="searchbox" action="{{ url_for('search') }}">
+    <input name="q" placeholder="Venue, postcode, street" value="{{q}}">
+    <input name="town" placeholder="Town" value="{{town}}">
+    <button>Search</button>
+  </form>
+  <p class="muted">Search results require login while the database is being built and protected.</p>
+</section>{% endblock %}

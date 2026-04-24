@@ -1,0 +1,16 @@
+{% extends 'base.html' %}{% block content %} <h1>Search places</h1>
+<form class="searchbox" action="{{ url_for('search') }}">
+  <input name="q" value="{{q}}" placeholder="Venue/postcode">
+  <input name="town" value="{{town}}" placeholder="Town">
+  <select name="accessible">
+    <option value="">Any accessible toilet</option>
+    <option value="yes" {% if accessible=='yes' %}selected{% endif %}>Accessible toilet yes</option>
+  </select>
+  <button>Search</button>
+</form>
+<div class="grid">{% for p in results %} <a class="card" href="{{ url_for('place_detail', slug=p.slug) }}">
+    <h2>{{p.name}}</h2>
+    <p>{{p.address1}} {{p.town}} {{p.postcode}}</p>
+    <p>
+    </p>{% if p.accessibility and p.accessibility.last_verified_at %} <p class="ok">Last verified: {{p.accessibility.last_verified_at.strftime('%d %b %Y')}}</p>{% else %} <p class="warn">Not verified yet</p>{% endif %}
+  </a>{% endfor %} </div>{% if not results %} <p>No results yet.</p>{% endif %}{% endblock %}

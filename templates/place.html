@@ -1,0 +1,34 @@
+{% extends 'base.html' %}{% block content %} <div class="card big">
+  <h1>{{place.name}}</h1>
+  <p>{{place.address1}}, {{place.town}}, {{place.postcode}}</p>
+  <div class="pill">Confidence: {{profile.confidence_score}}/100</div>{% if profile.last_verified_at %} <div class="pill ok">Last verified: {{profile.last_verified_at.strftime('%d %b %Y %H:%M')}}</div>{% else %} <div class="pill warn">Not verified yet</div>{% endif %} <h2>Accessibility</h2>
+  <dl>
+    <dt>Toilets</dt>
+    <dd>{{profile.toilets_available}} — {{profile.toilet_location or 'location unknown'}}</dd>
+    <dt>Accessible toilet</dt>
+    <dd>{{profile.accessible_toilet}}</dd>
+    <dt>Baby changing</dt>
+    <dd>{{profile.baby_changing}} — {{profile.baby_changing_location or 'location unknown'}}</dd>
+    <dt>Step-free entrance</dt>
+    <dd>{{profile.step_free_entrance}}</dd>
+    <dt>Stairs inside</dt>
+    <dd>{{profile.stairs_inside}}</dd>
+    <dt>Lift</dt>
+    <dd>{{profile.lift_available}}</dd>
+    <dt>Disabled parking</dt>
+    <dd>{{profile.disabled_parking}}</dd>
+    <dt>Comments</dt>
+    <dd>{{profile.public_comments or 'No public notes yet.'}}</dd>
+    <dt>Sensory notes</dt>
+    <dd>{{profile.sensory_notes or 'No sensory notes yet.'}}</dd>
+  </dl>
+</div>
+<div class="card">
+  <h2>Community comments</h2>
+  <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}">
+    <textarea name="body" placeholder="Add a useful correction or note"></textarea>
+    <button>Add comment</button>
+  </form>{% for c in comments %} <p>
+    <b>{{c.user_email}}</b>: {{c.body}}
+  </p>{% endfor %}
+</div>{% endblock %}

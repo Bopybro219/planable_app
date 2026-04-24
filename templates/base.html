@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>PlanAble</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <nav class="nav"><a class="brand" href="/"> <img src="{{ url_for('static', filename='logo.png') }}" alt="PlanAble logo" class="logo"></span></a>
+      <div>{% if current_user %}<a href="{{ url_for('search') }}">Search</a>{% if is_admin %}<a href="{{ url_for('dashboard') }}">Staff</a>{% endif %}<a href="{{ url_for('logout') }}">Logout</a>{% else %}<a class="btn" href="{{ url_for('login') }}">Google login</a>{% endif %}</div>
+    </nav>
+    <main class="wrap">{% for cat,msg in get_flashed_messages(with_categories=true) %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}{% block content %}{% endblock %}</main>
+  </body>
+</html>
