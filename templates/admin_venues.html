@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+{% block title %}Venue Workspace | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Venue workspace</span>
+    <h1>Search and review venue records</h1>
+    <p class="page-subtitle">Filter by operational status, verification health, confidence, and toilet-distance coverage without leaving the staff workspace.</p>
+  </div>
+</section>
+
+<section class="surface-panel table-shell">
+  <div class="table-header">
+    <div>
+      <span class="eyebrow">Filters</span>
+      <h2>Find the venues staff need next</h2>
+    </div>
+    <a class="btn-secondary-planira" href="{{ url_for('admin_venues') }}">Clear filters</a>
+  </div>
+
+  <form method="get" class="form-shell">
+    <div class="form-grid">
+      <div class="field-group">
+        <label for="venue-q">Search name or address</label>
+        <input id="venue-q" name="q" value="{{ filters.q }}" placeholder="Venue name or address">
+      </div>
+      <div class="field-group">
+        <label for="venue-town">Town</label>
+        <input id="venue-town" name="town" value="{{ filters.town }}" placeholder="Town">
+      </div>
+      <div class="field-group">
+        <label for="venue-postcode">Postcode</label>
+        <input id="venue-postcode" name="postcode" value="{{ filters.postcode }}" placeholder="Postcode">
+      </div>
+      <div class="field-group">
+        <label for="venue-status">Status</label>
+        <select id="venue-status" name="status">
+          {% for option in ['all', 'needs_call', 'callback', 'calling', 'verified'] %}
+            <option value="{{ option }}" {% if filters.status == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="venue-profile">Profile</label>
+        <select id="venue-profile" name="profile">
+          {% for option in ['all', 'has_profile', 'missing_profile'] %}
+            <option value="{{ option }}" {% if filters.profile == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="venue-toilet-distance">Toilet distance</label>
+        <select id="venue-toilet-distance" name="toilet_distance">
+          {% for option in ['all', 'known', 'missing'] %}
+            <option value="{{ option }}" {% if filters.toilet_distance == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="venue-confidence">Confidence</label>
+        <select id="venue-confidence" name="confidence">
+          {% for option in ['all', 'low', 'medium', 'high', 'missing'] %}
+            <option value="{{ option }}" {% if filters.confidence == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="venue-verified">Verification</label>
+        <select id="venue-verified" name="verified">
+          {% for option in ['all', 'verified', 'never_verified', 'stale'] %}
+            <option value="{{ option }}" {% if filters.verified == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="venue-sort">Sort</label>
+        <select id="venue-sort" name="sort">
+          {% for option in ['priority', 'updated', 'name', 'confidence', 'last_verified'] %}
+            <option value="{{ option }}" {% if filters.sort == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="planira-button-primary">Apply filters</button>
+    </div>
+  </form>
+</section>
+
+<section class="surface-panel table-shell">
+  <div class="table-header">
+    <div>
+      <span class="eyebrow">Results</span>
+      <h2>{{ pagination.total }} venues matched</h2>
+      <p class="muted">Page {{ pagination.page }} of {{ pagination.pages or 1 }}.</p>
+    </div>
+  </div>
+
+  <div class="table-list">
+    {% for row in venue_rows %}
+      <article class="table-row">
+        <div>
+          <strong>{{ row.place.name }}</strong>
+          <p class="muted">{{ row.place.address1 or 'Address missing' }} · {{ row.place.town or 'Town missing' }}{% if row.place.postcode %} · {{ row.place.postcode }}{% endif %}</p>
+          <div class="tag-row">
+            <span class="planira-chip">{{ row.status_label }}</span>
+            {% if row.profile_missing %}
+              <span class="status-chip chip-warning">Profile missing</span>
+            {% endif %}
+          </div>
+        </div>
+        <div>
+          <strong>
+            {% if row.confidence_score is not none %}
+              Confidence {{ row.confidence_score }}
+            {% else %}
+              Confidence missing
+            {% endif %}
+          </strong>
+          <p class="muted">Last verified: {{ row.last_verified }}</p>
+        </div>
+        <div>
+          <span class="metric-pill">
+            {% if row.toilet_distance_from_bar_m is not none %}
+              {{ row.toilet_distance_from_bar_m }}m from bar
+            {% else %}
+              Distance missing
+            {% endif %}
+          </span>
+        </div>
+        <div class="row-actions">
+          <a class="btn btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Open worksheet</a>
+          <a class="btn btn-secondary btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
+        </div>
+      </article>
+    {% else %}
+      <article class="empty-state">
+        <span class="eyebrow">No matches</span>
+        <h2>No venues matched those filters.</h2>
+        <p class="muted">Try broadening the search, clearing a filter, or switching the sort order.</p>
+      </article>
+    {% endfor %}
+  </div>
+
+  {% if pagination.pages > 1 %}
+    <nav class="pagination-nav" aria-label="Venue result pages">
+      <div class="pagination-summary">
+        <strong>Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ ((pagination.page - 1) * pagination.per_page) + venue_rows|length }} of {{ pagination.total }} venues</strong>
+        <span class="muted">Filters stay in place while you move through the queue.</span>
+      </div>
+      <div class="pagination-links">
+        {% if pagination.has_prev %}
+          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=pagination.prev_num) }}">Previous</a>
+        {% endif %}
+        {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+          {% if page_number %}
+            <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=page_number) }}">{{ page_number }}</a>
+          {% else %}
+            <span class="page-gap">…</span>
+          {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=pagination.next_num) }}">Next</a>
+        {% endif %}
+      </div>
+    </nav>
+  {% endif %}
+</section>
+{% endblock %}

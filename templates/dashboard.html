@@ -1,1 +1,229 @@
-{% extends 'base.html' %}{% block content %}<h1>Caller worksheet</h1><div class="stats"><div>Total<br><b>{{stats.total}}</b></div><div>Needs call<br><b>{{stats.needs_call}}</b></div><div>Verified<br><b>{{stats.verified}}</b></div><div>Callback<br><b>{{stats.callback}}</b></div></div><p><a class="btn" href="{{ url_for('new_place') }}">Add place</a></p><div class="grid">{% for p in next_places %}<div class="card"><h2>{{p.name}}</h2><p>{{p.phone}}<br>{{p.address1}}, {{p.town}}</p><p>Priority: {{p.priority}} | {{p.status}}</p><a class="btn" href="{{ url_for('call_place', place_id=p.id) }}">Open worksheet</a></div>{% endfor %}</div><p class="muted">OBS widgets: /obs/current-call and /obs/progress</p>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Staff Dashboard | Planira{% endblock %}
+{% block content %}
+{% import '_planira_macros.html' as planira %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Staff dashboard</span>
+    <h1>Operations overview</h1>
+    <p class="page-subtitle">Monitor venue coverage, verification momentum, active users, and the moderation flow from a consistent admin workspace.</p>
+  </div>
+  <div class="page-head-actions">
+    {% for action in quick_actions %}
+      <a class="btn {% if loop.first %}{% else %}btn-secondary{% endif %}" href="{{ action.href }}">{{ action.label }}</a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="metric-grid wide-metrics">
+  <article class="metric-card">
+    <span>Total venues</span>
+    <strong>{{ stats.total }}</strong>
+    <p class="muted">All venues currently tracked in Planira.</p>
+  </article>
+  <article class="metric-card">
+    <span>Pending submissions</span>
+    <strong>{{ monetisation_stats.pending_comments }}</strong>
+    <p class="muted">Verification tasks waiting on staff follow-up.</p>
+  </article>
+  <article class="metric-card">
+    <span>Active users</span>
+    <strong>{{ user_stats.all_users }}</strong>
+    <p class="muted">Signed-in accounts available for growth and support.</p>
+  </article>
+  <article class="metric-card">
+    <span>Premium-ready</span>
+    <strong>{{ monetisation_stats.premium_ready }}</strong>
+    <p class="muted">High-confidence records ready for richer subscriber experiences.</p>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Recent activity</span>
+        <h2>What changed most recently</h2>
+      </div>
+    </div>
+    <div class="activity-feed">
+      {% for item in recent_activity %}
+        <div class="activity-item">
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.meta }}</span>
+          <p>{{ item.detail }}</p>
+        </div>
+      {% else %}
+        <div class="empty-inline">No recent team activity yet. New checks, reviews, and verification updates will appear here as soon as the next session starts moving.</div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Revenue readiness</span>
+        <h2>Product health signals</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>API-ready records</strong>
+        <span>{{ monetisation_stats.api_ready }} records have the shape needed for packaged lookup products.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Community candidates</strong>
+        <span>{{ monetisation_stats.community_candidates }} verified venues can support trusted community loops.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Mission queue</strong>
+        <span>{{ monetisation_stats.mission_queue }} venues are ready for the next call session.</span>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Recent searches</span>
+        <h2>Search activity this team can learn from</h2>
+      </div>
+    </div>
+    <div class="activity-feed">
+      {% for item in recent_search_activity %}
+        <div class="activity-item">
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.meta }}</span>
+          <p>{{ item.detail }}</p>
+        </div>
+      {% else %}
+        <div class="empty-inline">No recent search events yet.</div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Audit trail</span>
+        <h2>Recent moderation and data actions</h2>
+      </div>
+    </div>
+    <div class="activity-feed">
+      {% for item in recent_audit_entries %}
+        <div class="activity-item">
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.meta }}</span>
+          <p>{{ item.detail }}</p>
+        </div>
+      {% else %}
+        <div class="empty-inline">No audit entries yet.</div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="card-grid">
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Moderation shortcuts</span>
+        <h2>Actions staff need often</h2>
+      </div>
+    </div>
+    <div class="action-list">
+      <a class="action-card" href="{{ url_for('admin_moderation') }}">
+        <strong>Review submissions</strong>
+        <span>Approve, reject, or refine community updates before they shape the experience.</span>
+      </a>
+      <a class="action-card" href="{{ url_for('admin_users') }}">
+        <strong>Manage users</strong>
+        <span>Check activity, trust, and future-ready user controls from one place.</span>
+      </a>
+      <a class="action-card" href="{{ url_for('admin_data') }}">
+        <strong>Edit venue data</strong>
+        <span>Move into the structured data view without leaving the shared staff system.</span>
+      </a>
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Rank ladder</span>
+        <h2>Community trust path</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      {% for rank in community_ranks %}
+        <div class="stack-row">
+          <strong>{{ rank.name }}</strong>
+          <span>{{ rank.rule }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="section-block">
+  <div class="section-head">
+    <div>
+      <span class="eyebrow">Mission board</span>
+      <h2>Next places to verify</h2>
+    </div>
+    {% if mission_pagination.total %}
+      <p class="muted">Showing {{ ((mission_pagination.page - 1) * mission_pagination.per_page) + 1 }}-{{ ((mission_pagination.page - 1) * mission_pagination.per_page) + next_places|length }} of {{ mission_pagination.total }} missions.</p>
+    {% endif %}
+  </div>
+  <div class="card-grid">
+    {% for p in next_places %}
+      <article class="surface-panel mission-card">
+        <div class="result-topline mission-card-topline">
+          <span class="venue-type">{{ p.venue_type or 'place' }}</span>
+          <span class="planira-chip">{{ planira.humanize_label(p.status) }}</span>
+        </div>
+        <h3>{{ p.name }}</h3>
+        <p class="muted">{{ p.phone or 'Phone not listed yet' }}{% if p.address1 or p.town %} · {{ p.address1 }}{% if p.address1 and p.town %}, {% endif %}{{ p.town }}{% endif %}</p>
+        <div class="mission-meta">
+          <span class="metric-pill">{{ planira.humanize_label('priority_' ~ (p.priority or 3)) }}</span>
+          <span class="planira-chip">Useful data improvement</span>
+          <span class="planira-chip">2–5 min check</span>
+        </div>
+        <p>Best next move: confirm the key access details, close any uncertainty, and turn this venue into a more trustworthy record.</p>
+        <a class="planira-button-primary" href="{{ url_for('call_place', place_id=p.id) }}">Start mission</a>
+      </article>
+    {% else %}
+      <article class="surface-panel empty-state">
+        <span class="eyebrow">Queue clear</span>
+        <h2>No pending venues right now.</h2>
+        <p class="muted">That’s a healthy sign. Fresh missions will show up here when new venues need a phone check or review pass.</p>
+      </article>
+    {% endfor %}
+  </div>
+  {% if mission_pagination.pages > 1 %}
+    <nav class="pagination-nav surface-panel mission-pagination" aria-label="Mission board pages">
+      <div class="pagination-summary">
+        <strong>Mission page {{ mission_pagination.page }} of {{ mission_pagination.pages }}</strong>
+        <span class="muted">Queue order and card layout stay intact while the board stays manageable.</span>
+      </div>
+      <div class="pagination-links">
+        {% if mission_pagination.has_prev %}
+          <a class="btn-secondary-planira" href="{{ url_for('dashboard', mission_page=mission_pagination.prev_num) }}">Previous</a>
+        {% endif %}
+        {% for page_number in mission_pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+          {% if page_number %}
+            <a class="page-link {% if page_number == mission_pagination.page %}active{% endif %}" href="{{ url_for('dashboard', mission_page=page_number) }}">{{ page_number }}</a>
+          {% else %}
+            <span class="page-gap">…</span>
+          {% endif %}
+        {% endfor %}
+        {% if mission_pagination.has_next %}
+          <a class="btn-secondary-planira" href="{{ url_for('dashboard', mission_page=mission_pagination.next_num) }}">Next</a>
+        {% endif %}
+      </div>
+    </nav>
+  {% endif %}
+</section>
+{% endblock %}

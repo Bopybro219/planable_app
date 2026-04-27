@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block title %}Moderation | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Moderation queue</span>
+    <h1>Review incoming submissions</h1>
+
+  </div>
+</section>
+
+<section class="table-shell surface-panel">
+  <div class="table-header">
+    <div>
+      <span class="eyebrow">Queue</span>
+      <h2>{{ moderation_items|length }} items awaiting review</h2>
+    </div>
+    <span class="helper-copy">Approve, reject, or edit before approval.</span>
+  </div>
+  <div class="table-list">
+    {% for item in moderation_items %}
+      <article class="table-row">
+        <div>
+          <strong>{{ item.venue_name }}</strong>
+          <p class="muted">{{ item.submitted_changes }}</p>
+        </div>
+        <div>
+          <strong>{{ item.submitted_by }}</strong>
+          <p class="muted">{{ item.submitted_at }}</p>
+        </div>
+        <div>
+          <span class="status-badge status-moderate">{{ item.status }}</span>
+        </div>
+        <div class="row-actions">
+          <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="approve">
+            <input type="text" name="moderation_reason" placeholder="Optional reason">
+            <button type="submit" class="btn btn-small">Approve</button>
+          </form>
+          <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="reject">
+            <input type="text" name="moderation_reason" placeholder="Optional reason">
+            <button type="submit" class="btn btn-secondary btn-small">Reject</button>
+          </form>
+          <a class="btn btn-secondary btn-small" href="{{ item.edit_url }}">Edit before approve</a>
+        </div>
+      </article>
+    {% else %}
+      <article class="empty-state">
+        <span class="eyebrow">Nothing waiting</span>
+        <h2>No submissions need review right now.</h2>
+        <p class="muted">New community notes and staff edits will flow back here automatically.</p>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

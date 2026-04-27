@@ -1,1 +1,58 @@
-{% extends 'base.html' %}{% block content %}<h1>Add place</h1><form method="post" class="form card"><input name="name" placeholder="Venue name" required><input name="venue_type" placeholder="pub / cafe / hotel"><input name="phone" placeholder="Phone"><input name="website" placeholder="Website"><input name="address1" placeholder="Address"><input name="town" placeholder="Town"><input name="county" placeholder="County"><input name="postcode" placeholder="Postcode"><input name="priority" type="number" min="1" max="5" value="3"><button>Add</button></form>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Add Venue | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Add venue</span>
+    <h1>Create a new place record</h1>
+    <p class="page-subtitle">Structured inputs, consistent spacing, and clearer helper text make admin entry feel like a real internal product.</p>
+  </div>
+</section>
+
+<form method="post" class="surface-panel form-shell">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="form-grid">
+    <div class="field-group">
+      <label for="place-name">Venue name</label>
+      <input id="place-name" name="name" placeholder="Venue name" required>
+    </div>
+    <div class="field-group">
+      <label for="place-type">Venue type</label>
+      <input id="place-type" name="venue_type" placeholder="Pub, cafe, hotel">
+    </div>
+    <div class="field-group">
+      <label for="place-phone">Phone</label>
+      <input id="place-phone" name="phone" placeholder="Phone">
+    </div>
+    <div class="field-group">
+      <label for="place-website">Website</label>
+      <input id="place-website" name="website" placeholder="Website">
+      <p class="helper-copy">You can paste a domain and Planira will normalise it for you.</p>
+    </div>
+    <div class="field-group field-span-2">
+      <label for="place-address">Address</label>
+      <input id="place-address" name="address1" placeholder="Address">
+    </div>
+    <div class="field-group">
+      <label for="place-town">Town</label>
+      <input id="place-town" name="town" placeholder="Town">
+    </div>
+    <div class="field-group">
+      <label for="place-county">County</label>
+      <input id="place-county" name="county" placeholder="County">
+    </div>
+    <div class="field-group">
+      <label for="place-postcode">Postcode</label>
+      <input id="place-postcode" name="postcode" placeholder="Postcode">
+    </div>
+    <div class="field-group">
+      <label for="place-priority">Priority</label>
+      <input id="place-priority" name="priority" type="number" min="1" max="5" value="3">
+    </div>
+  </div>
+  <div class="form-actions">
+    <button>Add venue</button>
+    <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

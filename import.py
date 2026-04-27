@@ -1,71 +1,45 @@
-import json
-import re
-from app import app, db, Place, AccessibilityProfile
-from slugify_fallback import slugify
+import argparse
 
-JSON_FILE = "wetherspoons_locations.json"
+from flask_migrate import upgrade
 
-def parse_address(address):
-    parts = [p.strip() for p in address.split(",")]
-    postcode_match = re.search(r"[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", address, re.I)
-    postcode = postcode_match.group(0).upper() if postcode_match else ""
+from app import AccessibilityProfile, Place, app, db, should_auto_create_schema
+from venue_import import JSON_FILE, import_venues, print_import_summary
 
-    county = parts[-2] if len(parts) >= 3 else ""
-    town = parts[-3] if len(parts) >= 4 else ""
-    address1 = ", ".join(parts[:-3]) if len(parts) >= 4 else address
 
-    return address1, town, county, postcode
+def bootstrap_database():
+    if should_auto_create_schema():
+        db.create_all()
+        return
 
-with app.app_context():
-    db.create_all()
+    # Manual review: PostgreSQL and production imports should run against an
+    # Alembic-managed schema rather than creating tables ad hoc.
+    upgrade()
 
-    with open(JSON_FILE, "r", encoding="utf-8") as f:
-        places = json.load(f)
 
-    imported = 0
-    skipped = 0
+def build_parser():
+    parser = argparse.ArgumentParser(description="Dry-run or apply a venue import from JSON.")
+    parser.add_argument("--json-file", default=JSON_FILE, help="Path to the venue JSON file.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write the import to the database. Without this flag the script runs as a dry-run only.",
+    )
+    return parser
 
-    for item in places:
-        name = item.get("name", "").strip()
-        address = item.get("address", "").strip()
-        phone = item.get("phone", "").strip()
 
-        if not name or not address or phone == "</a>":
-            skipped += 1
-            continue
-
-        existing = Place.query.filter_by(name=name, phone=phone).first()
-        if existing:
-            skipped += 1
-            continue
-
-        address1, town, county, postcode = parse_address(address)
-
-        base_slug = slugify(f"{name} {town} {postcode}")
-        slug = base_slug
-        i = 2
-        while Place.query.filter_by(slug=slug).first():
-            slug = f"{base_slug}-{i}"
-            i += 1
-
-        place = Place(
-            name=name,
-            slug=slug,
-            venue_type="pub",
-            phone=phone,
-            address1=address1,
-            town=town,
-            county=county,
-            postcode=postcode,
-            priority=3,
-            status="needs_call",
+def main():
+    args = build_parser().parse_args()
+    with app.app_context():
+        bootstrap_database()
+        summary = import_venues(
+            db_session=db.session,
+            place_model=Place,
+            profile_model=AccessibilityProfile,
+            json_file=args.json_file,
+            apply=args.apply,
         )
+        print_import_summary(summary)
 
-        db.session.add(place)
-        db.session.flush()
-        db.session.add(AccessibilityProfile(place=place))
-        imported += 1
 
-    db.session.commit()
-    print(f"Imported: {imported}")
-    print(f"Skipped: {skipped}")
+if __name__ == "__main__":
+    main()

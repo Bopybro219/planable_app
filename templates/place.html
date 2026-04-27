@@ -1,34 +1,90 @@
-{% extends 'base.html' %}{% block content %} <div class="card big">
-  <h1>{{place.name}}</h1>
-  <p>{{place.address1}}, {{place.town}}, {{place.postcode}}</p>
-  <div class="pill">Confidence: {{profile.confidence_score}}/100</div>{% if profile.last_verified_at %} <div class="pill ok">Last verified: {{profile.last_verified_at.strftime('%d %b %Y %H:%M')}}</div>{% else %} <div class="pill warn">Not verified yet</div>{% endif %} <h2>Accessibility</h2>
-  <dl>
-    <dt>Toilets</dt>
-    <dd>{{profile.toilets_available}} — {{profile.toilet_location or 'location unknown'}}</dd>
-    <dt>Accessible toilet</dt>
-    <dd>{{profile.accessible_toilet}}</dd>
-    <dt>Baby changing</dt>
-    <dd>{{profile.baby_changing}} — {{profile.baby_changing_location or 'location unknown'}}</dd>
-    <dt>Step-free entrance</dt>
-    <dd>{{profile.step_free_entrance}}</dd>
-    <dt>Stairs inside</dt>
-    <dd>{{profile.stairs_inside}}</dd>
-    <dt>Lift</dt>
-    <dd>{{profile.lift_available}}</dd>
-    <dt>Disabled parking</dt>
-    <dd>{{profile.disabled_parking}}</dd>
-    <dt>Comments</dt>
-    <dd>{{profile.public_comments or 'No public notes yet.'}}</dd>
-    <dt>Sensory notes</dt>
-    <dd>{{profile.sensory_notes or 'No sensory notes yet.'}}</dd>
-  </dl>
-</div>
-<div class="card">
-  <h2>Community comments</h2>
-  <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}">
-    <textarea name="body" placeholder="Add a useful correction or note"></textarea>
-    <button>Add comment</button>
-  </form>{% for c in comments %} <p>
-    <b>{{c.user_email}}</b>: {{c.body}}
-  </p>{% endfor %}
-</div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}{{ place.name }} | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">{{ place.venue_type or 'place' }}</span>
+    <h1>{{ place.name }}</h1>
+    <p class="page-subtitle">{{ place.address1 }}, {{ place.town }}, {{ place.postcode }}</p>
+  </div>
+  <div class="page-head-actions">
+    <span class="status-badge status-{{ signal.tone }}">{{ signal.label }}</span>
+  </div>
+</section>
+
+<section class="search-layout">
+  <div class="content-stack">
+    <article class="surface-panel place-summary-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Planira summary</span>
+          <h2>Here’s what to expect</h2>
+        </div>
+      </div>
+      <p class="lead-copy">{{ signal.summary }}</p>
+      <div class="tag-row">
+        <span>Confidence {{ profile.confidence_score }}/100</span>
+        {% if profile.last_verified_at %}
+          <span>Verified {{ profile.last_verified_at.strftime('%d %b %Y %H:%M') }}</span>
+        {% else %}
+          <span>Not verified yet</span>
+        {% endif %}
+        <span>Source {{ profile.source or 'not_verified' }}</span>
+      </div>
+      <div class="detail-grid">
+        {% for label, value, note in detail_checks %}
+          <article class="detail-card">
+            <strong>{{ label }}</strong>
+            <span>{{ value or 'unknown' }}</span>
+            {% if note %}<small>{{ note }}</small>{% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Community comments</span>
+          <h2>Helpful notes from people who have checked this place</h2>
+        </div>
+      </div>
+      <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field-group">
+          <label for="comment-body">Add a note</label>
+          <textarea id="comment-body" name="body" placeholder="Add a useful note that could help someone plan ahead"></textarea>
+          <p class="helper-copy">Short, specific context is usually more useful than a long review.</p>
+        </div>
+        <button>Share note</button>
+      </form>
+      <div class="comment-list">
+        {% for c in comments %}
+          <article class="comment-card">
+            <strong>{{ c.user_email }}</strong>
+            <p>{{ c.body }}</p>
+          </article>
+        {% else %}
+          <div class="empty-inline">We don’t have any visitor notes here yet.</div>
+        {% endfor %}
+      </div>
+    </article>
+  </div>
+
+  <aside class="supporting-stack">
+    <article class="surface-panel">
+      <span class="eyebrow">Before you go</span>
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong>Public notes</strong>
+          <span>{{ profile.public_comments or 'No public notes yet. A short update from a future visitor could make this page much more helpful.' }}</span>
+        </div>
+        <div class="stack-row">
+          <strong>Sensory notes</strong>
+          <span>{{ profile.sensory_notes or 'We don’t have sensory notes on this place yet.' }}</span>
+        </div>
+      </div>
+    </article>
+  </aside>
+</section>
+{% endblock %}

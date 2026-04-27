@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+{% block title %}Settings | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Settings</span>
+    <h1>Account settings and preferences</h1>
+  </div>
+</section>
+
+<section class="tab-shell" data-tab-group>
+  <aside class="tab-list" role="tablist" aria-label="Settings sections">
+    <button class="tab-button active" type="button" data-tab-button="profile">Profile</button>
+    <button class="tab-button" type="button" data-tab-button="preferences">Preferences</button>
+    <button class="tab-button" type="button" data-tab-button="usage">Usage & limits</button>
+    <button class="tab-button" type="button" data-tab-button="api">API / future</button>
+    <button class="tab-button danger" type="button" data-tab-button="danger">Important actions</button>
+  </aside>
+
+  <div class="tab-panels">
+    <section class="tab-panel active" data-tab-panel="profile">
+      <article class="planira-settings-panel">
+        <div class="profile-banner">
+          <div class="profile-avatar">{{ settings_sections.profile.avatar_initials }}</div>
+          <div>
+            <span class="eyebrow">Profile</span>
+            <h2>{{ settings_sections.profile.name }}</h2>
+            <p class="muted">{{ settings_sections.profile.email }}</p>
+            <p class="muted">Plan: {{ settings_sections.profile.plan }} · Access: {{ settings_sections.profile.access }}{% if settings_sections.profile.rank_title %} · Rank: {{ settings_sections.profile.rank_title }}{% endif %}</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field-group">
+            <label for="settings-name">Name</label>
+            <input id="settings-name" value="{{ settings_sections.profile.name }}" readonly>
+            <p class="helper-copy">Profile editing can be connected here without redesigning the page later.</p>
+          </div>
+          <div class="field-group">
+            <label for="settings-email">Email</label>
+            <input id="settings-email" value="{{ settings_sections.profile.email }}" readonly>
+          </div>
+          <div class="field-group">
+            <label for="settings-password">Password change</label>
+            <input id="settings-password" value="Google sign-in manages authentication today." readonly>
+          </div>
+          <div class="field-group">
+            <label for="settings-avatar">Avatar</label>
+            <input id="settings-avatar" value="Optional profile avatar area ready for future upload support." readonly>
+          </div>
+        </div>
+        <p class="helper-copy">Profile details are read-only here today because Google sign-in manages the source data.</p>
+      </article>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="preferences">
+      <article class="planira-settings-panel">
+        <span class="eyebrow">Preferences</span>
+        <h2>Accessibility defaults</h2>
+        <div class="form-grid">
+          <div class="field-group">
+            <label for="settings-distance">Distance tolerance</label>
+            <input id="settings-distance" value="{{ settings_sections.preferences.distance_tolerance }}" readonly>
+          </div>
+          <div class="field-group">
+            <label for="settings-filters">Default search filters</label>
+            <input id="settings-filters" value="{{ settings_sections.preferences.default_filter }}" readonly>
+          </div>
+          <div class="toggle-card">
+            <div>
+              <strong>Avoid stairs</strong>
+              <p class="muted">Use this preference to prioritise easier access decisions in future search experiences.</p>
+            </div>
+            <span class="toggle-pill {% if settings_sections.preferences.avoid_stairs %}active{% endif %}">{{ 'On' if settings_sections.preferences.avoid_stairs else 'Off' }}</span>
+          </div>
+        </div>
+        <p class="helper-copy">Preference editing is staged as a read-only preview until those settings are persisted on the backend.</p>
+      </article>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="usage">
+      <article class="planira-settings-panel">
+        <span class="eyebrow">Usage and limits</span>
+        <h2>Clear limits with calm progress indicators</h2>
+        <div class="usage-list">
+          <div class="usage-row">
+            <div>
+              <strong>Search credits</strong>
+              <p class="muted">{{ settings_sections.usage.quota_copy.search_usage_copy }}.</p>
+            </div>
+            <div class="progress-track">
+              <span style="width: {{ settings_sections.usage.search_progress }}%"></span>
+            </div>
+          </div>
+          <div class="usage-row">
+            <div>
+              <strong>Extra credits</strong>
+              <p class="muted">{{ settings_sections.usage.quota_copy.search_credits_copy }}.</p>
+            </div>
+            <div class="progress-track">
+              <span style="width: {{ [settings_sections.usage.search_credits * 10, 100]|min }}%"></span>
+            </div>
+          </div>
+          <div class="usage-row">
+            <div>
+              <strong>Contributions</strong>
+              <p class="muted">{{ settings_sections.usage.contributions }} community contributions from this account.</p>
+            </div>
+            <div class="progress-track">
+              <span style="width: {{ [settings_sections.usage.contributions * 10, 100]|min }}%"></span>
+            </div>
+          </div>
+          <div class="usage-row">
+            <div>
+              <strong>Verified records</strong>
+              <p class="muted">{{ settings_sections.usage.verifications }} venue records verified so far.</p>
+            </div>
+            <div class="progress-track">
+              <span style="width: {{ [settings_sections.usage.verifications * 20, 100]|min }}%"></span>
+            </div>
+          </div>
+          <div class="usage-row">
+            <div>
+              <strong>Community points</strong>
+              <p class="muted">{{ settings_sections.usage.community_points }} points earned so far{% if settings_sections.usage.rank_title %} with the rank {{ settings_sections.usage.rank_title }}{% endif %}.</p>
+            </div>
+            <div class="progress-track">
+              <span style="width: {{ [settings_sections.usage.community_points, 100]|min }}%"></span>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="api">
+      <article class="planira-settings-panel">
+        <span class="eyebrow">Future-ready</span>
+        <h2>API access and developer tooling</h2>
+        <div class="stack-list">
+          <div class="stack-row">
+            <strong>API key</strong>
+            <span>Coming soon, but the settings layout is already ready for key management and rotation.</span>
+          </div>
+          <div class="stack-row">
+            <strong>Usage analytics</strong>
+            <span>Future API packs can live here without changing the rest of the account IA.</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="danger">
+      <article class="planira-settings-panel danger-panel important-actions-panel">
+        <span class="eyebrow">Important actions</span>
+        <h2>High-impact account controls</h2>
+        <p class="helper-copy">These controls are intentionally separated from everyday settings because they affect access, security, or account permanence. They stay read-only until real backend actions are wired in.</p>
+        <div class="important-actions-grid">
+          <div class="action-card action-card-warning">
+            <span class="status-chip chip-warning">Security-sensitive</span>
+            <strong>Logout all sessions</strong>
+            <span>Future session controls belong here so account recovery and device security stay easy to understand.</span>
+            <span class="planira-chip">Read-only preview</span>
+          </div>
+          <div class="action-card action-card-danger">
+            <span class="status-chip chip-tricky">Critical action</span>
+            <strong>Delete account</strong>
+            <span>Kept separate so the consequences stay clear before this is wired into a real account deletion flow.</span>
+            <span class="planira-chip">Read-only preview</span>
+          </div>
+        </div>
+      </article>
+    </section>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block title %}Plans | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Plans and access</span>
+    <h1>Plans</h1>
+  </div>
+</section>
+
+{% if current_user %}
+  <article class="planira-card planira-card-soft banner-panel">
+    <div>
+      <span class="eyebrow">Current account</span>
+      <h2>{{ current_user.name or current_user.email }}</h2>
+      <p class="muted">You are signed in as {{ current_user.email }} on the {{ account_state.plan_label }} plan with {{ account_state.access_label }} access. {{ account_summary.quota_copy.plans_cta_copy }}</p>
+    </div>
+    <span class="metric-pill">Plan: {{ account_state.plan_label }} · Access: {{ account_state.access_label }}</span>
+  </article>
+{% endif %}
+
+{% if not stripe_configured %}
+  <article class="planira-card planira-card-soft banner-panel warning-panel">
+    <div>
+      <span class="eyebrow">Billing setup</span>
+      <h2>Checkout can be enabled when Stripe keys are ready.</h2>
+      <p class="muted">Add the Stripe secret key, publishable key, and price IDs to turn these cards into live purchase flows.</p>
+    </div>
+  </article>
+{% endif %}
+
+<section class="pricing-grid">
+  {% for tier in tiers %}
+    {% set is_active = tier.key == active_key %}
+    <article class="planira-pricing-card pricing-card {% if tier.name == 'Paid consumer' %}featured{% endif %} {% if is_active %}active-plan{% endif %}">
+      <div class="pricing-card-head">
+        <div>
+          <span class="eyebrow">{{ tier.key|replace('_', ' ') }}</span>
+          <h2>{{ tier.name }}</h2>
+        </div>
+        <span class="plan-price">{{ tier.price }}</span>
+      </div>
+      <p class="muted">{{ tier.description }}</p>
+      <p class="helper-copy">Search limit: {{ tier.search_limit_copy }}</p>
+      <ul class="feature-list">
+        {% for feature in tier.features %}
+          <li>{{ feature }}</li>
+        {% endfor %}
+      </ul>
+      <p class="helper-copy">{{ tier.credits_copy }}</p>
+      <div class="pricing-card-footer">
+        {% if tier.cta %}
+          {% if not current_user %}
+            <a class="btn-primary-planira" href="{{ url_for('login', next=url_for('plans')) }}">Log in to buy</a>
+          {% elif is_active %}
+            <span class="status-chip chip-success">Current plan</span>
+          {% elif tier.checkout_enabled %}
+            <form method="post" action="{{ url_for('create_checkout', plan_key=tier.key) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn-primary-planira">{{ tier.cta }}</button>
+            </form>
+          {% else %}
+            <span class="helper-copy">Checkout will appear here once this tier is configured.</span>
+          {% endif %}
+        {% else %}
+          <span class="helper-copy">A calm introduction to the product before a user commits.</span>
+        {% endif %}
+      </div>
+    </article>
+  {% endfor %}
+</section>
+
+<section class="insight-grid">
+  <article class="planira-card planira-card-soft">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Community loop</span>
+          <h2>Useful extras, not noisy perks</h2>
+        </div>
+      </div>
+    <div class="stack-list">
+      {% for reward in community_rewards %}
+        <div class="stack-row">
+          <strong>{{ reward }}</strong>
+          <span>Designed to feel supportive rather than gamey.</span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="planira-card planira-card-soft">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Livestream business</span>
+          <h2>Revenue around the verification workflow</h2>
+        </div>
+      </div>
+    <div class="stack-list">
+      {% for item in stream_revenue %}
+        <div class="stack-row">
+          <strong>{{ item }}</strong>
+          <span>Fits the same product system used across search, account, and staff tools.</span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

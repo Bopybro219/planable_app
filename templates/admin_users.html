@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+{% block title %}User Management | Planira{% endblock %}
+
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">User management</span>
+    <h1>Accounts, trust, and activity</h1>
+  </div>
+</section>
+
+<section class="admin-users-layout">
+  <div class="admin-users-main">
+    <article class="surface-panel admin-users-search-panel">
+      <form class="admin-users-search-form" action="{{ url_for('admin_users') }}" method="get">
+        <div class="field-group">
+          <label for="user-search">Search users</label>
+          <input id="user-search" name="q" value="{{ query_text or '' }}" placeholder="Name or email">
+        </div>
+        <button class="planira-button-primary">Search</button>
+        {% if query_text %}
+          <a class="planira-button-quiet" href="{{ url_for('admin_users') }}">Clear</a>
+        {% endif %}
+      </form>
+    </article>
+
+    <article class="surface-panel admin-users-results-panel">
+      <header class="admin-users-results-head">
+        <div>
+          <span class="eyebrow">Users</span>
+          <h2>{{ pagination.total if pagination else user_rows|length }} results</h2>
+          {% if pagination %}
+            <p class="muted">
+              Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users.
+            </p>
+          {% endif %}
+        </div>
+
+        {% if pagination %}
+          <span class="metric-pill">
+            Page {{ pagination.page }} of {{ pagination.pages or 1 }}
+          </span>
+        {% endif %}
+      </header>
+
+      {% if user_rows %}
+        <div class="admin-user-list">
+          {% for row in user_rows %}
+            {% set is_selected = selected_user_id == row.user.id %}
+            <article class="admin-user-card{% if is_selected %} is-selected{% endif %}">
+              <div class="admin-user-card-main">
+                <div class="admin-user-identity">
+                  <a class="admin-user-name-link"
+                     href="{{ url_for('admin_users', q=query_text or None, page=pagination.page if pagination else None, selected=row.user.id) }}">
+                    {{ row.user.name or 'Planira member' }}
+                  </a>
+                  <a class="admin-user-email" href="mailto:{{ row.user.email }}">{{ row.user.email }}</a>
+
+                  <div class="admin-user-chip-row">
+                    <span class="metric-pill admin-role-chip{% if row.user.role in ['admin', 'staff'] %} admin-role-chip-staff{% endif %}">
+                      {{ row.role_label }}
+                    </span>
+                    <span class="metric-pill">Joined {{ row.joined_date }}</span>
+                    {% if is_selected %}
+                      <span class="metric-pill admin-selected-chip">Selected</span>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <dl class="admin-user-stats">
+                  <div>
+                    <dt>Contributions</dt>
+                    <dd>{{ row.contributions }}</dd>
+                  </div>
+                  <div>
+                    <dt>Flags</dt>
+                    <dd>{{ row.flags }}</dd>
+                  </div>
+                  <div>
+                    <dt>Activity</dt>
+                    <dd>{{ row.activity }}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div class="admin-user-card-footer">
+                <p class="muted admin-user-activity-detail">{{ row.activity_detail }}</p>
+
+                <div class="admin-user-actions" aria-label="Actions for {{ row.user.name or row.user.email }}">
+                  {# Replace these forms with your existing POST actions if route names differ. #}
+                  <button type="button" class="planira-button-quiet btn-small">Adjust credits</button>
+                  <button type="button" class="planira-button-admin btn-small">Promote to staff</button>
+                  <button type="button" class="planira-button-danger btn-small">Suspend user</button>
+                </div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+
+        {% if pagination and pagination.pages > 1 %}
+          <nav class="pagination-nav admin-users-pagination" aria-label="User result pages">
+            <div class="pagination-summary">
+              <strong>Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users</strong>
+              <span class="muted">
+                {% if query_text %}
+                  Search preserved for “{{ query_text }}”.
+                {% else %}
+                  Pagination is enabled by default for staff lists.
+                {% endif %}
+              </span>
+            </div>
+
+            <div class="pagination-links">
+              {% if pagination.has_prev %}
+                <a class="btn-secondary-planira"
+                   href="{{ url_for('admin_users', q=query_text or None, selected=selected_user_id, page=pagination.prev_num) }}">
+                  Previous
+                </a>
+              {% endif %}
+
+              {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+                {% if page_number %}
+                  <a class="page-link {% if page_number == pagination.page %}active{% endif %}"
+                     href="{{ url_for('admin_users', q=query_text or None, selected=selected_user_id, page=page_number) }}">
+                    {{ page_number }}
+                  </a>
+                {% else %}
+                  <span class="page-gap">…</span>
+                {% endif %}
+              {% endfor %}
+
+              {% if pagination.has_next %}
+                <a class="btn-secondary-planira"
+                   href="{{ url_for('admin_users', q=query_text or None, selected=selected_user_id, page=pagination.next_num) }}">
+                  Next
+                </a>
+              {% endif %}
+            </div>
+          </nav>
+        {% endif %}
+      {% else %}
+        <article class="empty-state admin-users-empty">
+          <span class="eyebrow">No matches</span>
+          <h2>No users matched that search.</h2>
+          <p class="muted">Try a broader name or email fragment.</p>
+          <a class="planira-button-secondary" href="{{ url_for('admin_users') }}">Clear search</a>
+        </article>
+      {% endif %}
+    </article>
+  </div>
+
+  <aside class="admin-users-side">
+    <article class="surface-panel admin-user-detail-panel">
+      <div class="admin-user-detail-head">
+        <span class="eyebrow">Selected profile</span>
+
+      </div>
+
+      {% if selected_row %}
+        <div class="admin-user-detail-summary">
+          <h2>{{ selected_row.user.name or 'Planira member' }}</h2>
+          <p>{{ selected_row.user.email }}</p>
+        </div>
+
+        <div class="stack-list">
+          <div class="stack-row">
+            <strong>Role</strong>
+            <span>{{ selected_row.role_label }}</span>
+          </div>
+          <div class="stack-row">
+            <strong>Joined</strong>
+            <span>{{ selected_row.joined_date }}</span>
+          </div>
+          <div class="stack-row">
+            <strong>Contributions</strong>
+            <span>{{ selected_row.contributions }} recorded actions.</span>
+          </div>
+          <div class="stack-row">
+            <strong>Flags</strong>
+            <span>{{ selected_row.flags }} current trust flags.</span>
+          </div>
+          <div class="stack-row">
+            <strong>Activity</strong>
+            <span>{{ selected_row.activity }}. {{ selected_row.activity_detail }}</span>
+          </div>
+        </div>
+
+        <div class="admin-action-guidance">
+          <strong>Action balance</strong>
+          <p class="muted">Credits are utility. Promotion is secondary. Suspension is reserved for risk cases.</p>
+        </div>
+      {% else %}
+        <div class="empty-state admin-user-detail-empty">
+          <span class="eyebrow">No profile selected</span>
+          <h2>Select a user.</h2>
+          <p class="muted">Choose a user from the results and their details will appear here.</p>
+        </div>
+      {% endif %}
+    </article>
+  </aside>
+</section>
+{% endblock %}

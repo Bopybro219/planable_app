@@ -3,13 +3,309 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>PlanAble</title>
+    <title>{% block title %}Planira{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='logo.png') }}?v=2">
   </head>
   <body>
-    <nav class="nav"><a class="brand" href="/"> <img src="{{ url_for('static', filename='logo.png') }}" alt="PlanAble logo" class="logo"></span></a>
-      <div>{% if current_user %}<a href="{{ url_for('search') }}">Search</a>{% if is_admin %}<a href="{{ url_for('dashboard') }}">Staff</a>{% endif %}<a href="{{ url_for('logout') }}">Logout</a>{% else %}<a class="btn" href="{{ url_for('login') }}">Google login</a>{% endif %}</div>
-    </nav>
-    <main class="wrap">{% for cat,msg in get_flashed_messages(with_categories=true) %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}{% block content %}{% endblock %}</main>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <div class="ambient-backdrop" aria-hidden="true">
+      <div class="ambient-orb ambient-orb-one"></div>
+      <div class="ambient-orb ambient-orb-two"></div>
+      <div class="ambient-grid"></div>
+    </div>
+    <div class="planira-page-shell">
+      <header class="planira-topbar">
+        <div class="planira-content planira-topbar-inner">
+          <a class="planira-logo" href="{{ url_for('index') }}">
+            <span class="brand-mark" aria-hidden="true">P</span>
+            <div class="brand-copy">
+              <strong>Planira</strong>
+              <span>Know before you go.</span>
+            </div>
+          </a>
+
+          <button
+            class="planira-mobile-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="planira-mobile-nav"
+            data-nav-toggle
+          >
+            Menu
+          </button>
+
+        <div class="planira-nav-wrap">
+          <nav class="planira-nav" aria-label="Primary navigation">
+            {% for item in shell_navigation %}
+              {% if not item.requires_auth or current_user %}
+                <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}"
+                  href="{{ url_for(item.endpoint) }}"
+                  {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                  <span>{{ item.label }}</span>
+                </a>
+              {% endif %}
+            {% endfor %}
+          </nav>
+
+          {% if staff_navigation %}
+            <div class="planira-staff-dropdown">
+              <button class="planira-nav-link planira-staff-dropdown-toggle {% if staff_nav_active %}planira-nav-link-active{% endif %}" type="button" aria-expanded="false" data-staff-toggle>
+                Staff
+              </button>
+              <nav class="planira-staff-menu" aria-label="Staff workspace" hidden>
+                {% for item in staff_navigation %}
+                  <a class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
+                    href="{{ url_for(item.endpoint) }}"
+                    {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                    {{ item.label }}
+                  </a>
+                {% endfor %}
+              </nav>
+            </div>
+          {% endif %}
+        </div>
+
+          <div class="planira-user-menu">
+            {% if current_user %}
+              <a class="account-chip" href="{{ url_for('account') }}">
+                <span class="account-avatar">{{ (current_user.name or current_user.email)[0]|upper }}</span>
+                <div class="account-chip-meta">
+                  <strong>{{ current_user.name or 'Planira member' }}</strong>
+                  <span>{{ current_user.email }}</span>
+                  <span class="account-chip-badges">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
+                </div>
+              </a>
+              <a class="planira-button-secondary btn-secondary" href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+              <a class="planira-button-primary btn" href="{{ url_for('login') }}">Continue with Google</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="planira-mobile-menu" id="planira-mobile-nav" hidden>
+          <div class="planira-content planira-mobile-menu-inner">
+            <nav class="planira-mobile-nav" aria-label="Mobile navigation">
+              {% for item in shell_navigation %}
+                {% if not item.requires_auth or current_user %}
+                  <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}" href="{{ url_for(item.endpoint) }}" {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                    <span>{{ item.label }}</span>
+                  </a>
+                {% endif %}
+              {% endfor %}
+            </nav>
+
+            {% if staff_navigation %}
+              <div class="planira-mobile-staff">
+                <span class="eyebrow">Staff workspace</span>
+                <nav class="planira-mobile-nav" aria-label="Mobile staff navigation">
+                  {% for item in staff_navigation %}
+                    <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}" href="{{ url_for(item.endpoint) }}" {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                      <span>{{ item.label }}</span>
+                    </a>
+                  {% endfor %}
+                </nav>
+              </div>
+            {% endif %}
+
+            <div class="planira-mobile-actions">
+              {% if current_user %}
+                <a class="account-chip" href="{{ url_for('account') }}">
+                  <span class="account-avatar">{{ (current_user.name or current_user.email)[0]|upper }}</span>
+                  <div class="account-chip-meta">
+                    <strong>{{ current_user.name or 'Planira member' }}</strong>
+                    <span>{{ current_user.email }}</span>
+                    <span class="account-chip-badges">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
+                  </div>
+                </a>
+                <a class="planira-button-secondary btn-secondary" href="{{ url_for('logout') }}">Logout</a>
+              {% else %}
+                <a class="planira-button-primary btn" href="{{ url_for('login') }}">Continue with Google</a>
+              {% endif %}
+            </div>
+
+            <div class="planira-mobile-meta planira-card planira-card-soft">
+              <span class="planira-chip chip-neutral">Worth checking before you go</span>
+              <p class="muted">Clear guidance, helpful notes, and account tools stay one tap away.</p>
+            </div>
+          </div>
+        </div>
+
+      </header>
+
+      <main class="app-main" id="main-content" tabindex="-1">
+        <div class="toast-stack" aria-live="polite">
+          {% for cat, msg in get_flashed_messages(with_categories=true) %}
+            <div class="toast toast-{{ cat }}">
+              <div>
+                <strong>{{ cat|replace('_', ' ')|title }}</strong>
+                <p>{{ msg }}</p>
+              </div>
+              <button class="toast-close" type="button" aria-label="Dismiss notification">×</button>
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="planira-content content-shell">
+          {% block content %}{% endblock %}
+        </div>
+      </main>
+
+      <footer class="planira-footer">
+        <div class="planira-content planira-footer-inner">
+          <div class="planira-footer-brand">
+            <strong>Planira</strong>
+            <p class="muted">Know before you go.</p>
+          </div>
+          <nav class="planira-footer-links" aria-label="Footer">
+            <a href="{{ url_for('privacy') }}">Privacy</a>
+            <a href="{{ url_for('terms') }}">Terms</a>
+            <a href="{{ url_for('data_rights') }}">Data rights</a>
+            <a href="{{ url_for('cookies') }}">Cookies</a>
+            <span>Call: <span data-phone>01604 289096</span></span>
+          </nav>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      document.querySelectorAll(".toast-close").forEach((button) => {
+        button.addEventListener("click", () => {
+          const toast = button.closest(".toast");
+          if (toast) toast.remove();
+        });
+      });
+
+      window.setTimeout(() => {
+        document.querySelectorAll(".toast.toast-success, .toast.toast-info").forEach((toast) => toast.classList.add("toast-hide"));
+      }, 8000);
+
+      const navToggle = document.querySelector("[data-nav-toggle]");
+      const staffToggle = document.querySelector("[data-staff-toggle]");
+      const staffMenu = document.querySelector(".planira-staff-menu");
+
+      if (staffToggle && staffMenu) {
+        const closeStaffMenu = () => {
+          staffToggle.setAttribute("aria-expanded", "false");
+          staffMenu.hidden = true;
+        };
+
+        staffToggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const isOpen = staffToggle.getAttribute("aria-expanded") === "true";
+          staffToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+          staffMenu.hidden = isOpen;
+        });
+
+        document.addEventListener("click", (event) => {
+          if (!staffMenu.contains(event.target) && !staffToggle.contains(event.target)) {
+            closeStaffMenu();
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") closeStaffMenu();
+        });
+
+        staffMenu.querySelectorAll("a").forEach((link) => {
+          link.addEventListener("click", closeStaffMenu);
+        });
+      }
+
+      const mobileNav = document.getElementById("planira-mobile-nav");
+
+      if (navToggle && mobileNav) {
+        const closeNav = () => {
+          navToggle.setAttribute("aria-expanded", "false");
+          mobileNav.hidden = true;
+        };
+
+        navToggle.addEventListener("click", () => {
+          const isOpen = navToggle.getAttribute("aria-expanded") === "true";
+          navToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+          mobileNav.hidden = isOpen;
+        });
+
+        mobileNav.querySelectorAll("a").forEach((link) => {
+          link.addEventListener("click", closeNav);
+        });
+
+        window.addEventListener("resize", () => {
+          if (window.innerWidth > 960) closeNav();
+        });
+      }
+
+      document.querySelectorAll("[data-tab-group]").forEach((group) => {
+        const buttons = Array.from(group.querySelectorAll("[data-tab-button]"));
+        const panels = Array.from(group.querySelectorAll("[data-tab-panel]"));
+
+        const activateTab = (button) => {
+          const target = button?.getAttribute("data-tab-button");
+          if (!target) return;
+
+          buttons.forEach((item, index) => {
+            const isActive = item === button;
+            item.classList.toggle("active", isActive);
+            item.setAttribute("aria-selected", isActive ? "true" : "false");
+            item.setAttribute("tabindex", isActive ? "0" : "-1");
+            item.id = item.id || `tab-${target}-${index}`;
+          });
+
+          panels.forEach((panel) => {
+            const isActive = panel.getAttribute("data-tab-panel") === target;
+            panel.classList.toggle("active", isActive);
+            panel.hidden = !isActive;
+          });
+        };
+
+        buttons.forEach((button, index) => {
+          const target = button.getAttribute("data-tab-button");
+          const panel = target ? group.querySelector(`[data-tab-panel="${target}"]`) : null;
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", button.classList.contains("active") ? "true" : "false");
+          button.setAttribute("tabindex", button.classList.contains("active") ? "0" : "-1");
+          button.id = button.id || `tab-${target}-${index}`;
+          if (panel) {
+            button.setAttribute("aria-controls", `panel-${target}`);
+            panel.setAttribute("role", "tabpanel");
+            panel.setAttribute("aria-labelledby", button.id);
+            panel.id = `panel-${target}`;
+            panel.hidden = !panel.classList.contains("active");
+          }
+
+          button.addEventListener("click", () => activateTab(button));
+          button.addEventListener("keydown", (event) => {
+            const currentIndex = buttons.indexOf(button);
+            if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+              event.preventDefault();
+              const next = buttons[(currentIndex + 1) % buttons.length];
+              next.focus();
+              activateTab(next);
+            }
+            if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              const previous = buttons[(currentIndex - 1 + buttons.length) % buttons.length];
+              previous.focus();
+              activateTab(previous);
+            }
+            if (event.key === "Home") {
+              event.preventDefault();
+              buttons[0].focus();
+              activateTab(buttons[0]);
+            }
+            if (event.key === "End") {
+              event.preventDefault();
+              buttons[buttons.length - 1].focus();
+              activateTab(buttons[buttons.length - 1]);
+            }
+          });
+        });
+
+        group.querySelector('[data-tab-button].active')?.click();
+      });
+    </script>
   </body>
 </html>

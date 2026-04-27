@@ -1,1 +1,199 @@
-{% extends 'base.html' %}{% block content %}<h1>Call worksheet</h1><div class="card"><h2>{{place.name}}</h2><p><b>Phone:</b> {{place.phone}}<br><b>Address:</b> {{place.address1}}, {{place.town}}, {{place.postcode}}</p></div><form method="post" class="form card"><h2>Call result</h2><select name="call_result"><option>answered</option><option>no_answer</option><option>callback</option><option>wrong_number</option><option>refused</option></select><input name="contact_name" placeholder="Optional first name / role"><textarea name="call_notes" placeholder="Call notes"></textarea><h2>Accessibility data</h2>{% set opts=['unknown','yes','no','partial'] %}{% for field,label in [('toilets_available','Toilets available'),('accessible_toilet','Accessible toilet'),('baby_changing','Baby changing'),('step_free_entrance','Step-free entrance'),('stairs_inside','Stairs inside'),('lift_available','Lift available'),('disabled_parking','Disabled parking')] %}<label>{{label}}<select name="{{field}}">{% for o in opts %}<option value="{{o}}" {% if profile|attr(field)==o %}selected{% endif %}>{{o}}</option>{% endfor %}</select></label>{% endfor %}<input name="toilet_location" value="{{profile.toilet_location or ''}}" placeholder="Toilet location e.g. ground floor / upstairs"><input name="baby_changing_location" value="{{profile.baby_changing_location or ''}}" placeholder="Baby changing location"><textarea name="public_comments" placeholder="Public comments">{{profile.public_comments or ''}}</textarea><textarea name="sensory_notes" placeholder="Sensory notes">{{profile.sensory_notes or ''}}</textarea><textarea name="internal_notes" placeholder="Internal notes, not public">{{profile.internal_notes or ''}}</textarea><label>Source<select name="source"><option>phone_verified</option><option>owner_verified</option><option>user_submitted</option><option>not_verified</option></select></label><label>Confidence score<input type="number" name="confidence_score" min="0" max="100" value="{{profile.confidence_score}}"></label><label>Status<select name="status"><option value="needs_call">needs_call</option><option value="callback">callback</option><option value="calling">calling</option><option value="verified">verified</option></select></label><label class="check"><input type="checkbox" name="mark_verified" value="yes"> Mark verified now</label><button>Save worksheet</button></form>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Call Worksheet | Planira{% endblock %}
+{% block content %}
+{% import '_planira_macros.html' as planira %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Verification worksheet</span>
+    <h1>{{ place.name }}</h1>
+    <p class="page-subtitle">Capture the details that power public trust, premium product value, and future moderation workflows.</p>
+  </div>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <span class="eyebrow">Current record</span>
+    <h2>{{ place.name }}</h2>
+    <div class="stack-list">
+     <div class="stack-row">
+      <strong>Phone</strong>
+      {% if place.phone %}
+        <button
+          type="button"
+          class="copy-phone-button"
+          data-copy-value="{{ place.phone }}"
+          onclick="navigator.clipboard.writeText(this.dataset.copyValue); this.textContent='Copied ✓'; setTimeout(() => this.textContent=this.dataset.copyValue, 1200);"
+        >
+          {{ place.phone }}
+        </button>
+      {% else %}
+        <span>Missing</span>
+      {% endif %}
+    </div>
+      <div class="stack-row">
+        <strong>Address</strong>
+        <span>{{ place.address1 }}, {{ place.town }}, {{ place.postcode }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Status</strong>
+        <span>{{ planira.humanize_label(place.status) }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Confidence</strong>
+        <span>{{ profile.confidence_score }}/100</span>
+      </div>
+      <div class="stack-row">
+        <strong>Toilet distance</strong>
+        <span>
+          {% if toilet_distance_backend_supported %}
+            Recorded on this venue profile.
+          {% else %}
+            Not recorded yet. Backend field support is still needed before this can be saved here.
+          {% endif %}
+        </span>
+      </div>
+    </div>
+  </article>
+
+  <article class="surface-panel accent-panel">
+    <span class="eyebrow">Call focus</span>
+    <h2>What to confirm on this call</h2>
+    <div class="stack-list">
+      {% for item in premium_checklist %}
+        <div class="stack-row">
+          <strong>{{ item }}</strong>
+          <span>{{ stream_prompt }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<form method="post" class="surface-panel form-shell">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="form-section">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Call result</span>
+        <h2>Conversation notes</h2>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field-group">
+        <label for="call-result">Call result</label>
+        <select id="call-result" name="call_result">
+          <option>answered</option>
+          <option>no_answer</option>
+          <option>callback</option>
+          <option>wrong_number</option>
+          <option>refused</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="contact-name">Contact name</label>
+        <input id="contact-name" name="contact_name" placeholder="Optional first name or role">
+      </div>
+      <div class="field-group field-span-2">
+        <label for="call-notes">Call notes</label>
+        <textarea id="call-notes" name="call_notes" placeholder="Capture the exact wording that supports the public-facing record."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Accessibility data</span>
+        <h2>Structured details</h2>
+      </div>
+    </div>
+    {% set opts = ['unknown', 'yes', 'no', 'partial'] %}
+    <div class="form-grid">
+      {% for field, label in [('toilets_available', 'Toilets available'), ('accessible_toilet', 'Accessible toilet'), ('baby_changing', 'Baby changing'), ('step_free_entrance', 'Step-free entrance'), ('stairs_inside', 'Stairs inside'), ('lift_available', 'Lift available'), ('disabled_parking', 'Disabled parking')] %}
+        <div class="field-group">
+          <label for="{{ field }}">{{ label }}</label>
+          <select id="{{ field }}" name="{{ field }}">
+            {% for o in opts %}
+              <option value="{{ o }}" {% if profile|attr(field) == o %}selected{% endif %}>{{ o }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endfor %}
+      <div class="field-group">
+        <label for="toilet-location">Toilet location</label>
+        <input id="toilet-location" name="toilet_location" value="{{ profile.toilet_location or '' }}" placeholder="Ground floor or upstairs">
+      </div>
+      <div class="field-group field-span-2">
+        <label for="toilet-distance-from-bar">Toilet distance from bar</label>
+        <input
+          id="toilet-distance-from-bar"
+          name="toilet_distance_from_bar"
+          value="{{ profile.toilet_distance_from_bar or '' }}"
+          placeholder="e.g. approx. 20 metres from the bar, past the rear corridor"
+        >
+        <p class="helper-copy">Use a rough estimate if exact distance is not available.</p>
+      </div>
+      <div class="field-group">
+        <label for="baby-changing-location">Baby changing location</label>
+        <input id="baby-changing-location" name="baby_changing_location" value="{{ profile.baby_changing_location or '' }}" placeholder="Location details">
+      </div>
+      <div class="field-group field-span-2">
+        <label for="public-comments">Public comments</label>
+        <textarea id="public-comments" name="public_comments" placeholder="Public comments that paying users would trust.">{{ profile.public_comments or '' }}</textarea>
+      </div>
+      <div class="field-group field-span-2">
+        <label for="sensory-notes">Sensory notes</label>
+        <textarea id="sensory-notes" name="sensory_notes" placeholder="Noise, lighting, layout, or other relevant context.">{{ profile.sensory_notes or '' }}</textarea>
+      </div>
+      <div class="field-group field-span-2">
+        <label for="internal-notes">Internal notes</label>
+        <textarea id="internal-notes" name="internal_notes" placeholder="Private staff notes.">{{ profile.internal_notes or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Quality controls</span>
+        <h2>Verification confidence</h2>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="field-group">
+        <label for="source">Source</label>
+        <select id="source" name="source">
+          {% for source in ['phone_verified', 'owner_verified', 'user_submitted', 'not_verified'] %}
+            <option value="{{ source }}" {% if profile.source == source %}selected{% endif %}>{{ source|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="confidence-score">Confidence score</label>
+        <input id="confidence-score" type="number" name="confidence_score" min="0" max="100" value="{{ profile.confidence_score }}">
+      </div>
+      <div class="field-group">
+        <label for="call-status">Status</label>
+        <select id="call-status" name="status">
+          {% for status in ['needs_call', 'callback', 'calling', 'verified'] %}
+            <option value="{{ status }}" {% if place.status == status %}selected{% endif %}>{{ planira.humanize_label(status) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <label class="toggle-card field-span-2" for="mark-verified">
+        <div>
+          <strong>Mark verified now</strong>
+          <p class="muted">Only use this when the call genuinely supports a confident public record.</p>
+        </div>
+        <input id="mark-verified" class="checkbox-pill" type="checkbox" name="mark_verified" value="yes">
+      </label>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button>Save worksheet</button>
+    <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+  </div>
+</form>
+{% endblock %}

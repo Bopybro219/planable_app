@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Data Management | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Data management</span>
+    <h1>Venue data workspace</h1>
+    <p class="page-subtitle">A cleaner internal view for editing records, spotting weak entries, and preparing future bulk workflows.</p>
+  </div>
+</section>
+
+<section class="table-shell surface-panel">
+  <div class="table-header">
+    <div>
+      <span class="eyebrow">Venue records</span>
+      <h2>{{ data_rows|length }} recently updated venues</h2>
+    </div>
+    <span class="helper-copy">Bulk actions can slot into this layout when the workflow is ready.</span>
+  </div>
+  <div class="table-list">
+    {% for row in data_rows %}
+      <article class="table-row">
+        <div>
+          <strong>{{ row.place.name }}</strong>
+          <p class="muted">{{ row.place.address1 }} · {{ row.place.town }}</p>
+        </div>
+        <div>
+          <strong>{{ row.status_label }}</strong>
+          <p class="muted">{{ row.verification }}</p>
+        </div>
+        <div>
+          <span class="metric-pill">Confidence {{ row.confidence }}</span>
+        </div>
+        <div class="row-actions">
+          <a class="btn btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Edit venue</a>
+          <a class="btn btn-secondary btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
+          <button type="button" class="btn btn-secondary btn-small">Flag entry</button>
+        </div>
+      </article>
+    {% else %}
+      <article class="empty-state">
+        <span class="eyebrow">No data yet</span>
+        <h2>We don’t have venue data here yet.</h2>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

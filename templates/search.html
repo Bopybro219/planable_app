@@ -1,16 +1,172 @@
-{% extends 'base.html' %}{% block content %} <h1>Search places</h1>
-<form class="searchbox" action="{{ url_for('search') }}">
-  <input name="q" value="{{q}}" placeholder="Venue/postcode">
-  <input name="town" value="{{town}}" placeholder="Town">
-  <select name="accessible">
-    <option value="">Any accessible toilet</option>
-    <option value="yes" {% if accessible=='yes' %}selected{% endif %}>Accessible toilet yes</option>
-  </select>
-  <button>Search</button>
-</form>
-<div class="grid">{% for p in results %} <a class="card" href="{{ url_for('place_detail', slug=p.slug) }}">
-    <h2>{{p.name}}</h2>
-    <p>{{p.address1}} {{p.town}} {{p.postcode}}</p>
-    <p>
-    </p>{% if p.accessibility and p.accessibility.last_verified_at %} <p class="ok">Last verified: {{p.accessibility.last_verified_at.strftime('%d %b %Y')}}</p>{% else %} <p class="warn">Not verified yet</p>{% endif %}
-  </a>{% endfor %} </div>{% if not results %} <p>No results yet.</p>{% endif %}{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Search | Planira{% endblock %}
+{% block content %}
+{% import '_planira_macros.html' as planira %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Planira starts with search</span>
+    <h1>Find a place</h1>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn-secondary-planira" href="{{ url_for('plans') }}">See access options</a>
+  </div>
+</section>
+
+<section class="search-layout">
+  <div class="content-stack">
+    <article class="planira-card planira-card-primary search-control-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Search</span>
+          <h2>Start with a place search</h2>
+        </div>
+      </div>
+      <form class="search-form search-form-inline" action="{{ url_for('search') }}">
+        <input type="hidden" name="submitted" value="1">
+        <div class="field-group">
+          <label for="search-q">Venue or postcode</label>
+          <input id="search-q" name="q" value="{{ q }}" placeholder="Venue name or postcode">
+        </div>
+        <div class="field-group">
+          <label for="search-town">Town</label>
+          <input id="search-town" name="town" value="{{ town }}" placeholder="Town">
+        </div>
+        <div class="field-group">
+          <label for="search-accessible">Accessibility filter</label>
+          <select id="search-accessible" name="accessible">
+            <option value="">Any accessible toilet</option>
+            <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
+          </select>
+        </div>
+        <button class="btn-primary-planira">Show places</button>
+      </form>
+      <p class="helper-copy">Search by venue name first, then narrow by town or accessible toilet if you need to. Results only appear after a deliberate search.</p>
+    </article>
+
+    {% if submitted or should_search %}
+      <article class="planira-card planira-card-soft results-summary-panel">
+        <div>
+          <span class="eyebrow">Result summary</span>
+          {% if should_search and pagination %}
+            <h2>{{ pagination.total }} places found</h2>
+            <p class="muted">Page {{ pagination.page }} of {{ pagination.pages or 1 }}.</p>
+          {% else %}
+            <h2>Search ready</h2>
+            <p class="muted">Add a venue name, town, or accessibility filter to show results.</p>
+          {% endif %}
+        </div>
+        <div class="tag-row">
+          <span>{{ search_usage.quota_copy.search_usage_copy }}</span>
+          {% if pagination %}
+            <span>{{ pagination.per_page }} results per page</span>
+          {% else %}
+            <span>No filters applied yet</span>
+          {% endif %}
+        </div>
+      </article>
+    {% endif %}
+
+    {% if result_cards %}
+      <div class="card-grid">
+        {% for card in result_cards %}
+          <a class="result-card planira-card interactive-panel" href="{{ url_for('place_detail', slug=card.place.slug) }}">
+            <div class="result-topline">
+              <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
+            </div>
+            <h3>{{ card.place.name }}</h3>
+            <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
+            {{ planira.confidence_panel(card.signal.label, card.signal.summary) }}
+            <div class="tag-row">
+              <span>{{ card.verified_text }}</span>
+              {% for item in card.key_bits %}
+                <span>{{ item }}</span>
+              {% endfor %}
+            </div>
+            <span class="result-link-copy">Open place details</span>
+          </a>
+      {% endfor %}
+      </div>
+      {% if pagination.pages > 1 %}
+        <nav class="pagination-nav planira-card planira-card-soft" aria-label="Search result pages">
+          <div class="pagination-summary">
+            <strong>Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }} to {{ ((pagination.page - 1) * pagination.per_page) + result_cards|length }}</strong>
+            <span class="muted">of {{ pagination.total }} venues</span>
+          </div>
+          <div class="pagination-links">
+            {% if pagination.has_prev %}
+              <a class="btn-secondary-planira" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=pagination.prev_num) }}">Previous</a>
+            {% endif %}
+            {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+              {% if page_number %}
+                <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=page_number) }}">{{ page_number }}</a>
+              {% else %}
+                <span class="page-gap">…</span>
+              {% endif %}
+            {% endfor %}
+            {% if pagination.has_next %}
+              <a class="btn-secondary-planira" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=pagination.next_num) }}">Next</a>
+            {% endif %}
+          </div>
+        </nav>
+      {% endif %}
+    {% elif should_search %}
+      <article class="empty-state planira-card">
+        <span class="eyebrow">No matching places yet</span>
+        <h2>Nothing matched that search this time.</h2>
+        <p class="muted">Try a broader venue name, remove a filter, or switch towns. If the place is new to Planira, it may appear once someone adds or reviews it.</p>
+      </article>
+    {% elif submitted %}
+      <article class="empty-state planira-card">
+        <span class="eyebrow">Search before results</span>
+        <h2>Start with a venue, town, or accessibility filter.</h2>
+        <p class="muted">Planira will only show results after you intentionally search, so the first page load stays focused and does not dump the full venue list.</p>
+      </article>
+    {% else %}
+      <article class="empty-state planira-card planira-card-soft search-prestate">
+        <span class="eyebrow">Before you search</span>
+        <h2>Search first, then Planira shows the useful part.</h2>
+        <p class="muted">Try a venue name, postcode, town, or accessible toilet filter when you are ready. The first page load stays intentionally empty so you can start with a deliberate search.</p>
+        <div class="tag-row">
+          <span>Venue name or postcode</span>
+          <span>Town filter</span>
+          <span>Accessible toilet filter</span>
+        </div>
+      </article>
+    {% endif %}
+  </div>
+
+  <aside class="supporting-stack">
+    <article class="planira-card planira-card-soft search-help-panel">
+      <span class="eyebrow">Helpful signals</span>
+      <h2>What the signals mean</h2>
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong>Looks straightforward</strong>
+          <span>Useful when the place looks easier to navigate and the record has stronger confidence.</span>
+        </div>
+        <div class="stack-row">
+          <strong>Worth checking</strong>
+          <span>Worth checking before you go because something is partial, older, or still unclear.</span>
+        </div>
+        <div class="stack-row">
+          <strong>Might be a bit tricky</strong>
+          <span>Used when a visit may need more planning or a backup option.</span>
+        </div>
+      </div>
+    </article>
+    <article class="planira-card planira-card-soft">
+      <span class="eyebrow">More from Planira</span>
+      <h2>Extra tools when you need them</h2>
+      <p class="muted">{{ search_usage.quota_copy.allowance_copy }}</p>
+      <div class="stack-list">
+        {% for feature in upgrade_features %}
+          <div class="stack-row">
+            <strong>{{ feature }}</strong>
+            <span>Designed to fit into the same calm search flow without adding extra noise.</span>
+          </div>
+        {% endfor %}
+      </div>
+    </article>
+  </aside>
+</section>
+{% endblock %}

@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+{% block title %}Account | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Account overview</span>
+    <h1>Your Planira account</h1>
+  </div>
+  <div class="page-head-actions">
+    {% for action in quick_actions %}
+      <a class="{% if action.style == 'primary' %}btn-primary-planira{% else %}btn-secondary-planira{% endif %}" href="{{ action.href }}">{{ action.label }}</a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="metric-grid">
+  <article class="planira-stat-card">
+    <span>Member since</span>
+    <strong>{{ account_summary.member_since }}</strong>
+  </article>
+  <article class="planira-stat-card">
+    <span>Current plan</span>
+    <strong>{{ account_state.plan_label }}</strong>
+  </article>
+  <article class="planira-stat-card">
+    <span>Access level</span>
+    <strong>{{ account_state.access_label }}</strong>
+  </article>
+  <article class="planira-stat-card">
+    <span>Verified records</span>
+    <strong>{{ account_summary.verifications }}</strong>
+  </article>
+  <article class="planira-stat-card">
+    <span>Contributions</span>
+    <strong>{{ account_summary.contributions }}</strong>
+  </article>
+</section>
+
+<section class="dashboard-grid account-shell">
+  <article class="planira-settings-panel hero-stat-panel">
+    <div class="hero-stat-header">
+      <div>
+        <span class="eyebrow">Profile summary</span>
+        <p class="muted">{{ current_user.email }}</p>
+      </div>
+      <span class="metric-pill">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
+    </div>
+    <p>{{ current_access.summary }}</p>
+  </article>
+
+  <article class="planira-settings-panel">
+    <span class="eyebrow">Plan and usage</span>
+    <h2>{{ account_summary.plan.name }}</h2>
+    <p>{{ account_summary.plan.description }}</p>
+    <div class="progress-block">
+      <div class="progress-row">
+        <strong>Search usage</strong>
+        <span>{{ account_summary.quota_copy.search_usage_copy }}</span>
+      </div>
+      <div class="progress-track">
+        <span style="width: {{ (account_summary.searches_used / account_summary.search_limit * 100) if account_summary.search_limit else 0 }}%"></span>
+      </div>
+      <p class="helper-copy">{{ account_summary.quota_copy.allowance_copy }}</p>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Monthly search limit</strong>
+        <span>{{ account_summary.quota_copy.search_limit_copy }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Search credits</strong>
+        <span>{{ account_summary.quota_copy.search_credits_copy }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Community points</strong>
+        <span>{{ account_summary.community_points }}</span>
+      </div>
+      {% if account_summary.rank_title %}
+        <div class="stack-row">
+          <strong>Rank title</strong>
+          <span>{{ account_summary.rank_title }}</span>
+        </div>
+      {% endif %}
+    </div>
+  </article>
+</section>
+
+
+<section class="card-grid">
+  <article class="planira-card">
+    <span class="eyebrow">Usage summary</span>
+    <h2>How you use Planira</h2>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Community notes</strong>
+        <span>{{ account_summary.community_notes }} contributions have been added from this account.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Verified records</strong>
+        <span>{{ account_summary.verifications }} venue records have been verified by this account.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Search allowance</strong>
+        <span>{{ account_summary.quota_copy.search_limit_copy }} on the current plan.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Credits remaining</strong>
+        <span>{{ account_summary.quota_copy.search_credits_copy }}.</span>
+      </div>
+    </div>
+  </article>
+
+  <article class="planira-card">
+    <span class="eyebrow">Quick actions</span>
+    <h2>What people usually do next</h2>
+    <div class="action-list">
+      {% for action in quick_actions %}
+        <a class="action-card" href="{{ action.href }}">
+          <strong>{{ action.label }}</strong>
+          <span>Move into the next relevant workflow without hunting through the app.</span>
+        </a>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="planira-card planira-card-soft">
+    <span class="eyebrow">Coming soon</span>
+    <h2>Smarter defaults and future account tools</h2>
+    <div class="skeleton-grid compact-skeletons">
+      <div class="planira-card skeleton-card">
+        <div class="skeleton-line short"></div>
+        <div class="skeleton-line"></div>
+      </div>
+      <div class="planira-card skeleton-card">
+        <div class="skeleton-line short"></div>
+        <div class="skeleton-line"></div>
+      </div>
+    </div>
+    <p class="helper-copy">The layout is ready for future saved venues without making the account experience feel unfinished today.</p>
+  </article>
+</section>
+{% endblock %}

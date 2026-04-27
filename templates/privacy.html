@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block title %}Privacy | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Privacy</span>
+    <h1>How Planira handles your data</h1>
+    <p class="page-subtitle">Plain-English notes for a beta-stage product that tracks accounts, venue searches, and community contributions.</p>
+  </div>
+</section>
+
+<section class="content-stack">
+  <article class="surface-panel">
+    <h2>What we keep</h2>
+    <div class="stack-list">
+      <div class="stack-row"><strong>Account details</strong><span>Your name, email, and profile image come from Google sign-in.</span></div>
+      <div class="stack-row"><strong>Search activity</strong><span>We store search activity so usage limits, account summaries, and staff product review can work properly.</span></div>
+      <div class="stack-row"><strong>Community contributions</strong><span>Comments and moderation history are kept so venue information stays useful and safer to trust.</span></div>
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <h2>How it is used</h2>
+    <p class="muted">Planira uses this data to run the product, support moderation, improve venue records, and understand what parts of the search experience need work. We do not aim to make the legal side feel intimidating, but we do want to be clear.</p>
+  </article>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% macro humanize_label(value) -%}
+  {% set labels = {
+    'needs_call': 'Needs phone check',
+    'needs_review': 'Needs review',
+    'pending_review': 'Pending review',
+    'priority_3': 'Priority 3',
+    'verified_only': 'Verified only'
+  } %}
+  {{ labels.get(value, value|replace('_', ' ')|title) }}
+{%- endmacro %}
+
+{% macro confidence_panel(signal_label, supporting_copy=None) -%}
+  {% set confidence_map = {
+    'Looks straightforward': {
+      'score': 88,
+      'tone': 'easy',
+      'copy': 'Recent signals line up well, so this one should take less planning to trust.'
+    },
+    'Worth checking': {
+      'score': 68,
+      'tone': 'moderate',
+      'copy': 'There is useful coverage here, but a quick double-check could save uncertainty later.'
+    },
+    'Might be a bit tricky': {
+      'score': 42,
+      'tone': 'difficult',
+      'copy': 'Some details still feel incomplete, so a backup plan or follow-up check may help.'
+    }
+  } %}
+  {% set fallback = {'score': 55, 'tone': 'moderate', 'copy': 'This record has some useful signs, but it still benefits from a little caution.'} %}
+  {% set confidence = confidence_map.get(signal_label, fallback) %}
+  <div class="confidence-panel confidence-panel-{{ confidence.tone }}">
+    <div class="confidence-head">
+      <span class="status-chip status-{{ confidence.tone }}">{{ signal_label }}</span>
+      <strong>{{ confidence.score }}%</strong>
+    </div>
+    <div class="confidence-track" aria-hidden="true">
+      <span style="width: {{ confidence.score }}%"></span>
+    </div>
+    <p class="confidence-copy">{{ supporting_copy or confidence.copy }}</p>
+  </div>
+{%- endmacro %}

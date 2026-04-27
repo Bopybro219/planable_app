@@ -1,10 +1,150 @@
-{% extends 'base.html' %}{% block content %} <section class="hero">
-  <h1>Accessibility info before you arrive.</h1>
-  <p>Search toilets, step-free access, baby changing, stairs, comments, and last verified data.</p>
-  <form class="searchbox" action="{{ url_for('search') }}">
-    <input name="q" placeholder="Venue, postcode, street" value="{{q}}">
-    <input name="town" placeholder="Town" value="{{town}}">
-    <button>Search</button>
-  </form>
-  <p class="muted">Search results require login while the database is being built and protected.</p>
-</section>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Planira | Know before you go.{% endblock %}
+{% block content %}
+{% import '_planira_macros.html' as planira %}
+<section class="home-hero">
+  <article class="hero-card planira-card planira-card-primary">
+    <div class="hero-copy">
+      <span class="eyebrow">Planira starts with search</span>
+      <h1>Search first. Plan with better context.</h1>
+      <p class="page-subtitle">Check a venue, town, or accessible toilet need first, then decide with clearer signals before you set off.</p>
+      <form class="search-form" action="{{ url_for('search') }}">
+        <input type="hidden" name="submitted" value="1">
+        <div class="search-form-home">
+          <div class="field-group">
+            <label for="home-q">Venue, postcode, or street</label>
+            <input id="home-q" name="q" placeholder="The Example Arms" value="{{ q }}">
+          </div>
+          <div class="field-group">
+            <label for="home-town">Town</label>
+            <input id="home-town" name="town" placeholder="Northampton" value="{{ town }}">
+          </div>
+          <div class="field-group">
+            <label for="home-accessible">Accessibility filter</label>
+            <select id="home-accessible" name="accessible">
+              <option value="">Any accessible toilet</option>
+              <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
+            </select>
+          </div>
+          <button class="btn-primary-planira">{{ 'Search places' if current_user else 'Start exploring' }}</button>
+        </div>
+      </form>
+      <div class="inline-note">
+        {% if current_user %}
+          Search is the main experience. Place pages, account tools, and staff-reviewed updates all build from that same flow.
+        {% else %}
+          Start with a search, then sign in when you want fuller results and contribution tools.
+        {% endif %}
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="signal-grid">
+  <article class="planira-stat-card">
+    <span class="status-chip chip-success">Looks straightforward</span>
+    <p>Clear, recent details that suggest the visit should feel easier to manage.</p>
+  </article>
+  <article class="planira-stat-card">
+    <span class="status-chip chip-warning">Worth checking</span>
+    <p>Useful context when some details are partial, older, or still a little unclear.</p>
+  </article>
+  <article class="planira-stat-card">
+    <span class="status-chip chip-tricky">Might be a bit tricky</span>
+    <p>More careful planning may help here, especially if step-free access or facilities are limited.</p>
+  </article>
+</section>
+
+<section class="section-block">
+  <div class="section-head">
+    <div>
+      <span class="eyebrow">How search works</span>
+      <h2>Useful signals first, detail when you need it.</h2>
+    </div>
+  </div>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <strong>Search with intent</strong>
+      <p>Start with a venue, town, or accessible toilet filter instead of trawling a full list.</p>
+    </div>
+    <div class="feature-card">
+      <strong>Scan the signal</strong>
+      <p>Confidence cards and key facts sit at the top so you can judge a place quickly.</p>
+    </div>
+    <div class="feature-card">
+      <strong>Open the detail page</strong>
+      <p>Verification notes and community context stay close by when you want more certainty.</p>
+    </div>
+  </div>
+</section>
+
+<section class="dashboard-grid home-search-preview-grid">
+  <article class="planira-card planira-card-soft">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Search preview</span>
+        <h2>Results stay focused and easy to scan</h2>
+      </div>
+    </div>
+    <p class="muted">This is what the search flow leads with after someone intentionally searches.</p>
+    <div class="card-grid">
+      {% for card in preview_cards %}
+        <article class="result-card planira-card">
+          <div class="result-topline">
+            <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
+            <span class="status-badge status-{{ card.signal.tone }}">{{ card.signal.label }}</span>
+          </div>
+          <h3>{{ card.place.name }}</h3>
+          <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
+          {{ planira.confidence_panel(card.signal.label, card.signal.summary) }}
+          <div class="tag-row">
+            <span>{{ card.verified_text }}</span>
+            {% for item in card.key_bits %}
+              <span>{{ item }}</span>
+            {% endfor %}
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="planira-card">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">What happens next</span>
+        <h2>One search flow, then deeper tools if you need them</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Free plan</strong>
+        <span>Start with a tracked monthly search allowance, open venue pages, and learn the useful basics without extra noise.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Paid plan</strong>
+        <span>Unlock a larger search allowance, richer filtering, and stronger verification context when you need more certainty.</span>
+      </div>
+    </div>
+    <div class="pricing-preview-list compact-plan-preview">
+      {% for plan in plans %}
+        <div class="pricing-preview-item">
+          <div>
+            <strong>{{ plan.name }}</strong>
+            <span>{{ plan.summary }}</span>
+          </div>
+          <span class="metric-pill">{{ plan.price }}</span>
+        </div>
+      {% endfor %}
+      {% for pack in api_packs %}
+        <div class="pricing-preview-item">
+          <div>
+            <strong>{{ pack.name }}</strong>
+            <span>{{ pack.description }}</span>
+          </div>
+          <span class="metric-pill">{{ pack.price }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}
