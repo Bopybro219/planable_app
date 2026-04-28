@@ -2532,6 +2532,20 @@ body.planira-theme-calm .centered-panel .page-head-actions {
   justify-content: center;
 }
 
+.brand-mark-image {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.brand-mark-image img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
 body.planira-theme-calm .sr-only {
   position: absolute;
   width: 1px;

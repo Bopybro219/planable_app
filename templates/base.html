@@ -8,7 +8,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='logo.png') }}?v=2">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='mapicon.svg') }}?v=1">
+
   </head>
   <body class="planira-theme-calm">
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -21,7 +22,9 @@
       <header class="planira-topbar">
         <div class="planira-content planira-topbar-inner">
           <a class="planira-logo" href="{{ url_for('index') }}">
-            <span class="brand-mark" aria-hidden="true">P</span>
+            <span class="brand-mark brand-mark-image" aria-hidden="true">
+              <img src="{{ url_for('static', filename='mapicon.svg') }}" alt="">
+            </span>
             <div class="brand-copy">
               <strong>{{ brand_name }}</strong>
               <span>{{ brand_tagline }}</span>
