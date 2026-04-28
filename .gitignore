@@ -3,3 +3,5 @@ __pycache__/
 instance/
 *.db
 .env
+.venv/
+.tools/
