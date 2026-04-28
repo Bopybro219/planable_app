@@ -6,6 +6,7 @@
   <div class="page-title-group">
     <span class="eyebrow">Planira starts with search</span>
     <h1>Find a place</h1>
+    <p class="page-subtitle">Search deliberately, scan the signal quickly, and open a place page only when you want more detail.</p>
   </div>
   <div class="page-head-actions">
     <a class="btn-secondary-planira" href="{{ url_for('plans') }}">See access options</a>
@@ -185,7 +186,7 @@
           </div>
         </details>
       </form>
-      <p class="helper-copy">Search by venue name first, then narrow by town or accessibility detail if you need to. Results only appear after a deliberate search.</p>
+      <p class="helper-copy">Search by venue name first, then narrow by town or accessibility detail if you need to. Results only appear after a deliberate search so the workspace stays calm and intentional.</p>
     </article>
 
     {% if submitted or should_search %}
@@ -252,6 +253,11 @@
         <span class="eyebrow">No matching places yet</span>
         <h2>Nothing matched that search this time.</h2>
         <p class="muted">Try a broader venue or postcode, remove one or two advanced filters, or switch towns to widen the search.</p>
+        <div class="tag-row">
+          <span>Broaden the venue name</span>
+          <span>Remove one filter</span>
+          <span>Try another town</span>
+        </div>
       </article>
     {% elif submitted %}
       <article class="empty-state planira-card">
@@ -273,19 +279,6 @@
     {% endif %}
   </div>
 
-  <aside class="supporting-stack">
-    <article class="planira-card planira-card-soft search-help-panel">
-      <span class="eyebrow">Helpful signals</span>
-      <h2>What the signals mean</h2>
-      <div class="stack-list">
-        {% for signal in signal_examples %}
-          <div class="stack-row">
-            <strong>{{ signal.label }}</strong>
-            <span>{{ signal['copy'] }}</span>
-          </div>
-        {% endfor %}
-      </div>
-    </article>
     <article class="planira-card planira-card-soft">
       <span class="eyebrow">Your plan</span>
       <h2>Search usage at a glance</h2>

@@ -5,6 +5,7 @@
   <div class="page-title-group">
     <span class="eyebrow">Account overview</span>
     <h1>Your Planira account</h1>
+    <p class="page-subtitle">Usage, plan details, and the next helpful actions in one calm workspace.</p>
   </div>
   <div class="page-head-actions">
     {% for action in quick_actions %}
@@ -86,70 +87,4 @@
 </section>
 
 
-<section class="card-grid">
-  <article class="planira-card">
-    <span class="eyebrow">Usage summary</span>
-    <h2>How you use Planira</h2>
-    <div class="stack-list">
-      <div class="stack-row">
-        <strong>Community notes</strong>
-        <span>{{ account_summary.community_notes }} contributions have been added from this account.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Verified records</strong>
-        <span>{{ account_summary.verifications }} venue records have been verified by this account.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Search allowance</strong>
-        <span>{{ account_summary.quota_copy.search_limit_copy }} on the current plan.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Credits remaining</strong>
-        <span>{{ account_summary.quota_copy.search_credits_copy }}.</span>
-      </div>
-      {% if developer_summary %}
-        <div class="stack-row">
-          <strong>API keys</strong>
-          <span>{{ developer_summary.active_key_count }} active keys with {{ developer_summary.total_lookup_credits }} lookup credits{% if developer_summary.has_unlimited_key %} and one or more unlimited preview keys{% endif %}.</span>
-        </div>
-        <div class="stack-row">
-          <strong>API usage</strong>
-          <span>{{ developer_summary.total_lookups_used }} API lookups recorded across active keys this month.</span>
-        </div>
-      {% endif %}
-    </div>
-  </article>
-
-  <article class="planira-card">
-    <span class="eyebrow">Quick actions</span>
-    <h2>What people usually do next</h2>
-    <div class="action-list">
-      {% for action in quick_actions %}
-        <a class="action-card" href="{{ action.href }}">
-          <strong>{{ action.label }}</strong>
-          <span>Move into the next relevant workflow without hunting through the app.</span>
-        </a>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="planira-card planira-card-soft">
-    <span class="eyebrow">Data and support</span>
-    <h2>Privacy and account basics</h2>
-    <div class="action-list">
-      <a class="action-card" href="{{ url_for('account_settings') }}">
-        <strong>Review settings</strong>
-        <span>See your account details, search usage, and developer access in one place.</span>
-      </a>
-      <a class="action-card" href="{{ url_for('data_rights') }}">
-        <strong>Read your data rights</strong>
-        <span>Understand how access, correction, and deletion requests are handled today.</span>
-      </a>
-      <a class="action-card" href="{{ url_for('privacy') }}">
-        <strong>Check privacy details</strong>
-        <span>See what Planira stores for sign-in, search usage, API access, and moderation.</span>
-      </a>
-    </div>
-  </article>
-</section>
 {% endblock %}

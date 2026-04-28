@@ -8,9 +8,9 @@
     <p class="page-subtitle">A calm internal view of the current call, OBS widget health, and progress signals for the live workflow.</p>
   </div>
   <div class="page-head-actions">
-    <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Staff dashboard</a>
+    <a class="btn-secondary-planira" href="{{ url_for('dashboard') }}">Staff dashboard</a>
     {% if active_call.place %}
-      <a class="btn" href="{{ active_call.place.worksheet_url }}">Current call worksheet</a>
+      <a class="btn-primary-planira" href="{{ active_call.place.worksheet_url }}">Current call worksheet</a>
     {% endif %}
   </div>
 </section>

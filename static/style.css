@@ -1865,3 +1865,802 @@ textarea:focus-visible,
 .callout-chip {
   box-shadow: inset 0 0 0 1px rgba(230, 184, 156, 0.12);
 }
+
+/* ==================================================
+   PLANIRA CALM EXPERIENCE LAYER
+   Final shared design system for the accessibility-first refresh.
+   ================================================== */
+
+:root {
+  --color-canvas: #f5f7f4;
+  --color-canvas-strong: #edf1ec;
+  --color-surface: rgba(255, 255, 255, 0.9);
+  --color-surface-strong: #ffffff;
+  --color-surface-soft: #f8fbf9;
+  --color-text: #183036;
+  --color-text-strong: #102329;
+  --color-muted: #5f7478;
+  --color-border: rgba(24, 48, 54, 0.1);
+  --color-border-strong: rgba(24, 48, 54, 0.18);
+  --color-primary: #2c7a7b;
+  --color-primary-strong: #195b5c;
+  --color-primary-soft: rgba(44, 122, 123, 0.1);
+  --color-secondary-soft: rgba(198, 170, 146, 0.16);
+  --color-success: #1f8f68;
+  --color-success-soft: rgba(31, 143, 104, 0.12);
+  --color-warning: #a56a17;
+  --color-warning-soft: rgba(245, 158, 11, 0.14);
+  --color-danger: #b45353;
+  --color-danger-soft: rgba(180, 83, 83, 0.12);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --radius-sm: 14px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --shadow-soft: 0 16px 40px rgba(31, 53, 59, 0.08);
+  --shadow-panel: 0 24px 54px rgba(31, 53, 59, 0.1);
+  --shadow-lift: 0 20px 44px rgba(31, 53, 59, 0.14);
+}
+
+body.planira-theme-calm {
+  background:
+    radial-gradient(circle at top left, rgba(44, 122, 123, 0.08), transparent 24%),
+    radial-gradient(circle at top right, rgba(198, 170, 146, 0.12), transparent 22%),
+    linear-gradient(180deg, #f8faf8 0%, #f4f7f4 44%, #eef3ee 100%);
+  color: var(--color-text);
+}
+
+body.planira-theme-calm .ambient-grid {
+  background-image:
+    linear-gradient(rgba(24, 48, 54, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 48, 54, 0.035) 1px, transparent 1px);
+}
+
+body.planira-theme-calm .ambient-orb-one {
+  background: radial-gradient(circle, rgba(44, 122, 123, 0.12), transparent 70%);
+}
+
+body.planira-theme-calm .ambient-orb-two {
+  background: radial-gradient(circle, rgba(198, 170, 146, 0.18), transparent 72%);
+}
+
+body.planira-theme-calm .muted,
+body.planira-theme-calm .helper-copy,
+body.planira-theme-calm .page-subtitle,
+body.planira-theme-calm .inline-note,
+body.planira-theme-calm .brand-copy span,
+body.planira-theme-calm .table-row p,
+body.planira-theme-calm .stack-row span,
+body.planira-theme-calm .comment-card p,
+body.planira-theme-calm .activity-item p,
+body.planira-theme-calm .activity-item span,
+body.planira-theme-calm .usage-row p,
+body.planira-theme-calm .account-chip span,
+body.planira-theme-calm .planira-logo .brand-copy span {
+  color: var(--color-muted);
+}
+
+body.planira-theme-calm .eyebrow,
+body.planira-theme-calm .result-link-copy,
+body.planira-theme-calm .plan-price,
+body.planira-theme-calm .brand-copy span {
+  color: var(--color-primary);
+}
+
+body.planira-theme-calm .skip-link,
+body.planira-theme-calm .planira-topbar,
+body.planira-theme-calm .planira-mobile-menu,
+body.planira-theme-calm .planira-footer,
+body.planira-theme-calm .planira-staff-menu,
+body.planira-theme-calm .account-chip,
+body.planira-theme-calm .tab-list,
+body.planira-theme-calm .surface-panel,
+body.planira-theme-calm .planira-card,
+body.planira-theme-calm .planira-card-primary,
+body.planira-theme-calm .planira-card-soft,
+body.planira-theme-calm .planira-settings-panel,
+body.planira-theme-calm .planira-pricing-card,
+body.planira-theme-calm .metric-card,
+body.planira-theme-calm .toast,
+body.planira-theme-calm .result-card,
+body.planira-theme-calm .action-card,
+body.planira-theme-calm .comment-card,
+body.planira-theme-calm .activity-item,
+body.planira-theme-calm .usage-row,
+body.planira-theme-calm .detail-card,
+body.planira-theme-calm .table-row,
+body.planira-theme-calm .stack-row,
+body.planira-theme-calm .feature-card,
+body.planira-theme-calm .confidence-panel,
+body.planira-theme-calm .signal-summary-card,
+body.planira-theme-calm .signal-summary-card-priority,
+body.planira-theme-calm .empty-state,
+body.planira-theme-calm .empty-inline,
+body.planira-theme-calm .admin-user-card-v2,
+body.planira-theme-calm .admin-user-detail-panel,
+body.planira-theme-calm .admin-control-header,
+body.planira-theme-calm .admin-search-panel,
+body.planira-theme-calm .admin-stat-card,
+body.planira-theme-calm .stats div,
+body.planira-theme-calm .flash {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 252, 250, 0.94));
+  color: var(--color-text);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px);
+}
+
+body.planira-theme-calm .planira-card-primary,
+body.planira-theme-calm .hero-card,
+body.planira-theme-calm .search-control-panel,
+body.planira-theme-calm .hero-stat-panel {
+  background:
+    radial-gradient(circle at top right, rgba(44, 122, 123, 0.12), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(198, 170, 146, 0.14), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 247, 0.98));
+  box-shadow: var(--shadow-panel);
+}
+
+body.planira-theme-calm .planira-topbar,
+body.planira-theme-calm .planira-mobile-menu,
+body.planira-theme-calm .planira-footer {
+  background: rgba(245, 248, 245, 0.84);
+  border-color: rgba(24, 48, 54, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+body.planira-theme-calm .brand-mark,
+body.planira-theme-calm .account-avatar,
+body.planira-theme-calm .profile-avatar {
+  background: linear-gradient(135deg, #2c7a7b, #7db4a4 72%, #d8c2ad 100%);
+  color: #ffffff;
+  box-shadow: 0 16px 32px rgba(44, 122, 123, 0.18);
+}
+
+body.planira-theme-calm .planira-nav-link,
+body.planira-theme-calm .planira-staff-dropdown-toggle,
+body.planira-theme-calm .nav a {
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--color-muted);
+  border-color: transparent;
+}
+
+body.planira-theme-calm .planira-nav-link-active,
+body.planira-theme-calm .planira-nav-link:not(.planira-nav-link-active):hover,
+body.planira-theme-calm .planira-staff-dropdown-toggle:hover,
+body.planira-theme-calm .nav a:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  border-color: rgba(44, 122, 123, 0.16);
+}
+
+body.planira-theme-calm button,
+body.planira-theme-calm .btn,
+body.planira-theme-calm .btn-primary-planira,
+body.planira-theme-calm .planira-button-primary {
+  background: linear-gradient(135deg, #2c7a7b, #3f8e87);
+  color: #ffffff !important;
+  border-color: transparent;
+  box-shadow: 0 14px 28px rgba(44, 122, 123, 0.2);
+}
+
+body.planira-theme-calm .btn-secondary,
+body.planira-theme-calm .btn-secondary-planira,
+body.planira-theme-calm .planira-button-secondary,
+body.planira-theme-calm .planira-button-quiet,
+body.planira-theme-calm .planira-mobile-toggle {
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--color-text);
+  border-color: var(--color-border);
+  box-shadow: none;
+}
+
+body.planira-theme-calm .btn-ghost-planira,
+body.planira-theme-calm .planira-button-admin {
+  background: rgba(44, 122, 123, 0.08);
+  color: var(--color-primary-strong);
+  border-color: rgba(44, 122, 123, 0.16);
+  box-shadow: none;
+}
+
+body.planira-theme-calm .planira-button-danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border-color: rgba(180, 83, 83, 0.18);
+  box-shadow: none;
+}
+
+body.planira-theme-calm .btn:hover,
+body.planira-theme-calm .btn-primary-planira:hover,
+body.planira-theme-calm .planira-button-primary:hover,
+body.planira-theme-calm .btn-secondary:hover,
+body.planira-theme-calm .btn-secondary-planira:hover,
+body.planira-theme-calm .planira-button-secondary:hover,
+body.planira-theme-calm .planira-button-quiet:hover,
+body.planira-theme-calm .planira-button-admin:hover,
+body.planira-theme-calm .planira-button-danger:hover,
+body.planira-theme-calm .planira-mobile-toggle:hover,
+body.planira-theme-calm .result-card:hover,
+body.planira-theme-calm .action-card:hover,
+body.planira-theme-calm .planira-card:hover,
+body.planira-theme-calm .planira-card-primary:hover,
+body.planira-theme-calm .planira-card-soft:hover,
+body.planira-theme-calm .surface-panel:hover,
+body.planira-theme-calm .planira-pricing-card:hover,
+body.planira-theme-calm .admin-user-card-v2:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-lift);
+}
+
+body.planira-theme-calm input,
+body.planira-theme-calm select,
+body.planira-theme-calm textarea {
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--color-text);
+  border: 1px solid rgba(24, 48, 54, 0.12);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+body.planira-theme-calm input::placeholder,
+body.planira-theme-calm textarea::placeholder {
+  color: #809395;
+}
+
+body.planira-theme-calm input:focus,
+body.planira-theme-calm select:focus,
+body.planira-theme-calm textarea:focus {
+  border-color: rgba(44, 122, 123, 0.44);
+  box-shadow: 0 0 0 4px rgba(44, 122, 123, 0.12);
+  outline: none;
+}
+
+body.planira-theme-calm .planira-search-bar {
+  background: linear-gradient(180deg, rgba(239, 246, 243, 0.92), rgba(230, 238, 234, 0.92));
+  border-color: rgba(44, 122, 123, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+body.planira-theme-calm .planira-search-bar:focus-within {
+  border-color: rgba(44, 122, 123, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 0 0 4px rgba(44, 122, 123, 0.08);
+}
+
+body.planira-theme-calm .search-form-home select,
+body.planira-theme-calm .search-form-inline select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23195b5c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+body.planira-theme-calm .planira-chip,
+body.planira-theme-calm .tag-row span,
+body.planira-theme-calm .metric-pill,
+body.planira-theme-calm .page-link,
+body.planira-theme-calm .tab-button,
+body.planira-theme-calm .badge-strong,
+body.planira-theme-calm .badge-neutral,
+body.planira-theme-calm .callout-chip,
+body.planira-theme-calm .pill,
+body.planira-theme-calm .venue-type,
+body.planira-theme-calm .result-card-timestamp {
+  background: rgba(44, 122, 123, 0.08);
+  color: var(--color-primary-strong);
+  border-color: rgba(44, 122, 123, 0.14);
+}
+
+body.planira-theme-calm .badge-verified,
+body.planira-theme-calm .status-easy,
+body.planira-theme-calm .chip-success,
+body.planira-theme-calm .ok,
+body.planira-theme-calm .quick-answer-item-positive {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  border-color: rgba(31, 143, 104, 0.18);
+}
+
+body.planira-theme-calm .badge-warning,
+body.planira-theme-calm .status-moderate,
+body.planira-theme-calm .chip-warning,
+body.planira-theme-calm .warn,
+body.planira-theme-calm .callout-chip-warning,
+body.planira-theme-calm .quick-answer-item-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  border-color: rgba(165, 106, 23, 0.18);
+}
+
+body.planira-theme-calm .status-difficult,
+body.planira-theme-calm .chip-tricky {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border-color: rgba(180, 83, 83, 0.18);
+}
+
+body.planira-theme-calm .chip-neutral,
+body.planira-theme-calm .quick-answer-item-neutral {
+  background: rgba(95, 116, 120, 0.09);
+  color: var(--color-muted);
+  border-color: rgba(95, 116, 120, 0.14);
+}
+
+body.planira-theme-calm .signal-summary-card-priority,
+body.planira-theme-calm .detail-card-priority {
+  background:
+    radial-gradient(circle at top right, rgba(198, 170, 146, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 247, 0.98));
+  border-color: rgba(44, 122, 123, 0.16);
+}
+
+body.planira-theme-calm .confidence-track,
+body.planira-theme-calm .progress-track {
+  background: rgba(24, 48, 54, 0.08);
+}
+
+body.planira-theme-calm .confidence-track span,
+body.planira-theme-calm .progress-track span {
+  background: linear-gradient(90deg, #2c7a7b, #7db4a4);
+}
+
+body.planira-theme-calm .metric-card strong,
+body.planira-theme-calm .planira-stat-card strong,
+body.planira-theme-calm .stats b,
+body.planira-theme-calm .confidence-head strong,
+body.planira-theme-calm .signal-summary-card span,
+body.planira-theme-calm .signal-summary-card-priority span,
+body.planira-theme-calm .plan-price,
+body.planira-theme-calm .hero-greeting {
+  color: var(--color-primary-strong);
+}
+
+body.planira-theme-calm .page-link.active,
+body.planira-theme-calm .tab-button.active {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-color: transparent;
+}
+
+body.planira-theme-calm .tab-button.danger {
+  color: var(--color-danger);
+}
+
+body.planira-theme-calm .planira-footer-links a:hover,
+body.planira-theme-calm .planira-staff-menu-link:hover {
+  color: var(--color-primary-strong);
+}
+
+body.planira-theme-calm .planira-staff-menu-link:hover {
+  background: rgba(44, 122, 123, 0.08);
+}
+
+body.planira-theme-calm .table-row,
+body.planira-theme-calm .pricing-preview-item,
+body.planira-theme-calm .usage-row,
+body.planira-theme-calm .stack-row,
+body.planira-theme-calm .comment-card,
+body.planira-theme-calm .activity-item,
+body.planira-theme-calm .detail-card,
+body.planira-theme-calm .feature-card,
+body.planira-theme-calm .metric-card,
+body.planira-theme-calm .planira-stat-card {
+  border-radius: var(--radius-md);
+}
+
+body.planira-theme-calm .surface-panel,
+body.planira-theme-calm .planira-card,
+body.planira-theme-calm .planira-card-primary,
+body.planira-theme-calm .planira-card-soft,
+body.planira-theme-calm .planira-settings-panel,
+body.planira-theme-calm .planira-pricing-card,
+body.planira-theme-calm .admin-user-card-v2,
+body.planira-theme-calm .admin-user-detail-panel,
+body.planira-theme-calm .admin-control-header,
+body.planira-theme-calm .admin-search-panel {
+  border-radius: var(--radius-lg);
+}
+
+body.planira-theme-calm .page-head {
+  margin-bottom: 22px;
+}
+
+body.planira-theme-calm .page-title-group {
+  gap: 10px;
+}
+
+body.planira-theme-calm .content-shell {
+  padding: 28px 0 56px;
+}
+
+body.planira-theme-calm .home-hero .hero-card {
+  padding: 32px;
+}
+
+body.planira-theme-calm .signal-grid,
+body.planira-theme-calm .metric-grid,
+body.planira-theme-calm .home-hero,
+body.planira-theme-calm .section-block,
+body.planira-theme-calm .dashboard-grid,
+body.planira-theme-calm .card-grid,
+body.planira-theme-calm .pricing-grid,
+body.planira-theme-calm .search-layout,
+body.planira-theme-calm .tab-shell,
+body.planira-theme-calm .insight-grid {
+  gap: 20px;
+}
+
+body.planira-theme-calm .section-block,
+body.planira-theme-calm .search-layout,
+body.planira-theme-calm .dashboard-grid,
+body.planira-theme-calm .insight-grid,
+body.planira-theme-calm .card-grid,
+body.planira-theme-calm .pricing-grid,
+body.planira-theme-calm .metric-grid {
+  margin-bottom: 20px;
+}
+
+body.planira-theme-calm .empty-state,
+body.planira-theme-calm .empty-inline {
+  text-align: left;
+}
+
+body.planira-theme-calm .empty-state {
+  min-height: 220px;
+  align-content: center;
+  gap: 12px;
+}
+
+body.planira-theme-calm .search-active-filters span {
+  background: rgba(44, 122, 123, 0.08);
+  color: var(--color-primary-strong);
+  border-color: rgba(44, 122, 123, 0.14);
+}
+
+body.planira-theme-calm .search-advanced-panel {
+  background: rgba(244, 248, 246, 0.9);
+  border-color: rgba(24, 48, 54, 0.09);
+}
+
+body.planira-theme-calm .search-filter-group h3 {
+  color: var(--color-primary-strong);
+}
+
+body.planira-theme-calm .quick-answer-item {
+  background: rgba(248, 251, 250, 0.9);
+  border-color: rgba(24, 48, 54, 0.08);
+}
+
+body.planira-theme-calm .comment-form textarea {
+  min-height: 140px;
+}
+
+body.planira-theme-calm .admin-search-state,
+body.planira-theme-calm .admin-detail-block {
+  border-color: rgba(24, 48, 54, 0.08);
+}
+
+body.planira-theme-calm .admin-user-card-v2::before {
+  background: linear-gradient(180deg, rgba(44, 122, 123, 0.76), rgba(198, 170, 146, 0.7));
+}
+
+body.planira-theme-calm .developer-key-panel code,
+body.planira-theme-calm pre,
+body.planira-theme-calm code {
+  color: var(--color-primary-strong);
+}
+
+body.planira-theme-calm pre {
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  background: #f3f7f6;
+  border: 1px solid rgba(24, 48, 54, 0.08);
+  border-radius: 18px;
+}
+
+body.planira-theme-calm .toast-close {
+  color: var(--color-muted) !important;
+}
+
+body.planira-theme-calm .toast-hide {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+body.planira-theme-calm .planira-topbar-inner {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 20px;
+}
+
+body.planira-theme-calm .planira-nav-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding-inline: 0;
+}
+
+body.planira-theme-calm .planira-nav-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+body.planira-theme-calm .planira-nav-search input[type="search"] {
+  min-height: 48px;
+  padding-inline: 16px 18px;
+  border-radius: 999px;
+}
+
+body.planira-theme-calm .planira-nav-search .btn-primary-planira {
+  min-width: 108px;
+}
+
+body.planira-theme-calm .planira-nav-secondary {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+body.planira-theme-calm .planira-user-menu {
+  justify-content: flex-end;
+}
+
+body.planira-theme-calm .planira-account-dropdown {
+  position: relative;
+}
+
+body.planira-theme-calm .account-chip-button {
+  min-height: 48px;
+  padding-right: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--color-border);
+  box-shadow: none;
+  color: var(--color-text) !important;
+}
+
+body.planira-theme-calm .account-chip-button::after {
+  content: "▾";
+  margin-left: 8px;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+body.planira-theme-calm .planira-account-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-lift);
+  backdrop-filter: blur(14px);
+}
+
+body.planira-theme-calm .planira-account-menu[hidden] {
+  display: none;
+}
+
+body.planira-theme-calm .form-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.planira-theme-calm .field-span-2 {
+  grid-column: 1 / -1;
+}
+
+body.planira-theme-calm .btn-small {
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 0.86rem;
+}
+
+body.planira-theme-calm .table-shell {
+  gap: 18px;
+}
+
+body.planira-theme-calm .table-list {
+  gap: 12px;
+}
+
+body.planira-theme-calm .table-row {
+  grid-template-columns: minmax(0, 1.45fr) minmax(180px, 1fr) auto auto;
+}
+
+body.planira-theme-calm .row-actions {
+  align-items: stretch;
+}
+
+body.planira-theme-calm .row-actions a,
+body.planira-theme-calm .row-actions button,
+body.planira-theme-calm .row-actions form {
+  margin: 0;
+}
+
+body.planira-theme-calm .row-actions form {
+  display: contents;
+}
+
+body.planira-theme-calm .copy-phone-button {
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-primary-strong) !important;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+body.planira-theme-calm .checkbox-pill {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+body.planira-theme-calm .accent-panel {
+  background:
+    radial-gradient(circle at top right, rgba(198, 170, 146, 0.14), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 249, 247, 0.97));
+}
+
+body.planira-theme-calm .centered-panel {
+  max-width: 760px;
+  margin-inline: auto;
+  text-align: center;
+}
+
+body.planira-theme-calm .centered-panel .page-head-actions {
+  justify-content: center;
+}
+
+body.planira-theme-calm .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+body.planira-theme-calm button:focus-visible,
+body.planira-theme-calm .btn:focus-visible,
+body.planira-theme-calm input:focus-visible,
+body.planira-theme-calm select:focus-visible,
+body.planira-theme-calm textarea:focus-visible,
+body.planira-theme-calm .planira-nav-link:focus-visible,
+body.planira-theme-calm .tab-button:focus-visible,
+body.planira-theme-calm .page-link:focus-visible,
+body.planira-theme-calm .planira-staff-dropdown-toggle:focus-visible {
+  outline: 3px solid rgba(44, 122, 123, 0.34);
+  outline-offset: 2px;
+}
+
+@media (max-width: 980px) {
+  body.planira-theme-calm .planira-topbar-inner {
+    grid-template-columns: auto auto;
+    gap: 14px;
+  }
+
+  body.planira-theme-calm .search-help-panel {
+    position: static;
+  }
+
+  body.planira-theme-calm .planira-nav-wrap,
+  body.planira-theme-calm .planira-user-menu {
+    display: none;
+  }
+
+  body.planira-theme-calm .planira-mobile-toggle {
+    display: inline-flex;
+    justify-self: end;
+  }
+
+  body.planira-theme-calm .planira-mobile-menu:not([hidden]) {
+    display: block;
+  }
+
+  body.planira-theme-calm .planira-nav-search-mobile {
+    grid-template-columns: 1fr;
+  }
+
+  body.planira-theme-calm .planira-nav-search-mobile .btn-primary-planira {
+    width: 100%;
+  }
+
+  body.planira-theme-calm .table-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  body.planira-theme-calm .content-shell {
+    padding: 20px 0 44px;
+  }
+
+  body.planira-theme-calm .home-hero .hero-card,
+  body.planira-theme-calm .surface-panel,
+  body.planira-theme-calm .planira-card,
+  body.planira-theme-calm .planira-card-primary,
+  body.planira-theme-calm .planira-card-soft,
+  body.planira-theme-calm .planira-settings-panel,
+  body.planira-theme-calm .planira-pricing-card,
+  body.planira-theme-calm .admin-user-card-v2,
+  body.planira-theme-calm .admin-user-detail-panel,
+  body.planira-theme-calm .admin-control-header,
+  body.planira-theme-calm .admin-search-panel {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  body.planira-theme-calm .planira-logo .brand-copy span {
+    font-size: 0.8rem;
+  }
+
+  body.planira-theme-calm .form-grid,
+  body.planira-theme-calm .table-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.planira-theme-calm .planira-nav-search {
+    grid-template-columns: 1fr;
+  }
+
+  body.planira-theme-calm .planira-nav-search .btn-primary-planira {
+    width: 100%;
+  }
+
+  body.planira-theme-calm .tab-list {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 10px;
+    scroll-snap-type: x proximity;
+  }
+
+  body.planira-theme-calm .tab-button {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  body.planira-theme-calm .page-head-actions,
+  body.planira-theme-calm .form-actions,
+  body.planira-theme-calm .pagination-links,
+  body.planira-theme-calm .row-actions {
+    align-items: stretch;
+  }
+
+  body.planira-theme-calm .page-head-actions > *,
+  body.planira-theme-calm .form-actions > *,
+  body.planira-theme-calm .pagination-links > *,
+  body.planira-theme-calm .row-actions > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  body.planira-theme-calm .account-chip {
+    width: 100%;
+  }
+}

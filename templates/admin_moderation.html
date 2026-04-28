@@ -35,16 +35,18 @@
           <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="approve">
-            <input type="text" name="moderation_reason" placeholder="Optional reason">
-            <button type="submit" class="btn btn-small">Approve</button>
+            <label class="sr-only" for="approve-reason-{{ item.id }}">Optional reason for approval</label>
+            <input id="approve-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
+            <button type="submit" class="btn-primary-planira btn-small">Approve</button>
           </form>
           <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="reject">
-            <input type="text" name="moderation_reason" placeholder="Optional reason">
-            <button type="submit" class="btn btn-secondary btn-small">Reject</button>
+            <label class="sr-only" for="reject-reason-{{ item.id }}">Optional reason for rejection</label>
+            <input id="reject-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
+            <button type="submit" class="btn-secondary-planira btn-small">Reject</button>
           </form>
-          <a class="btn btn-secondary btn-small" href="{{ item.edit_url }}">Edit before approve</a>
+          <a class="btn-secondary-planira btn-small" href="{{ item.edit_url }}">Edit before approve</a>
         </div>
       </article>
     {% else %}

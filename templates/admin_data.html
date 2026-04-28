@@ -43,9 +43,9 @@
           </span>
         </div>
         <div class="row-actions">
-          <a class="btn btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Edit venue</a>
-          <a class="btn btn-secondary btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
-          <button type="button" class="btn btn-secondary btn-small">Flag entry</button>
+          <a class="btn-primary-planira btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Edit venue</a>
+          <a class="btn-secondary-planira btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
+          <button type="button" class="btn-secondary-planira btn-small">Flag entry</button>
         </div>
       </article>
     {% else %}

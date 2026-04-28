@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='logo.png') }}?v=2">
   </head>
-  <body>
+  <body class="planira-theme-calm">
     <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="ambient-backdrop" aria-hidden="true">
       <div class="ambient-orb ambient-orb-one"></div>
@@ -38,40 +38,63 @@
             Menu
           </button>
 
-        <div class="planira-nav-wrap">
-          <nav class="planira-nav" aria-label="Primary navigation">
-            {% for item in shell_navigation %}
-              {% if not item.requires_auth or current_user %}
-                <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}"
-                  href="{{ url_for(item.endpoint) }}"
-                  {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
-                  <span>{{ item.label }}</span>
-                </a>
-              {% endif %}
-            {% endfor %}
-          </nav>
+          <div class="planira-nav-wrap">
+            <form class="planira-nav-search" action="{{ url_for('search') }}" method="get" role="search">
+              <label class="sr-only" for="nav-search-q">Search places</label>
+              <input id="nav-search-q" name="q" type="search" value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}" placeholder="Search a venue, postcode, or town">
+              <input type="hidden" name="submitted" value="1">
+              <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
+            </form>
 
-          {% if staff_navigation %}
-            <div class="planira-staff-dropdown">
-              <button class="planira-nav-link planira-staff-dropdown-toggle {% if staff_nav_active %}planira-nav-link-active{% endif %}" type="button" aria-expanded="false" data-staff-toggle>
-                Staff
-              </button>
-              <nav class="planira-staff-menu" aria-label="Staff workspace" hidden>
-                {% for item in staff_navigation %}
-                  <a class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
-                    href="{{ url_for(item.endpoint) }}"
-                    {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
-                    {{ item.label }}
-                  </a>
-                {% endfor %}
-              </nav>
-            </div>
-          {% endif %}
-        </div>
+            <nav class="planira-nav planira-nav-secondary" aria-label="Primary navigation">
+              <a class="planira-nav-link {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}planira-nav-link-active{% endif %}"
+                href="{{ url_for('search') }}"
+                {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}aria-current="page"{% endif %}>
+                <span>Places</span>
+              </a>
+
+              {% if current_user %}
+
+          
+              {% endif %}
+
+              {% if staff_navigation %}
+                <div class="planira-staff-dropdown">
+                  <button class="planira-nav-link planira-staff-dropdown-toggle {% if staff_nav_active %}planira-nav-link-active{% endif %}" type="button" aria-expanded="false" data-staff-toggle>
+                    Staff
+                  </button>
+                  <nav class="planira-staff-menu" aria-label="Staff workspace" hidden>
+                    {% for item in staff_navigation %}
+                      <a class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
+                        href="{{ url_for(item.endpoint) }}"
+                        {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                        {{ item.label }}
+                      </a>
+                    {% endfor %}
+                  </nav>
+                </div>
+              {% endif %}
+            </nav>
+          </div>
 
           <div class="planira-user-menu">
             {% if current_user %}
-              <a class="planira-button-secondary btn-secondary" href="{{ url_for('logout') }}">Logout</a>
+              <div class="planira-account-dropdown">
+                <button class="account-chip account-chip-button" type="button" aria-expanded="false" data-account-toggle>
+                  <span class="account-avatar" aria-hidden="true">{{ (current_user.name or current_user.email or 'P')[0]|upper }}</span>
+                  <span class="account-chip-meta">
+                    <strong>{{ current_user.name.split()[0] if current_user.name else 'Your account' }}</strong>
+                    <span>Account menu</span>
+                  </span>
+                </button>
+                <nav class="planira-account-menu" aria-label="Account menu" hidden>
+                  <a class="planira-staff-menu-link" href="{{ url_for('account') }}">Account overview</a>
+                  <a class="planira-staff-menu-link" href="{{ url_for('account_settings') }}">Settings</a>
+                  <a class="planira-staff-menu-link" href="{{ url_for('plans') }}">Plans</a>
+                  <a class="planira-staff-menu-link" href="{{ url_for('developers') }}">Developers</a>
+                  <a class="planira-staff-menu-link" href="{{ url_for('logout') }}">Logout</a>
+                </nav>
+              </div>
             {% else %}
               <a class="planira-button-primary btn" href="{{ url_for('login') }}">Continue with Google</a>
             {% endif %}
@@ -80,14 +103,28 @@
 
         <div class="planira-mobile-menu" id="planira-mobile-nav" hidden>
           <div class="planira-content planira-mobile-menu-inner">
+            <form class="planira-nav-search planira-nav-search-mobile" action="{{ url_for('search') }}" method="get" role="search">
+              <label class="sr-only" for="mobile-nav-search-q">Search places</label>
+              <input id="mobile-nav-search-q" name="q" type="search" value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}" placeholder="Search a venue, postcode, or town">
+              <input type="hidden" name="submitted" value="1">
+              <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
+            </form>
+
             <nav class="planira-mobile-nav" aria-label="Mobile navigation">
-              {% for item in shell_navigation %}
-                {% if not item.requires_auth or current_user %}
-                  <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}" href="{{ url_for(item.endpoint) }}" {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
-                    <span>{{ item.label }}</span>
-                  </a>
-                {% endif %}
-              {% endfor %}
+              <a class="planira-nav-link {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}planira-nav-link-active{% endif %}" href="{{ url_for('search') }}" {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}aria-current="page"{% endif %}>
+                <span>Places</span>
+              </a>
+              {% if current_user %}
+                <a class="planira-nav-link {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}planira-nav-link-active{% endif %}" href="{{ url_for('account') }}" {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}aria-current="page"{% endif %}>
+                  <span>Account</span>
+                </a>
+                <a class="planira-nav-link" href="{{ url_for('plans') }}">
+                  <span>Plans</span>
+                </a>
+                <a class="planira-nav-link" href="{{ url_for('developers') }}">
+                  <span>Developers</span>
+                </a>
+              {% endif %}
             </nav>
 
             {% if staff_navigation %}
@@ -112,8 +149,8 @@
             </div>
 
             <div class="planira-mobile-meta planira-card planira-card-soft">
-              <span class="planira-chip chip-neutral">Worth checking before you go</span>
-              <p class="muted">Clear guidance, helpful notes, and account tools stay one tap away.</p>
+              <span class="planira-chip chip-neutral">Know before you go</span>
+              <p class="muted">Search, trusted place signals, and helpful account tools stay one tap away.</p>
             </div>
           </div>
         </div>
@@ -143,8 +180,13 @@
           <div class="planira-footer-brand">
             <strong>{{ brand_name }}</strong>
             <p class="muted">{{ brand_tagline }}</p>
+            <p class="helper-copy">Calm, practical place confidence for everyday journeys.</p>
           </div>
           <nav class="planira-footer-links" aria-label="Footer">
+            <a href="{{ url_for('search') }}">Search</a>
+            {% if current_user %}
+              <a href="{{ url_for('account') }}">Account</a>
+            {% endif %}
             <a href="{{ url_for('developers') }}">Developers</a>
             <a href="{{ url_for('privacy') }}">Privacy</a>
             <a href="{{ url_for('terms') }}">Terms</a>
@@ -171,6 +213,8 @@
       const navToggle = document.querySelector("[data-nav-toggle]");
       const staffToggle = document.querySelector("[data-staff-toggle]");
       const staffMenu = document.querySelector(".planira-staff-menu");
+      const accountToggle = document.querySelector("[data-account-toggle]");
+      const accountMenu = document.querySelector(".planira-account-menu");
 
       if (staffToggle && staffMenu) {
         const closeStaffMenu = () => {
@@ -197,6 +241,34 @@
 
         staffMenu.querySelectorAll("a").forEach((link) => {
           link.addEventListener("click", closeStaffMenu);
+        });
+      }
+
+      if (accountToggle && accountMenu) {
+        const closeAccountMenu = () => {
+          accountToggle.setAttribute("aria-expanded", "false");
+          accountMenu.hidden = true;
+        };
+
+        accountToggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const isOpen = accountToggle.getAttribute("aria-expanded") === "true";
+          accountToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+          accountMenu.hidden = isOpen;
+        });
+
+        document.addEventListener("click", (event) => {
+          if (!accountMenu.contains(event.target) && !accountToggle.contains(event.target)) {
+            closeAccountMenu();
+          }
+        });
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") closeAccountMenu();
+        });
+
+        accountMenu.querySelectorAll("a").forEach((link) => {
+          link.addEventListener("click", closeAccountMenu);
         });
       }
 

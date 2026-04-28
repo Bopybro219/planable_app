@@ -6,9 +6,9 @@
   <h1>{{ title }}</h1>
   <p class="page-subtitle">{{ message }}</p>
   <div class="page-head-actions">
-    <a class="btn" href="{{ url_for('index') }}">Back home</a>
+    <a class="btn-primary-planira" href="{{ url_for('index') }}">Back home</a>
     {% if current_user %}
-      <a class="btn btn-secondary" href="{{ url_for('search') }}">Search places</a>
+      <a class="btn-secondary-planira" href="{{ url_for('search') }}">Search places</a>
     {% endif %}
   </div>
 </section>

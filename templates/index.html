@@ -40,11 +40,11 @@
         </div>
       </form>
       <div class="inline-note">
-        {% if current_user %}
-          Search stays at the centre of the product, with place pages and account tools branching out from the same flow.
-        {% else %}
+      {% if current_user %}
+          Search stays at the centre of the product, with place pages and account tools branching out from the same calm flow.
+      {% else %}
           Search starts here, then Google sign-in unlocks results, place pages, and contribution tools.
-        {% endif %}
+      {% endif %}
       </div>
     </div>
   </article>
@@ -57,84 +57,5 @@
       <p>{{ signal['copy'] }}</p>
     </article>
   {% endfor %}
-</section>
-
-<section class="section-block">
-  <div class="section-head">
-    <div>
-      <span class="eyebrow">How search works</span>
-      <h2>Useful signals first, detail when you need it.</h2>
-    </div>
-  </div>
-  <div class="feature-grid">
-    <div class="feature-card">
-      <strong>Search with intent</strong>
-      <p>Start with a venue, town, or accessible toilet filter instead of trawling a full list.</p>
-    </div>
-    <div class="feature-card">
-      <strong>Scan the signal</strong>
-      <p>Confidence cards and key facts sit at the top so you can judge a place quickly.</p>
-    </div>
-    <div class="feature-card">
-      <strong>Open the detail page</strong>
-      <p>Verification notes and community context stay close by when you want more certainty.</p>
-    </div>
-  </div>
-</section>
-
-<section class="dashboard-grid home-search-preview-grid">
-  <article class="planira-card planira-card-soft">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">Search preview</span>
-        <h2>Results stay focused and easy to scan</h2>
-      </div>
-    </div>
-    <p class="muted">This is what the search flow leads with after someone intentionally searches.</p>
-    <div class="card-grid">
-      {% for card in preview_cards %}
-        {{ planira.result_card(card) }}
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="planira-card">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">What happens next</span>
-        <h2>One search flow, then deeper tools if you need them</h2>
-      </div>
-    </div>
-    <div class="stack-list">
-      <div class="stack-row">
-        <strong>Free plan</strong>
-        <span>Start with a tracked monthly search allowance, open venue pages, and learn the useful basics without extra noise.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Paid plan</strong>
-        <span>Unlock a larger search allowance, richer filtering, and stronger verification context when you need more certainty.</span>
-      </div>
-    </div>
-    <div class="pricing-preview-list compact-plan-preview">
-      {% for plan in plans %}
-        <div class="pricing-preview-item">
-          <div>
-            <strong>{{ plan.name }}</strong>
-            <span>{{ plan.summary }}</span>
-          </div>
-          <span class="metric-pill">{{ plan.price }}</span>
-        </div>
-      {% endfor %}
-      {% for pack in api_packs %}
-        <div class="pricing-preview-item">
-          <div>
-            <strong>{{ pack.name }}</strong>
-            <span>{{ pack.description }}</span>
-          </div>
-          <span class="metric-pill">{{ pack.price }}</span>
-        </div>
-      {% endfor %}
-    </div>
-  </article>
 </section>
 {% endblock %}

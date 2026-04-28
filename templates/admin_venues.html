@@ -155,8 +155,8 @@
           </span>
         </div>
         <div class="row-actions">
-          <a class="btn btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Open worksheet</a>
-          <a class="btn btn-secondary btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
+          <a class="btn-primary-planira btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Open worksheet</a>
+          <a class="btn-secondary-planira btn-small" href="{{ url_for('place_detail', slug=row.place.slug) }}">View public page</a>
         </div>
       </article>
     {% else %}

@@ -6,11 +6,11 @@
   <div class="page-title-group">
     <span class="eyebrow">Staff dashboard</span>
     <h1>Operations overview</h1>
-    <p class="page-subtitle">Monitor venue coverage, verification momentum, active users, and the moderation flow from a consistent admin workspace.</p>
+    <p class="page-subtitle">Monitor venue coverage, verification momentum, active users, and the moderation flow from a calmer, more consistent staff workspace.</p>
   </div>
   <div class="page-head-actions">
     {% for action in quick_actions %}
-      <a class="btn {% if loop.first %}{% else %}btn-secondary{% endif %}" href="{{ action.href }}">{{ action.label }}</a>
+      <a class="{% if loop.first %}btn-primary-planira{% else %}btn-secondary-planira{% endif %}" href="{{ action.href }}">{{ action.label }}</a>
     {% endfor %}
   </div>
 </section>

@@ -26,13 +26,14 @@
   <a class="result-card planira-card interactive-panel" href="{{ href }}">
     <div class="result-topline result-topline-compact">
       <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
+      {% if card.signal.verification.relative_time %}
+        <span class="result-card-timestamp">Last checked {{ card.signal.verification.relative_time }}</span>
+      {% endif %}
     </div>
     <h3>{{ card.place.name }}</h3>
     <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
     {{ signal_badges(card.signal) }}
-    {% if card.signal.verification.relative_time %}
-      <p class="result-meta muted">Last checked {{ card.signal.verification.relative_time }}</p>
-    {% endif %}
+    <p class="result-meta muted">Open the place page for the full signal, notes, and recent verification context.</p>
     <div class="tag-row result-fact-row">
       {% for item in card.key_bits %}
         <span>{{ item }}</span>
