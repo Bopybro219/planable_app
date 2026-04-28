@@ -46,12 +46,6 @@
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
 
-            <nav class="planira-nav planira-nav-secondary" aria-label="Primary navigation">
-              <a class="planira-nav-link {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}planira-nav-link-active{% endif %}"
-                href="{{ url_for('search') }}"
-                {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}aria-current="page"{% endif %}>
-                <span>Places</span>
-              </a>
 
               {% if current_user %}
 
@@ -110,10 +104,6 @@
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
 
-            <nav class="planira-mobile-nav" aria-label="Mobile navigation">
-              <a class="planira-nav-link {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}planira-nav-link-active{% endif %}" href="{{ url_for('search') }}" {% if request.endpoint == 'search' or request.endpoint == 'place_detail' %}aria-current="page"{% endif %}>
-                <span>Places</span>
-              </a>
               {% if current_user %}
                 <a class="planira-nav-link {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}planira-nav-link-active{% endif %}" href="{{ url_for('account') }}" {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}aria-current="page"{% endif %}>
                   <span>Account</span>
