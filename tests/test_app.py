@@ -235,6 +235,18 @@ class AppSmokeTests(unittest.TestCase):
             self.assertTrue(app_module.user_has_api_access(business_user))
             self.assertTrue(app_module.user_has_api_access(staff_user))
 
+    def test_free_plan_overrides_stale_paid_or_api_roles_for_entitlements(self):
+        with app.app_context():
+            stale_paid_user = User(email="stale-paid@example.com", name="Stale Paid", picture="", role="paid_consumer", plan="free")
+            stale_api_user = User(email="stale-api@example.com", name="Stale API", picture="", role="api_buyer", plan="free")
+
+            self.assertFalse(app_module.user_has_api_access(stale_paid_user))
+            self.assertFalse(app_module.user_has_api_access(stale_api_user))
+            self.assertEqual(app_module.normalize_billing_plan_name(stale_paid_user), "free")
+            self.assertEqual(app_module.normalize_billing_plan_name(stale_api_user), "free")
+            self.assertEqual(app_module.get_monthly_search_limit(stale_paid_user), 10)
+            self.assertEqual(app_module.get_monthly_search_limit(stale_api_user), 10)
+
     def test_apply_plan_role_to_user_repairs_plan_when_role_already_matches(self):
         with app.app_context():
             user = User(email="repair-plan@example.com", name="Repair Plan", picture="", role="api_buyer", plan="free")

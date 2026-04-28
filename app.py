@@ -687,13 +687,25 @@ def role_for_plan_name(plan_name):
     return DEFAULT_MEMBER_ROLE
 
 
+def stored_billing_plan_name(user):
+    if not user:
+        return None
+    plan_name = (user.plan or "").strip().lower()
+    if plan_name in {"free", "paid", "business"}:
+        return plan_name
+    return None
+
+
 def infer_entitlement_role(user):
     if not user:
         return None
+    stored_plan = stored_billing_plan_name(user)
+    if stored_plan in {"paid", "business"}:
+        return role_for_plan_name(stored_plan)
+    if stored_plan == "free":
+        return None
     if user.role in {"paid_consumer", "api_buyer"}:
         return user.role
-    if user.plan in {"paid", "business"}:
-        return role_for_plan_name(user.plan)
     return None
 
 
@@ -959,15 +971,17 @@ def is_staff_user(user):
 def current_role_key(user):
     if not user:
         return "free_visitor"
-    if user.plan == "paid":
+    stored_plan = stored_billing_plan_name(user)
+    if stored_plan == "paid":
         return "paid_consumer"
-    if user.plan == "business":
+    if stored_plan == "business":
         return "api_buyer"
     if is_staff_user(user):
         return "paid_consumer"
-    if user.role == "paid_consumer":
+    inferred_role = infer_entitlement_role(user)
+    if inferred_role == "paid_consumer":
         return "paid_consumer"
-    if user.role == "api_buyer":
+    if inferred_role == "api_buyer":
         return "api_buyer"
     return "logged_in_free"
 
@@ -975,11 +989,15 @@ def current_role_key(user):
 def normalize_plan_name(user):
     if not user:
         return "visitor"
-    if user.plan:
-        return user.plan
-    if user.role == "paid_consumer":
+    stored_plan = stored_billing_plan_name(user)
+    if stored_plan:
+        return stored_plan
+    if user.plan == "admin":
+        return "admin"
+    inferred_role = infer_entitlement_role(user)
+    if inferred_role == "paid_consumer":
         return "paid"
-    if user.role == "api_buyer":
+    if inferred_role == "api_buyer":
         return "business"
     if is_staff_user(user):
         return "admin"
@@ -993,11 +1011,13 @@ def humanize_plan_name(plan_name):
 def normalize_billing_plan_name(user):
     if not user:
         return "free"
-    if user.plan in {"paid", "business"}:
-        return user.plan
-    if user.role == "paid_consumer":
+    stored_plan = stored_billing_plan_name(user)
+    if stored_plan:
+        return stored_plan
+    inferred_role = infer_entitlement_role(user)
+    if inferred_role == "paid_consumer":
         return "paid"
-    if user.role == "api_buyer":
+    if inferred_role == "api_buyer":
         return "business"
     return "free"
 
@@ -1037,10 +1057,7 @@ def user_has_api_access(user):
         return False
     if is_staff_user(user):
         return True
-    return (
-        user.plan in {"paid", "business"}
-        or user.role in {"paid_consumer", "api_buyer"}
-    )
+    return normalize_billing_plan_name(user) in {"paid", "business"}
 
 
 def get_monthly_search_limit(user):
