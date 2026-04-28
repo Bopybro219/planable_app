@@ -5,3 +5,12 @@ instance/
 .env
 .venv/
 .tools/
+
+.venv/
+.tools/
+instance/
+*.db
+*.sqlite
+.env
+__pycache__/
+.pytest_cache/
