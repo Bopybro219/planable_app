@@ -673,6 +673,24 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Dash Search", response.data)
         self.assertIn(b"Comment Approved", response.data)
 
+    def test_staff_user_can_access_dashboard_and_user_directory(self):
+        with app.app_context():
+            staff = User(email="ops-staff@example.com", name="Ops Staff", picture="", role="staff", plan="free")
+            member = User(email="member-one@example.com", name="Member One", picture="", role="member", plan="free")
+            db.session.add_all([staff, member])
+            db.session.commit()
+
+        self.login_session("ops-staff@example.com", "Ops Staff")
+
+        dashboard_response = self.client.get("/dashboard")
+        users_response = self.client.get("/admin/users")
+
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertIn(b"Live preview usage", dashboard_response.data)
+        self.assertEqual(users_response.status_code, 200)
+        self.assertIn(b"Manage Planira users", users_response.data)
+        self.assertIn(b"Only admins can change member search credits.", users_response.data)
+
     def test_non_staff_cannot_see_staff_only_audit_or_search_activity(self):
         with app.app_context():
             user = User(email="plainuser@example.com", name="Plain User", picture="", role="member", plan="free")

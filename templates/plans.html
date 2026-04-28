@@ -24,7 +24,7 @@
     <div>
       <span class="eyebrow">Billing setup</span>
       <h2>Checkout can be enabled when Stripe keys are ready.</h2>
-      <p class="muted">Add the Stripe secret key, publishable key, and price IDs to turn these cards into live purchase flows.</p>
+      <p class="muted">Checkout is not live in this environment yet. You can still review the available plans.</p>
     </div>
   </article>
 {% endif %}
@@ -41,7 +41,7 @@
         <span class="plan-price">{{ tier.price }}</span>
       </div>
       <p class="muted">{{ tier.description }}</p>
-      <p class="helper-copy">Search limit: {{ tier.search_limit_copy }}</p>
+      <p class="helper-copy">{{ tier.limit_label }}: {{ tier.search_limit_copy }}</p>
       <ul class="feature-list">
         {% for feature in tier.features %}
           <li>{{ feature }}</li>
@@ -91,15 +91,15 @@
   <article class="planira-card planira-card-soft">
       <div class="section-head">
         <div>
-          <span class="eyebrow">Livestream business</span>
-          <h2>Revenue around the verification workflow</h2>
+          <span class="eyebrow">Trusted access</span>
+          <h2>How stronger records support deeper tools</h2>
         </div>
       </div>
     <div class="stack-list">
       {% for item in stream_revenue %}
         <div class="stack-row">
           <strong>{{ item }}</strong>
-          <span>Fits the same product system used across search, account, and staff tools.</span>
+          <span>Built from the same calm product system used across search, account, and staff workflows.</span>
         </div>
       {% endfor %}
     </div>

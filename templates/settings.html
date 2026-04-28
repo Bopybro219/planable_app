@@ -11,10 +11,10 @@
 <section class="tab-shell" data-tab-group>
   <aside class="tab-list" role="tablist" aria-label="Settings sections">
     <button class="tab-button active" type="button" data-tab-button="profile">Profile</button>
-    <button class="tab-button" type="button" data-tab-button="preferences">Preferences</button>
+    <button class="tab-button" type="button" data-tab-button="preferences">Current defaults</button>
     <button class="tab-button" type="button" data-tab-button="usage">Usage & limits</button>
-    <button class="tab-button" type="button" data-tab-button="api">API / future</button>
-    <button class="tab-button danger" type="button" data-tab-button="danger">Important actions</button>
+    <button class="tab-button" type="button" data-tab-button="api">Developer access</button>
+    <button class="tab-button danger" type="button" data-tab-button="danger">Privacy & data</button>
   </aside>
 
   <div class="tab-panels">
@@ -33,7 +33,7 @@
           <div class="field-group">
             <label for="settings-name">Name</label>
             <input id="settings-name" value="{{ settings_sections.profile.name }}" readonly>
-            <p class="helper-copy">Profile editing can be connected here without redesigning the page later.</p>
+            <p class="helper-copy">Google sign-in is the current source of truth for profile details.</p>
           </div>
           <div class="field-group">
             <label for="settings-email">Email</label>
@@ -43,10 +43,6 @@
             <label for="settings-password">Password change</label>
             <input id="settings-password" value="Google sign-in manages authentication today." readonly>
           </div>
-          <div class="field-group">
-            <label for="settings-avatar">Avatar</label>
-            <input id="settings-avatar" value="Optional profile avatar area ready for future upload support." readonly>
-          </div>
         </div>
         <p class="helper-copy">Profile details are read-only here today because Google sign-in manages the source data.</p>
       </article>
@@ -54,8 +50,8 @@
 
     <section class="tab-panel" data-tab-panel="preferences">
       <article class="planira-settings-panel">
-        <span class="eyebrow">Preferences</span>
-        <h2>Accessibility defaults</h2>
+        <span class="eyebrow">Current defaults</span>
+        <h2>How Planira starts the search experience</h2>
         <div class="form-grid">
           <div class="field-group">
             <label for="settings-distance">Distance tolerance</label>
@@ -68,12 +64,12 @@
           <div class="toggle-card">
             <div>
               <strong>Avoid stairs</strong>
-              <p class="muted">Use this preference to prioritise easier access decisions in future search experiences.</p>
+              <p class="muted">This shows the kind of access preference Planira is designed to support as search becomes more personalised.</p>
             </div>
             <span class="toggle-pill {% if settings_sections.preferences.avoid_stairs %}active{% endif %}">{{ 'On' if settings_sections.preferences.avoid_stairs else 'Off' }}</span>
           </div>
         </div>
-        <p class="helper-copy">Preference editing is staged as a read-only preview until those settings are persisted on the backend.</p>
+        <p class="helper-copy">These values summarise the defaults shown in the product today. They are not account-specific saved preferences yet.</p>
       </article>
     </section>
 
@@ -84,7 +80,7 @@
         <div class="usage-list">
           <div class="usage-row">
             <div>
-              <strong>Search credits</strong>
+              <strong>Search usage</strong>
               <p class="muted">{{ settings_sections.usage.quota_copy.search_usage_copy }}.</p>
             </div>
             <div class="progress-track">
@@ -133,39 +129,52 @@
 
     <section class="tab-panel" data-tab-panel="api">
       <article class="planira-settings-panel">
-        <span class="eyebrow">Future-ready</span>
-        <h2>API access and developer tooling</h2>
+        <span class="eyebrow">Developer access</span>
+        <h2>API keys and lookup preview</h2>
         <div class="stack-list">
           <div class="stack-row">
-            <strong>API key</strong>
-            <span>Coming soon, but the settings layout is already ready for key management and rotation.</span>
+            <strong>Active keys</strong>
+            <span>{{ settings_sections.api.active_key_count }} keys currently active.</span>
           </div>
           <div class="stack-row">
-            <strong>Usage analytics</strong>
-            <span>Future API packs can live here without changing the rest of the account IA.</span>
+            <strong>Lookup usage</strong>
+            <span>{{ settings_sections.api.total_lookups_used }} API lookups recorded this month.</span>
           </div>
+          <div class="stack-row">
+            <strong>Lookup credits</strong>
+            <span>{{ settings_sections.api.total_lookup_credits }} credits currently available across active keys{% if settings_sections.api.has_unlimited_key %}, with one or more unlimited preview keys{% endif %}.</span>
+          </div>
+        </div>
+        <div class="action-list">
+          <a class="action-card" href="{{ url_for('developers') }}">
+            <strong>Open developer preview</strong>
+            <span>Create keys, revoke keys, and see the first public API endpoint documentation.</span>
+          </a>
         </div>
       </article>
     </section>
 
     <section class="tab-panel" data-tab-panel="danger">
       <article class="planira-settings-panel danger-panel important-actions-panel">
-        <span class="eyebrow">Important actions</span>
-        <h2>High-impact account controls</h2>
-        <p class="helper-copy">These controls are intentionally separated from everyday settings because they affect access, security, or account permanence. They stay read-only until real backend actions are wired in.</p>
-        <div class="important-actions-grid">
-          <div class="action-card action-card-warning">
-            <span class="status-chip chip-warning">Security-sensitive</span>
-            <strong>Logout all sessions</strong>
-            <span>Future session controls belong here so account recovery and device security stay easy to understand.</span>
-            <span class="planira-chip">Read-only preview</span>
-          </div>
-          <div class="action-card action-card-danger">
-            <span class="status-chip chip-tricky">Critical action</span>
-            <strong>Delete account</strong>
-            <span>Kept separate so the consequences stay clear before this is wired into a real account deletion flow.</span>
-            <span class="planira-chip">Read-only preview</span>
-          </div>
+        <span class="eyebrow">Privacy and data</span>
+        <h2>Important links for account questions</h2>
+        <p class="helper-copy">These are the live routes that explain how Planira handles cookies, privacy, account data, and logout.</p>
+        <div class="action-list">
+          <a class="action-card action-card-warning" href="{{ url_for('data_rights') }}">
+            <span class="status-chip chip-warning">Data request guide</span>
+            <strong>Read data rights</strong>
+            <span>See how access, correction, and deletion requests are reviewed.</span>
+          </a>
+          <a class="action-card action-card-warning" href="{{ url_for('cookies') }}">
+            <span class="status-chip chip-warning">Session details</span>
+            <strong>Review cookies</strong>
+            <span>See the current session-cookie and form-security setup in plain English.</span>
+          </a>
+          <a class="action-card action-card-danger" href="{{ url_for('logout') }}">
+            <span class="status-chip chip-tricky">Account action</span>
+            <strong>Log out</strong>
+            <span>End the current session on this device.</span>
+          </a>
         </div>
       </article>
     </section>

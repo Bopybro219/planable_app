@@ -5,23 +5,68 @@
   <div class="page-title-group">
     <span class="eyebrow">Privacy</span>
     <h1>How Planira handles your data</h1>
-    <p class="page-subtitle">Plain-English notes for a beta-stage product that tracks accounts, venue searches, and community contributions.</p>
+    <p class="page-subtitle">A plain-English explanation of what Planira stores, why it is stored, and where the limits are.</p>
   </div>
 </section>
 
-<section class="content-stack">
+<section class="content-stack legal-grid">
   <article class="surface-panel">
-    <h2>What we keep</h2>
+    <h2>What Planira collects</h2>
     <div class="stack-list">
-      <div class="stack-row"><strong>Account details</strong><span>Your name, email, and profile image come from Google sign-in.</span></div>
-      <div class="stack-row"><strong>Search activity</strong><span>We store search activity so usage limits, account summaries, and staff product review can work properly.</span></div>
-      <div class="stack-row"><strong>Community contributions</strong><span>Comments and moderation history are kept so venue information stays useful and safer to trust.</span></div>
+      <div class="stack-row">
+        <strong>Account details</strong>
+        <span>Planira uses Google sign-in. When you log in, Planira stores your email address and may also store your name and profile picture from Google.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Search usage</strong>
+        <span>Planira stores search events so member limits, account summaries, and product review can work properly.</span>
+      </div>
+      <div class="stack-row">
+        <strong>API access records</strong>
+        <span>When API access is used, Planira stores the API key record, a hash of the key rather than the raw key, and usage logs such as endpoint, status code, and when the key was used.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Community and staff records</strong>
+        <span>Planira stores comments, moderation decisions, staff audit logs, and internal venue workflow records so the service can be reviewed, improved, and protected from misuse.</span>
+      </div>
     </div>
   </article>
 
   <article class="surface-panel">
-    <h2>How it is used</h2>
-    <p class="muted">Planira uses this data to run the product, support moderation, improve venue records, and understand what parts of the search experience need work. We do not aim to make the legal side feel intimidating, but we do want to be clear.</p>
+    <h2>What Planira uses that data for</h2>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Running your account</strong>
+        <span>Your email and session data keep you signed in and tie account activity to the right member profile.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Managing search and API limits</strong>
+        <span>Usage logs help Planira apply preview limits, track credits, and understand how the product is being used.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Moderation and abuse review</strong>
+        <span>Comments, API usage logs, and staff audit records help Planira review suspicious activity, moderation decisions, and operational changes.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Improving venue information</strong>
+        <span>Planira uses contribution and verification history to improve accessibility records and make the product more useful.</span>
+      </div>
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <h2>Payments</h2>
+    <p class="muted">If paid plans or API packs are enabled, checkout is handled by Stripe. Planira stores the payment status and the account details needed to match a checkout to the right user. Planira does not store full card details on its own servers.</p>
+  </article>
+
+  <article class="surface-panel">
+    <h2>Retention and limits</h2>
+    <p class="muted">Planira does not currently publish fixed retention periods for every record type. In practice, account data, usage logs, moderation records, and audit history may be kept while they are still needed to run the service, investigate abuse, or understand product usage. If that changes, these pages should become more specific.</p>
+  </article>
+
+  <article class="surface-panel">
+    <h2>What Planira does not claim</h2>
+    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
   </article>
 </section>
 {% endblock %}

@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% block title %}Developer API | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Developer preview</span>
+    <h1>Planira API</h1>
+    <p class="page-subtitle">An early JSON lookup preview for teams who want trusted place signals in their own workflows.</p>
+  </div>
+</section>
+
+<section class="dashboard-grid">
+  <article class="planira-card planira-card-primary">
+    <span class="eyebrow">Authentication</span>
+    <h2>Use a Bearer API key</h2>
+    <p class="muted">Send your API key in the `Authorization` header. Raw keys are shown only once when they are created, so keep them private and rotate them if you no longer trust where they have been stored.</p>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Header</strong>
+        <span><code>Authorization: Bearer {{ example_api_key }}</code></span>
+      </div>
+      <div class="stack-row">
+        <strong>Endpoint</strong>
+        <span><code>GET /api/v1/places/search?q=pub&town=Northampton</code></span>
+      </div>
+    </div>
+  </article>
+
+  <article class="planira-card planira-card-soft">
+    <span class="eyebrow">Lookup rules</span>
+    <h2>Calm limits for an early preview</h2>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Required query</strong>
+        <span>Send at least one of `q`, `town`, or `postcode`.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Lookup credits</strong>
+        <span>API lookup credits stay separate from member search credits.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Early preview note</strong>
+        <span>API packs are still a preview. During local and early testing, lookup credits may be assigned manually per key.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Access responsibility</strong>
+        <span>Keep keys with trusted people only. Planira may revoke keys that are abused, shared carelessly, or used against staff-only workflows.</span>
+      </div>
+    </div>
+  </article>
+</section>
+
+<section class="card-grid">
+  <article class="planira-card">
+    <span class="eyebrow">Example request</span>
+    <h2>Try a place search</h2>
+    <pre><code>curl -H "Authorization: Bearer {{ example_api_key }}" "{{ api_search_url }}?q=pub&amp;town=Northampton"</code></pre>
+  </article>
+
+  <article class="planira-card">
+    <span class="eyebrow">Example response</span>
+    <h2>JSON payload</h2>
+    <pre><code>{{ example_response|tojson(indent=2) }}</code></pre>
+  </article>
+</section>
+
+{% if current_user %}
+  <section class="card-grid">
+    <article class="planira-card">
+      <span class="eyebrow">Key management</span>
+      <h2>Create and revoke API keys</h2>
+      <p class="muted">Keys belong to your account. Only the hashed key is stored on the server.</p>
+      <form method="post" action="{{ url_for('create_developer_api_key') }}" class="comment-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field-group">
+          <label for="developer-key-label">Key label</label>
+          <input id="developer-key-label" name="label" maxlength="120" placeholder="Primary integration key">
+        </div>
+        <button type="submit" class="btn-primary-planira">Create new key</button>
+      </form>
+
+      {% if raw_api_key %}
+        <div class="empty-inline">
+          <strong>{{ raw_api_key_label or 'New API key' }}</strong>
+          <p class="muted">Copy this key now. It will not be shown again.</p>
+          <code>{{ raw_api_key }}</code>
+        </div>
+      {% endif %}
+    </article>
+
+    <article class="planira-card planira-card-soft">
+      <span class="eyebrow">Usage snapshot</span>
+      <h2>Your API preview status</h2>
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong>Active keys</strong>
+          <span>{{ developer_summary.active_key_count }}</span>
+        </div>
+        <div class="stack-row">
+          <strong>Lookups this month</strong>
+          <span>{{ developer_summary.total_lookups_used }}</span>
+        </div>
+        <div class="stack-row">
+          <strong>Lookup credits</strong>
+          <span>{{ developer_summary.total_lookup_credits }}{% if developer_summary.has_unlimited_key %} plus unlimited preview access on one or more keys{% endif %}</span>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section class="planira-card">
+    <span class="eyebrow">Your keys</span>
+    <h2>Existing API keys</h2>
+    <div class="stack-list">
+      {% for key in developer_summary.api_key_rows %}
+        <div class="stack-row">
+          <div>
+            <strong>{{ key.label }}</strong>
+            <p class="muted">{{ key.key_hint }} · {{ 'Active' if key.is_active else 'Revoked' }} · {{ key.lookups_used }} lookups this month · {{ key.lookup_credits }} credits remaining</p>
+          </div>
+          {% if key.is_active %}
+            <form method="post" action="{{ url_for('update_developer_api_key', key_id=key.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="deactivate">
+              <button type="submit" class="planira-button-danger">Revoke key</button>
+            </form>
+          {% else %}
+            <span class="status-chip chip-warning">Revoked</span>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="empty-inline">
+          <strong>No API keys yet</strong>
+          <p class="muted">Create your first key when you're ready to test the Planira API preview.</p>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% else %}
+  <article class="planira-card planira-card-soft">
+    <span class="eyebrow">Sign in</span>
+    <h2>Create keys when you're ready</h2>
+    <p class="muted">You can review the API format now, then sign in with Google when you want to create and manage keys.</p>
+    <a class="btn-primary-planira" href="{{ url_for('login', next=url_for('developers')) }}">Continue with Google</a>
+  </article>
+{% endif %}
+{% endblock %}

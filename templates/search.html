@@ -21,26 +21,171 @@
           <h2>Start with a place search</h2>
         </div>
       </div>
-      <form class="search-form search-form-inline" action="{{ url_for('search') }}">
+      <form class="search-form search-form-stack" action="{{ url_for('search') }}">
         <input type="hidden" name="submitted" value="1">
-        <div class="field-group">
-          <label for="search-q">Venue or postcode</label>
-          <input id="search-q" name="q" value="{{ q }}" placeholder="Venue name or postcode">
+        <div class="search-form-inline">
+          <div class="field-group">
+            <label for="search-q">Venue or postcode</label>
+            <input id="search-q" name="q" value="{{ q }}" placeholder="Venue name or postcode">
+          </div>
+          <div class="field-group">
+            <label for="search-town">Town</label>
+            <input id="search-town" name="town" value="{{ town }}" placeholder="Town">
+          </div>
+          <div class="field-group">
+            <label for="search-accessible">Accessibility filter</label>
+            <select id="search-accessible" name="accessible">
+              <option value="" {% if accessible == '' %}selected{% endif %}>Any accessible toilet</option>
+              <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Accessible toilet: yes</option>
+              <option value="no" {% if accessible == 'no' %}selected{% endif %}>Accessible toilet: no</option>
+            </select>
+          </div>
+          <button class="btn-primary-planira">Show places</button>
         </div>
-        <div class="field-group">
-          <label for="search-town">Town</label>
-          <input id="search-town" name="town" value="{{ town }}" placeholder="Town">
-        </div>
-        <div class="field-group">
-          <label for="search-accessible">Accessibility filter</label>
-          <select id="search-accessible" name="accessible">
-            <option value="">Any accessible toilet</option>
-            <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
-          </select>
-        </div>
-        <button class="btn-primary-planira">Show places</button>
+
+        <details class="search-advanced-panel" {% if venue_type or toilets_available or step_free or stairs_inside or baby_changing or lift_available or disabled_parking or confidence or verification or toilet_distance or sensory_notes or public_comments or source %}open{% endif %}>
+          <summary>Advanced filters</summary>
+          <div class="search-advanced-groups">
+            <section class="search-filter-group">
+              <h3>Access needs</h3>
+              <div class="search-advanced-grid">
+                <div class="field-group">
+                  <label for="search-toilets-available">Toilets available</label>
+                  <select id="search-toilets-available" name="toilets_available">
+                    <option value="" {% if toilets_available == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if toilets_available == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if toilets_available == 'no' %}selected{% endif %}>No</option>
+                    <option value="unknown" {% if toilets_available == 'unknown' %}selected{% endif %}>Unknown</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-step-free">Step-free entrance</label>
+                  <select id="search-step-free" name="step_free">
+                    <option value="" {% if step_free == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if step_free == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if step_free == 'no' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-stairs-inside">Stairs inside</label>
+                  <select id="search-stairs-inside" name="stairs_inside">
+                    <option value="" {% if stairs_inside == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if stairs_inside == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if stairs_inside == 'no' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-baby-changing">Baby changing</label>
+                  <select id="search-baby-changing" name="baby_changing">
+                    <option value="" {% if baby_changing == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if baby_changing == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if baby_changing == 'no' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-lift-available">Lift available</label>
+                  <select id="search-lift-available" name="lift_available">
+                    <option value="" {% if lift_available == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if lift_available == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if lift_available == 'no' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-disabled-parking">Disabled parking</label>
+                  <select id="search-disabled-parking" name="disabled_parking">
+                    <option value="" {% if disabled_parking == '' %}selected{% endif %}>Any</option>
+                    <option value="yes" {% if disabled_parking == 'yes' %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if disabled_parking == 'no' %}selected{% endif %}>No</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="search-filter-group">
+              <h3>Visit confidence</h3>
+              <div class="search-advanced-grid">
+                <div class="field-group">
+                  <label for="search-confidence">Confidence</label>
+                  <select id="search-confidence" name="confidence">
+                    <option value="" {% if confidence == '' %}selected{% endif %}>Any</option>
+                    <option value="70" {% if confidence == '70' %}selected{% endif %}>70+</option>
+                    <option value="85" {% if confidence == '85' %}selected{% endif %}>85+</option>
+                    <option value="95" {% if confidence == '95' %}selected{% endif %}>95+</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-verification">Verification</label>
+                  <select id="search-verification" name="verification">
+                    <option value="" {% if verification == '' %}selected{% endif %}>Any</option>
+                    <option value="recent" {% if verification == 'recent' %}selected{% endif %}>Recently verified</option>
+                    <option value="needs_verification" {% if verification == 'needs_verification' %}selected{% endif %}>Needs verification</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-source">Source</label>
+                  <select id="search-source" name="source">
+                    <option value="" {% if source == '' %}selected{% endif %}>Any</option>
+                    {% for option in source_options %}
+                      <option value="{{ option.value }}" {% if source == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="search-filter-group">
+              <h3>Place details</h3>
+              <div class="search-advanced-grid">
+                <div class="field-group">
+                  <label for="search-venue-type">Venue type</label>
+                  <select id="search-venue-type" name="venue_type">
+                    <option value="" {% if venue_type == '' %}selected{% endif %}>Any</option>
+                    {% for option in venue_type_options %}
+                      <option value="{{ option.value }}" {% if venue_type == option.value %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-toilet-distance">Toilet distance from bar</label>
+                  <select id="search-toilet-distance" name="toilet_distance">
+                    <option value="" {% if toilet_distance == '' %}selected{% endif %}>Any</option>
+                    <option value="recorded" {% if toilet_distance == 'recorded' %}selected{% endif %}>Recorded</option>
+                    <option value="short" {% if toilet_distance == 'short' %}selected{% endif %}>Short distance</option>
+                    <option value="unknown" {% if toilet_distance == 'unknown' %}selected{% endif %}>Unknown or missing</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="search-filter-group">
+              <h3>Extra information</h3>
+              <div class="search-advanced-grid">
+                <div class="field-group">
+                  <label for="search-sensory-notes">Sensory notes</label>
+                  <select id="search-sensory-notes" name="sensory_notes">
+                    <option value="" {% if sensory_notes == '' %}selected{% endif %}>Any</option>
+                    <option value="has" {% if sensory_notes == 'has' %}selected{% endif %}>Has notes</option>
+                    <option value="missing" {% if sensory_notes == 'missing' %}selected{% endif %}>Missing</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label for="search-public-comments">Public comments</label>
+                  <select id="search-public-comments" name="public_comments">
+                    <option value="" {% if public_comments == '' %}selected{% endif %}>Any</option>
+                    <option value="has" {% if public_comments == 'has' %}selected{% endif %}>Has comments</option>
+                    <option value="missing" {% if public_comments == 'missing' %}selected{% endif %}>Missing</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="search-advanced-actions">
+            <span class="muted">Use advanced filters when you want tighter control without dumping the whole venue list.</span>
+            <a class="planira-button-quiet search-filter-reset" href="{{ url_for('search') }}">Clear filters</a>
+          </div>
+        </details>
       </form>
-      <p class="helper-copy">Search by venue name first, then narrow by town or accessible toilet if you need to. Results only appear after a deliberate search.</p>
+      <p class="helper-copy">Search by venue name first, then narrow by town or accessibility detail if you need to. Results only appear after a deliberate search.</p>
     </article>
 
     {% if submitted or should_search %}
@@ -63,28 +208,21 @@
             <span>No filters applied yet</span>
           {% endif %}
         </div>
+        {% if active_filter_chips %}
+          <div class="search-active-filters">
+            {% for chip in active_filter_chips %}
+              <span>{{ chip.label }}: {{ chip.value }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
       </article>
     {% endif %}
 
     {% if result_cards %}
       <div class="card-grid">
         {% for card in result_cards %}
-          <a class="result-card planira-card interactive-panel" href="{{ url_for('place_detail', slug=card.place.slug) }}">
-            <div class="result-topline">
-              <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
-            </div>
-            <h3>{{ card.place.name }}</h3>
-            <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
-            {{ planira.confidence_panel(card.signal.label, card.signal.summary) }}
-            <div class="tag-row">
-              <span>{{ card.verified_text }}</span>
-              {% for item in card.key_bits %}
-                <span>{{ item }}</span>
-              {% endfor %}
-            </div>
-            <span class="result-link-copy">Open place details</span>
-          </a>
-      {% endfor %}
+          {{ planira.result_card(card) }}
+        {% endfor %}
       </div>
       {% if pagination.pages > 1 %}
         <nav class="pagination-nav planira-card planira-card-soft" aria-label="Search result pages">
@@ -94,17 +232,17 @@
           </div>
           <div class="pagination-links">
             {% if pagination.has_prev %}
-              <a class="btn-secondary-planira" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=pagination.prev_num) }}">Previous</a>
+              <a class="btn-secondary-planira" href="{{ url_for('search', q=q or None, town=town or None, venue_type=venue_type or None, toilets_available=toilets_available or None, accessible=accessible or None, step_free=step_free or None, stairs_inside=stairs_inside or None, baby_changing=baby_changing or None, lift_available=lift_available or None, disabled_parking=disabled_parking or None, confidence=confidence or None, verification=verification or None, toilet_distance=toilet_distance or None, sensory_notes=sensory_notes or None, public_comments=public_comments or None, source=source or None, submitted='1' if submitted else None, page=pagination.prev_num) }}">Previous</a>
             {% endif %}
             {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
               {% if page_number %}
-                <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=page_number) }}">{{ page_number }}</a>
+                <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('search', q=q or None, town=town or None, venue_type=venue_type or None, toilets_available=toilets_available or None, accessible=accessible or None, step_free=step_free or None, stairs_inside=stairs_inside or None, baby_changing=baby_changing or None, lift_available=lift_available or None, disabled_parking=disabled_parking or None, confidence=confidence or None, verification=verification or None, toilet_distance=toilet_distance or None, sensory_notes=sensory_notes or None, public_comments=public_comments or None, source=source or None, submitted='1' if submitted else None, page=page_number) }}">{{ page_number }}</a>
               {% else %}
                 <span class="page-gap">…</span>
               {% endif %}
             {% endfor %}
             {% if pagination.has_next %}
-              <a class="btn-secondary-planira" href="{{ url_for('search', q=q, town=town, accessible=accessible, submitted='1' if submitted else None, page=pagination.next_num) }}">Next</a>
+              <a class="btn-secondary-planira" href="{{ url_for('search', q=q or None, town=town or None, venue_type=venue_type or None, toilets_available=toilets_available or None, accessible=accessible or None, step_free=step_free or None, stairs_inside=stairs_inside or None, baby_changing=baby_changing or None, lift_available=lift_available or None, disabled_parking=disabled_parking or None, confidence=confidence or None, verification=verification or None, toilet_distance=toilet_distance or None, sensory_notes=sensory_notes or None, public_comments=public_comments or None, source=source or None, submitted='1' if submitted else None, page=pagination.next_num) }}">Next</a>
             {% endif %}
           </div>
         </nav>
@@ -113,23 +251,23 @@
       <article class="empty-state planira-card">
         <span class="eyebrow">No matching places yet</span>
         <h2>Nothing matched that search this time.</h2>
-        <p class="muted">Try a broader venue name, remove a filter, or switch towns. If the place is new to Planira, it may appear once someone adds or reviews it.</p>
+        <p class="muted">Try a broader venue or postcode, remove one or two advanced filters, or switch towns to widen the search.</p>
       </article>
     {% elif submitted %}
       <article class="empty-state planira-card">
         <span class="eyebrow">Search before results</span>
         <h2>Start with a venue, town, or accessibility filter.</h2>
-        <p class="muted">Planira will only show results after you intentionally search, so the first page load stays focused and does not dump the full venue list.</p>
+        <p class="muted">Planira only shows results after an intentional search, so the first page load stays focused and never dumps the full venue list.</p>
       </article>
     {% else %}
       <article class="empty-state planira-card planira-card-soft search-prestate">
         <span class="eyebrow">Before you search</span>
         <h2>Search first, then Planira shows the useful part.</h2>
-        <p class="muted">Try a venue name, postcode, town, or accessible toilet filter when you are ready. The first page load stays intentionally empty so you can start with a deliberate search.</p>
+        <p class="muted">Try a venue name, postcode, town, or accessibility filter when you are ready. The first page load stays intentionally empty so you stay in control.</p>
         <div class="tag-row">
           <span>Venue name or postcode</span>
           <span>Town filter</span>
-          <span>Accessible toilet filter</span>
+          <span>Accessibility filters</span>
         </div>
       </article>
     {% endif %}
@@ -140,31 +278,31 @@
       <span class="eyebrow">Helpful signals</span>
       <h2>What the signals mean</h2>
       <div class="stack-list">
-        <div class="stack-row">
-          <strong>Looks straightforward</strong>
-          <span>Useful when the place looks easier to navigate and the record has stronger confidence.</span>
-        </div>
-        <div class="stack-row">
-          <strong>Worth checking</strong>
-          <span>Worth checking before you go because something is partial, older, or still unclear.</span>
-        </div>
-        <div class="stack-row">
-          <strong>Might be a bit tricky</strong>
-          <span>Used when a visit may need more planning or a backup option.</span>
-        </div>
+        {% for signal in signal_examples %}
+          <div class="stack-row">
+            <strong>{{ signal.label }}</strong>
+            <span>{{ signal['copy'] }}</span>
+          </div>
+        {% endfor %}
       </div>
     </article>
     <article class="planira-card planira-card-soft">
-      <span class="eyebrow">More from Planira</span>
-      <h2>Extra tools when you need them</h2>
+      <span class="eyebrow">Your plan</span>
+      <h2>Search usage at a glance</h2>
       <p class="muted">{{ search_usage.quota_copy.allowance_copy }}</p>
       <div class="stack-list">
-        {% for feature in upgrade_features %}
-          <div class="stack-row">
-            <strong>{{ feature }}</strong>
-            <span>Designed to fit into the same calm search flow without adding extra noise.</span>
-          </div>
-        {% endfor %}
+        <div class="stack-row">
+          <strong>{{ search_usage.quota_copy.search_limit_copy }}</strong>
+          <span>{{ search_usage.quota_copy.search_usage_copy }}.</span>
+        </div>
+        <div class="stack-row">
+          <strong>{{ search_usage.quota_copy.search_credits_copy }}</strong>
+          <span>Extra credits only apply after the monthly allowance is used.</span>
+        </div>
+      </div>
+      <div class="page-head-actions">
+        <a class="btn-secondary-planira" href="{{ url_for('plans') }}">Compare plans</a>
+        <a class="btn-secondary-planira" href="{{ url_for('account') }}">Open account</a>
       </div>
     </article>
   </aside>

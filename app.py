@@ -1,5 +1,4 @@
 import hashlib
-import hmac
 import logging
 import os
 import re
@@ -14,8 +13,21 @@ from flask import Flask, abort, flash, jsonify, redirect, render_template, reque
 from flask_migrate import Migrate, upgrade
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect
+from sqlalchemy.orm import selectinload
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from planira_presenters import (
+    APP_NAME,
+    PLAN_DETAILS,
+    PLACE_STATUS_LABELS,
+    TAGLINE,
+    VERIFICATION_SOURCE_LABELS,
+    build_access_signal as present_access_signal,
+    build_place_card as present_place_card,
+    build_signal_examples,
+    humanize_label,
+    humanize_plan_name as present_plan_name,
+)
 from slugify_fallback import slugify
 
 try:
@@ -79,6 +91,7 @@ URL_FIELD_SCHEMES = ("http://", "https://")
 API_KEY_TEST_PREFIX = "plnr_test_"
 API_KEY_LIVE_PREFIX = "plnr_live_"
 API_KEY_PATTERN = re.compile(r"^plnr_(?:live|test)_[A-Za-z0-9_-]{24,}$")
+CONTACT_PHONE = os.getenv("PUBLIC_CONTACT_PHONE", "01604 289096").strip() or "01604 289096"
 
 proxy_fix_count = int(os.getenv("PROXY_FIX_COUNT", "0"))
 if proxy_fix_count:
@@ -306,11 +319,16 @@ def csrf_token():
 def inject_user():
     user = current_user()
     staff_navigation = build_staff_navigation(user)
+    account_state = build_account_state(user)
     return {
+        "brand_name": APP_NAME,
+        "brand_tagline": TAGLINE,
+        "contact_phone": CONTACT_PHONE,
         "current_user": user,
-        "is_admin": is_admin_email(session.get("user", {}).get("email")),
+        "is_admin": account_state["is_admin"],
         "csrf_token": csrf_token,
-        "account_state": build_account_state(user),
+        "humanize_label": humanize_label,
+        "account_state": account_state,
         "shell_navigation": build_shell_navigation(user),
         "staff_navigation": staff_navigation,
         "staff_nav_active": bool(request.endpoint and any(item["endpoint"] == request.endpoint for item in staff_navigation)),
@@ -367,6 +385,25 @@ def parse_int_field(raw_value, field_name, minimum=None, maximum=None, default=N
     return parsed
 
 
+def parse_float_field(raw_value, field_name, minimum=None, maximum=None, default=None):
+    value = (raw_value or "").strip()
+    if not value:
+        if default is not None:
+            return default
+        return None
+
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a number.") from exc
+
+    if minimum is not None and parsed < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum}.")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"{field_name} must be no more than {maximum}.")
+    return parsed
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -382,10 +419,81 @@ def login_required(fn):
     return wrapper
 
 
+def request_prefers_json():
+    if request.args.get("format", "").strip().lower() == "json":
+        return True
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return True
+    best = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    return best == "application/json" and request.accept_mimetypes[best] > request.accept_mimetypes["text/html"]
+
+
+def auth_required_response(*, staff_only=False):
+    if not session.get("user"):
+        if request_prefers_json():
+            return (
+                jsonify(
+                    {
+                        "error": "authentication_required",
+                        "message": "Log in with a staff account to use this streaming endpoint.",
+                        "login_url": url_for("login", next=request.path),
+                    }
+                ),
+                401,
+            )
+        flash("Please log in with Google to view results.", "info")
+        return redirect(url_for("login", next=request.path))
+
+    user = current_user()
+    if not user:
+        session.clear()
+        if request_prefers_json():
+            return (
+                jsonify(
+                    {
+                        "error": "session_expired",
+                        "message": "Your session expired. Log in again to use this streaming endpoint.",
+                        "login_url": url_for("login", next=request.path),
+                    }
+                ),
+                401,
+            )
+        flash("Your session expired, so please sign in again.", "info")
+        return redirect(url_for("login", next=request.path))
+
+    if staff_only and not is_staff_user(user):
+        if request_prefers_json():
+            return (
+                jsonify(
+                    {
+                        "error": "staff_access_required",
+                        "message": "Staff access is required for this streaming endpoint.",
+                    }
+                ),
+                403,
+            )
+        flash("Staff access required.", "error")
+        return redirect(url_for("index"))
+
+    return None
+
+
+def staff_session_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth_response = auth_required_response(staff_only=True)
+        if auth_response is not None:
+            return auth_response
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not is_admin_email(session.get("user", {}).get("email")):
+        user = current_user()
+        if not user or get_access_label(user) != "Admin":
             flash("Admin access required.", "error")
             return redirect(url_for("index"))
         return fn(*args, **kwargs)
@@ -432,67 +540,11 @@ def ensure_accessibility_profiles(commit=True):
 
 
 def build_access_signal(profile):
-    if not profile:
-        return {
-            "tone": "moderate",
-            "label": "Needs checking",
-            "summary": "We still need a reliable decision for this place.",
-        }
-
-    accessible = profile.accessible_toilet
-    step_free = profile.step_free_entrance
-    stairs = profile.stairs_inside
-    confidence = profile.confidence_score or 0
-
-    if accessible == "yes" and step_free == "yes" and stairs in {"no", "unknown"} and confidence >= 70:
-        return {
-            "tone": "easy",
-            "label": "Easy access",
-            "summary": "Step-free details look strong and confidence is high.",
-        }
-
-    if accessible == "no" or step_free == "no" or stairs == "yes":
-        return {
-            "tone": "difficult",
-            "label": "Challenging",
-            "summary": "This one might be tricky, so check the details before you go.",
-        }
-
-    return {
-        "tone": "moderate",
-        "label": "Heads up",
-        "summary": "There are a few unknowns or partial answers to keep in mind.",
-    }
+    return present_access_signal(profile)
 
 
 def build_place_card(place):
-    profile = place.accessibility
-    signal = build_access_signal(profile)
-    verified_text = "Not verified yet"
-    if profile and profile.last_verified_at:
-        verified_text = f"Last verified {profile.last_verified_at.strftime('%d %b %Y')}"
-
-    key_bits = []
-    if profile:
-        if profile.accessible_toilet == "yes":
-            key_bits.append("Accessible toilet")
-        elif profile.accessible_toilet == "no":
-            key_bits.append("No accessible toilet")
-
-        if profile.step_free_entrance == "yes":
-            key_bits.append("Step-free entrance")
-        elif profile.step_free_entrance == "no":
-            key_bits.append("Steps at entrance")
-
-        if profile.baby_changing == "yes":
-            key_bits.append("Baby changing")
-
-    return {
-        "place": place,
-        "signal": signal,
-        "verified_text": verified_text,
-        "key_bits": key_bits[:3],
-    }
+    return present_place_card(place)
 
 
 def build_plan_catalog():
@@ -653,14 +705,7 @@ def normalize_plan_name(user):
 
 
 def humanize_plan_name(plan_name):
-    labels = {
-        "visitor": "Visitor",
-        "free": "Free",
-        "paid": "Paid",
-        "business": "Business",
-        "admin": "Admin",
-    }
-    return labels.get(plan_name, (plan_name or "free").replace("_", " ").title())
+    return present_plan_name(plan_name)
 
 
 def normalize_billing_plan_name(user):
@@ -881,7 +926,7 @@ def record_api_lookup(api_key_id, user_id, endpoint, query=None, status_code=Non
     return event
 
 
-def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=None, required_scopes=None, endpoint=None, query=None, status_code=200, commit=True, record_event=True):
+def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=None, required_scopes=None, endpoint=None, query=None, status_code=200, commit=True, record_event=True, apply_usage=True):
     candidate = resolve_api_key_candidate(raw_key=raw_key, authorization_header=authorization_header, request_obj=request_obj)
     if not candidate:
         return {"ok": False, "error": "missing_api_key", "status_code": 401}
@@ -889,17 +934,8 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
         return {"ok": False, "error": "malformed_api_key", "status_code": 401}
 
     candidate_hash = hash_api_key_value(candidate)
-    matched_key = None
-    inactive_match = None
-    for api_key in APIKey.query.all():
-        if hmac.compare_digest(api_key.key_hash, candidate_hash):
-            if api_key.is_active:
-                matched_key = api_key
-            else:
-                inactive_match = api_key
-            break
-
-    if inactive_match and not matched_key:
+    matched_key = APIKey.query.filter_by(key_hash=candidate_hash).first()
+    if matched_key and not matched_key.is_active:
         return {"ok": False, "error": "inactive_api_key", "status_code": 403}
     if not matched_key:
         return {"ok": False, "error": "invalid_api_key", "status_code": 401}
@@ -915,26 +951,45 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
             "limit_context": limit_context,
         }
 
-    if not limit_context["bypass"] and limit_context["monthly_limit"] is not None and limit_context["lookups_used"] >= limit_context["monthly_limit"]:
-        matched_key.lookup_credits = max((matched_key.lookup_credits or 0) - 1, 0)
+    if apply_usage:
+        if not limit_context["bypass"] and limit_context["monthly_limit"] is not None and limit_context["lookups_used"] >= limit_context["monthly_limit"]:
+            matched_key.lookup_credits = max((matched_key.lookup_credits or 0) - 1, 0)
 
-    matched_key.last_used_at = datetime.now(timezone.utc)
-    if record_event and endpoint:
-        record_api_lookup(
-            api_key_id=matched_key.id,
-            user_id=matched_key.user_id,
-            endpoint=endpoint,
-            query=query,
-            status_code=status_code,
-        )
-    if commit:
-        db.session.commit()
+        matched_key.last_used_at = datetime.now(timezone.utc)
+        if record_event and endpoint:
+            record_api_lookup(
+                api_key_id=matched_key.id,
+                user_id=matched_key.user_id,
+                endpoint=endpoint,
+                query=query,
+                status_code=status_code,
+            )
+        if commit:
+            db.session.commit()
     return {
         "ok": True,
         "api_key": matched_key,
         "user": matched_key.user,
         "limit_context": api_key_limit_context(matched_key),
     }
+
+
+def finalize_api_lookup_success(api_key, endpoint, query=None, status_code=200, commit=True):
+    limit_context = api_key_limit_context(api_key)
+    if not limit_context["bypass"] and limit_context["monthly_limit"] is not None and limit_context["lookups_used"] >= limit_context["monthly_limit"]:
+        api_key.lookup_credits = max((api_key.lookup_credits or 0) - 1, 0)
+
+    api_key.last_used_at = datetime.now(timezone.utc)
+    record_api_lookup(
+        api_key_id=api_key.id,
+        user_id=api_key.user_id,
+        endpoint=endpoint,
+        query=query,
+        status_code=status_code,
+    )
+    if commit:
+        db.session.commit()
+    return api_key_limit_context(api_key)
 
 
 def format_search_limit_copy(limit, bypass=False):
@@ -953,6 +1008,15 @@ def format_search_credits_copy(credits_remaining, bypass=False):
     if bypass:
         return f"{credits_remaining} extra search credits available if staff ever needs them"
     return f"{credits_remaining} extra search credits remaining"
+
+
+def api_error_response(error, message, status_code, **extra):
+    payload = {
+        "error": error,
+        "message": message,
+    }
+    payload.update(extra)
+    return jsonify(payload), status_code
 
 
 def build_quota_copy(user, limit_context=None):
@@ -982,6 +1046,194 @@ def build_quota_copy(user, limit_context=None):
             if user
             else "Sign in to start tracked search usage and a monthly search allowance."
         ),
+    }
+
+
+def build_plan_tier_copy(plan, *, user=None, active_quota_copy=None):
+    if plan["key"].startswith("api_"):
+        return {
+            "limit_label": "Access pattern",
+            "limit_copy": "Includes API lookups and does not change your member search allowance.",
+            "credits_copy": "API lookup credits are separate from member search credits.",
+        }
+
+    default_limit = PLAN_DETAILS["paid"]["search_limit"] if plan["key"] == "paid_consumer" else PLAN_DETAILS["free"]["search_limit"]
+    return {
+        "limit_label": "Search limit",
+        "limit_copy": (
+            active_quota_copy["search_limit_copy"]
+            if user and current_plan_catalog_key(user) == plan["key"] and active_quota_copy
+            else format_search_limit_copy(default_limit)
+        ),
+        "credits_copy": (
+            "Extra search credits can top up the monthly allowance whenever you need more checks."
+            if plan["key"] == "paid_consumer"
+            else "A lighter monthly allowance for occasional venue planning, with extra credits if needed."
+        ),
+    }
+
+
+def build_api_key_rows_with_usage(user):
+    if not user:
+        return []
+
+    rows = []
+    keys = APIKey.query.filter_by(user_id=user.id).order_by(APIKey.created_at.desc(), APIKey.id.desc()).all()
+    key_ids = [api_key.id for api_key in keys]
+    month_start, next_month_start = current_month_range()
+    monthly_counts = {}
+    total_counts = {}
+
+    if key_ids:
+        monthly_counts = {
+            api_key_id: count
+            for api_key_id, count in db.session.query(APILookupEvent.api_key_id, db.func.count(APILookupEvent.id))
+            .filter(
+                APILookupEvent.api_key_id.in_(key_ids),
+                APILookupEvent.created_at >= month_start,
+                APILookupEvent.created_at < next_month_start,
+            )
+            .group_by(APILookupEvent.api_key_id)
+            .all()
+        }
+        total_counts = {
+            api_key_id: count
+            for api_key_id, count in db.session.query(APILookupEvent.api_key_id, db.func.count(APILookupEvent.id))
+            .filter(APILookupEvent.api_key_id.in_(key_ids))
+            .group_by(APILookupEvent.api_key_id)
+            .all()
+        }
+
+    for api_key in keys:
+        limit_context = api_key_limit_context(api_key)
+        rows.append(
+            {
+                **serialize_api_key(api_key),
+                "lookups_used": monthly_counts.get(api_key.id, 0),
+                "total_lookups": total_counts.get(api_key.id, 0),
+                "lookup_limit": "Unlimited" if limit_context["monthly_limit"] is None else limit_context["monthly_limit"],
+                "lookup_credits": limit_context["lookup_credits"],
+                "limit_reached": limit_context["limit_reached"],
+                "status_label": "Active" if api_key.is_active else "Revoked",
+                "created_at_label": format_admin_timestamp(api_key.created_at, with_time=True) or "Recently",
+                "last_used_at_label": format_admin_timestamp(api_key.last_used_at, with_time=True) if api_key.last_used_at else None,
+            }
+        )
+    return rows
+
+
+def get_obs_active_place():
+    return (
+        Place.query.filter(Place.status.in_(["calling", "needs_call", "callback"]))
+        .order_by(Place.status.desc(), Place.priority.desc(), Place.updated_at.asc())
+        .first()
+    )
+
+
+def serialize_obs_current_call(place):
+    if not place:
+        return {
+            "active": False,
+            "message": "No active call right now.",
+            "place": None,
+        }
+
+    return {
+        "active": True,
+        "message": "Current call loaded.",
+        "place": {
+            "id": place.id,
+            "name": place.name,
+            "town": place.town,
+            "venue_type": place.venue_type,
+            "status": place.status,
+            "status_label": humanize_label(place.status),
+            "priority": place.priority,
+            "worksheet_url": url_for("call_place", place_id=place.id),
+            "updated_at": place.updated_at.isoformat() if place.updated_at else None,
+        },
+    }
+
+
+def build_obs_progress_payload():
+    today = datetime.now(timezone.utc).date()
+    verified_today = AccessibilityProfile.query.filter(db.func.date(AccessibilityProfile.last_verified_at) == str(today)).count()
+    total_verified = Place.query.filter_by(status="verified").count()
+    queue = {
+        "calling": Place.query.filter_by(status="calling").count(),
+        "needs_call": Place.query.filter_by(status="needs_call").count(),
+        "callback": Place.query.filter_by(status="callback").count(),
+    }
+    return {
+        "verified_today": verified_today,
+        "total_verified": total_verified,
+        "queue": queue,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_obs_health_payload():
+    return {
+        "status": "ok",
+        "authenticated": True,
+        "staff_access": True,
+        "session_cookie_expected": True,
+        "browser_sources": [
+            {
+                "label": "Current call widget",
+                "html_url": url_for("obs_current_call", _external=True),
+                "json_url": url_for("obs_current_call", format="json", _external=True),
+            },
+            {
+                "label": "Progress widget",
+                "html_url": url_for("obs_progress", _external=True),
+                "json_url": url_for("obs_progress", format="json", _external=True),
+            },
+        ],
+        # TODO: If OBS browser sources cannot reliably keep the staff session cookie,
+        # replace this with a short-lived signed token flow later. Do not use API keys.
+        "todo": "If OBS browser sources do not reliably keep the signed-in staff session, add a short-lived signed streaming token later.",
+    }
+
+
+def build_developer_summary(user):
+    if not user:
+        return None
+
+    key_rows = build_api_key_rows_with_usage(user)
+    active_key_count = sum(1 for row in key_rows if row["is_active"])
+    total_lookup_credits = sum(row["lookup_credits"] for row in key_rows if row["is_active"])
+    total_lookups_used = sum(row["lookups_used"] for row in key_rows if row["is_active"])
+    has_unlimited_key = any(row["is_active"] and row["lookup_limit"] == "Unlimited" for row in key_rows)
+
+    return {
+        "api_key_rows": key_rows,
+        "active_key_count": active_key_count,
+        "total_lookup_credits": total_lookup_credits,
+        "total_lookups_used": total_lookups_used,
+        "has_unlimited_key": has_unlimited_key,
+    }
+
+
+def serialize_place_for_api(place):
+    profile = getattr(place, "accessibility", None)
+    signal = build_access_signal(profile)
+    return {
+        "id": place.id,
+        "name": place.name,
+        "town": place.town,
+        "postcode": place.postcode,
+        "accessibility_summary": {
+            "label": signal["label"],
+            "summary": signal["summary"],
+            "tone": signal["tone"],
+        },
+        "toilets_available": getattr(profile, "toilets_available", "unknown") if profile else "unknown",
+        "accessible_toilet": getattr(profile, "accessible_toilet", "unknown") if profile else "unknown",
+        "step_free_entrance": getattr(profile, "step_free_entrance", "unknown") if profile else "unknown",
+        "stairs_inside": getattr(profile, "stairs_inside", "unknown") if profile else "unknown",
+        "confidence_score": getattr(profile, "confidence_score", None) if profile else None,
+        "last_verified_at": profile.last_verified_at.isoformat() if profile and profile.last_verified_at else None,
     }
 
 
@@ -1032,6 +1284,7 @@ def build_staff_navigation(user):
         return []
     return [
         {"label": "Dashboard", "endpoint": "dashboard"},
+        {"label": "Streaming", "endpoint": "staff_streaming_control_room"},
         {"label": "Venues", "endpoint": "admin_venues"},
         {"label": "Moderation", "endpoint": "admin_moderation"},
         {"label": "Users", "endpoint": "admin_users"},
@@ -1110,36 +1363,13 @@ def consume_search_credit_if_needed(user, limit_context):
 
 def build_user_summary(user):
     account_state = build_account_state(user)
-    plan_details = {
-        "free": {
-            "name": "Free",
-            "price": "PS0",
-            "description": "Browse verified venue information with the free member experience.",
-            "search_limit": 10,
-            "credits_label": "Top up with search credits when you need a few extra checks.",
-        },
-        "paid": {
-            "name": "Paid",
-            "price": "PS9/mo idea",
-            "description": "More search confidence, richer filters, and premium venue detail.",
-            "search_limit": 100,
-            "credits_label": "Extra credits can sit on top of the monthly allowance for busy periods.",
-        },
-        "business": {
-            "name": "Business",
-            "price": "Usage pack",
-            "description": "Developer-ready account with API-pack access.",
-            "search_limit": 50,
-            "credits_label": "Search credits remain available for staff-style manual checks too.",
-        },
-    }
     limit_context = search_limit_context(user)
     quota_copy = build_quota_copy(user, limit_context)
     comment_count = Comment.query.filter_by(user_email=user.email).count()
     call_count = CallLog.query.filter_by(user_email=user.email).count()
     verified_count = AccessibilityProfile.query.filter_by(last_verified_by=user.email).count()
     saved_venues = 0
-    current_plan = plan_details.get(account_state["plan_name"], plan_details["free"])
+    current_plan = PLAN_DETAILS.get(account_state["plan_name"], PLAN_DETAILS["free"])
     search_limit = limit_context["monthly_limit"]
     if search_limit is None:
         search_limit = current_plan["search_limit"]
@@ -1163,8 +1393,9 @@ def build_user_summary(user):
 
 def build_settings_sections(user):
     summary = build_user_summary(user)
-    progress = int((summary["searches_used"] / max(summary["search_limit"], 1)) * 100)
-    api_keys = APIKey.query.filter_by(user_id=user.id).order_by(APIKey.created_at.desc(), APIKey.id.desc()).all()
+    search_limit = summary["search_limit"] or 0
+    progress = int((summary["searches_used"] / max(search_limit, 1)) * 100) if search_limit else 0
+    developer_summary = build_developer_summary(user)
     return {
         "profile": {
             "name": user.name or "Planira member",
@@ -1192,7 +1423,11 @@ def build_settings_sections(user):
             "saved_venues": summary["saved_venues"],
         },
         "api": {
-            "keys": [serialize_api_key(api_key) for api_key in api_keys],
+            "api_key_rows": developer_summary["api_key_rows"],
+            "active_key_count": developer_summary["active_key_count"],
+            "total_lookup_credits": developer_summary["total_lookup_credits"],
+            "total_lookups_used": developer_summary["total_lookups_used"],
+            "has_unlimited_key": developer_summary["has_unlimited_key"],
         },
     }
 
@@ -1253,8 +1488,51 @@ def build_recent_audit_entries(limit=6):
     return rows
 
 
+def build_recent_api_lookup_activity(limit=6, user_id=None):
+    query = (
+        db.session.query(APILookupEvent)
+        .outerjoin(APIKey, APILookupEvent.api_key_id == APIKey.id)
+        .outerjoin(User, APILookupEvent.user_id == User.id)
+    )
+    if user_id is not None:
+        query = query.filter(APILookupEvent.user_id == user_id)
+
+    events = query.order_by(APILookupEvent.created_at.desc()).limit(limit).all()
+    rows = []
+    for event in events:
+        key_label = event.api_key.label if event.api_key and event.api_key.label else "API key"
+        rows.append(
+            {
+                "id": event.id,
+                "user_email": event.user.email if event.user and event.user.email else "Unknown user",
+                "key_label": key_label,
+                "key_hint": serialize_api_key(event.api_key)["key_hint"] if event.api_key else "Hidden after creation",
+                "endpoint": event.endpoint,
+                "query": event.query,
+                "status_code": event.status_code,
+                "created_at_label": format_admin_timestamp(event.created_at, with_time=True) or "Recently",
+            }
+        )
+    return rows
+
+
+def build_api_operations_summary(limit=6):
+    month_start, next_month_start = current_month_range()
+    return {
+        "active_key_count": APIKey.query.filter_by(is_active=True).count(),
+        "revoked_key_count": APIKey.query.filter_by(is_active=False).count(),
+        "lookup_events_this_month": (
+            db.session.query(APILookupEvent).filter(
+                APILookupEvent.created_at >= month_start,
+                APILookupEvent.created_at < next_month_start,
+            ).count()
+        ),
+        "recent_events": build_recent_api_lookup_activity(limit=limit),
+    }
+
+
 def build_moderation_items(limit=8):
-    comments = Comment.query.filter(Comment.status.in_(["pending", "approved", "rejected"])).order_by(Comment.created_at.desc()).limit(limit).all()
+    comments = Comment.query.filter_by(status="pending").order_by(Comment.created_at.desc()).limit(limit).all()
     items = []
     for comment in comments:
         items.append(
@@ -1269,6 +1547,14 @@ def build_moderation_items(limit=8):
             }
         )
     return items
+
+
+def format_admin_timestamp(value, with_time=False):
+    if not value:
+        return None
+    if with_time:
+        return value.strftime("%d %b %Y %H:%M")
+    return value.strftime("%d %b %Y")
 
 
 def describe_user_activity(last_activity_at):
@@ -1307,6 +1593,7 @@ def build_user_rows(users):
 
     user_ids = [user.id for user in users]
     user_emails = [user.email for user in users if user.email]
+    month_start, next_month_start = current_month_range()
 
     comment_counts = {
         email: count
@@ -1343,11 +1630,27 @@ def build_user_rows(users):
         .group_by(SearchEvent.user_id)
         .all()
     }
+    monthly_search_counts = {
+        user_id: count
+        for user_id, count in db.session.query(SearchEvent.user_id, db.func.count(SearchEvent.id))
+        .filter(
+            SearchEvent.user_id.in_(user_ids),
+            SearchEvent.created_at >= month_start,
+            SearchEvent.created_at < next_month_start,
+        )
+        .group_by(SearchEvent.user_id)
+        .all()
+    }
 
     rows = []
     for user in users:
         comment_count = comment_counts.get(user.email, 0)
         call_count = call_counts.get(user.email, 0)
+        searches_used = monthly_search_counts.get(user.id, 0)
+        monthly_limit = get_monthly_search_limit(user)
+        access_label = get_access_label(user)
+        plan_name = normalize_billing_plan_name(user)
+        plan_label = humanize_plan_name(plan_name)
         last_activity_at = max(
             (
                 timestamp
@@ -1361,15 +1664,53 @@ def build_user_rows(users):
             default=None,
         )
         activity = describe_user_activity(last_activity_at)
+        can_toggle_staff = not (
+            is_admin_email(user.email)
+            or user.role == "admin"
+            or user.plan == "admin"
+        )
+        is_staff_role = user.role == "staff"
         rows.append(
             {
                 "user": user,
                 "contributions": comment_count + call_count,
-                "flags": 0,
+                "flags": None,
                 "activity": activity["label"],
                 "activity_detail": activity["detail"],
-                "joined_date": user.created_at.strftime("%d %b %Y") if user.created_at else "Recently",
-                "role_label": "Staff" if user.role == "admin" else user.role.replace("_", " ").title(),
+                "joined_date": format_admin_timestamp(user.created_at) or "Recently",
+                "joined_at_label": format_admin_timestamp(user.created_at, with_time=True) or "Recently",
+                "last_login_label": format_admin_timestamp(user.last_login_at, with_time=True),
+                "last_activity_label": format_admin_timestamp(last_activity_at, with_time=True),
+                "role_label": access_label,
+                "access_label": access_label,
+                "plan_label": plan_label,
+                "plan_name": plan_name,
+                "searches_used": searches_used,
+                "search_limit": monthly_limit,
+                "search_limit_label": "Unlimited" if monthly_limit is None else str(monthly_limit),
+                "search_usage_label": format_search_usage_copy(
+                    searches_used,
+                    monthly_limit,
+                    bypass=can_bypass_search_limits(user),
+                ),
+                "search_credits": max(user.search_credits or 0, 0),
+                "status_label": "Status not tracked yet",
+                "status_note": "Suspension controls are not wired because user suspension fields do not exist yet.",
+                "staff_toggle": {
+                    "enabled": can_toggle_staff,
+                    "label": "Remove staff" if is_staff_role else "Promote to staff",
+                    "action": "demote" if is_staff_role else "promote",
+                    "title": (
+                        "Admin access is controlled by ADMIN_EMAILS and is not editable here."
+                        if not can_toggle_staff
+                        else None
+                    ),
+                },
+                "suspension_action": {
+                    "enabled": False,
+                    "label": "Suspend user",
+                    "title": "Not wired yet",
+                },
             }
         )
     return rows
@@ -1380,6 +1721,217 @@ def build_api_key_rows_for_user(user):
         return []
     keys = APIKey.query.filter_by(user_id=user.id).order_by(APIKey.created_at.desc(), APIKey.id.desc()).all()
     return [serialize_api_key(api_key) for api_key in keys]
+
+
+def build_admin_user_query(*, q="", access="all"):
+    query = User.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(db.or_(User.email.ilike(like), User.name.ilike(like)))
+
+    normalized_access = (access or "all").strip().lower() or "all"
+    admin_email_list = sorted(ADMIN_EMAILS)
+    admin_email_filter = db.func.lower(User.email).in_(admin_email_list) if admin_email_list else db.false()
+
+    if normalized_access == "member":
+        query = query.filter(
+            ~db.or_(
+                User.role.in_(["admin", "staff"]),
+                User.plan == "admin",
+                admin_email_filter,
+            )
+        )
+    elif normalized_access == "staff":
+        query = query.filter(User.role == "staff")
+    elif normalized_access == "admin":
+        query = query.filter(db.or_(User.role == "admin", User.plan == "admin", admin_email_filter))
+    elif normalized_access == "paid":
+        query = query.filter(User.plan == "paid")
+    elif normalized_access == "business":
+        query = query.filter(User.plan == "business")
+
+    return query
+
+
+def build_admin_user_stats():
+    admin_email_list = sorted(ADMIN_EMAILS)
+    admin_email_filter = db.func.lower(User.email).in_(admin_email_list) if admin_email_list else db.false()
+    return [
+        {
+            "label": "Total users",
+            "value": str(User.query.count()),
+            "detail": "All account records in Planira.",
+        },
+        {
+            "label": "Staff and admin",
+            "value": str(User.query.filter(db.or_(User.role.in_(["admin", "staff"]), User.plan == "admin", admin_email_filter)).count()),
+            "detail": "Users with elevated access across app roles and admin email overrides.",
+        },
+        {
+            "label": "Active paid users",
+            "value": str(User.query.filter(User.plan == "paid").count()),
+            "detail": "Tracked from the current billing plan field.",
+        },
+        {
+            "label": "Suspended users",
+            "value": "Not tracked yet",
+            "detail": "Suspension fields and counts are not available in the current model.",
+            "pending": True,
+        },
+    ]
+
+
+SEARCH_BINARY_FILTER_VALUES = {"", "yes", "no"}
+SEARCH_CONFIDENCE_FILTERS = {"", "70", "85", "95"}
+SEARCH_VERIFICATION_FILTERS = {"", "recent", "needs_verification"}
+SEARCH_TOILET_DISTANCE_FILTERS = {"", "recorded", "short", "unknown"}
+SEARCH_TEXT_PRESENCE_FILTERS = {"", "has", "missing"}
+SEARCH_PUBLIC_SOURCE_FILTERS = ("phone_verified", "owner_verified", "user_submitted", "not_verified")
+
+
+def normalize_search_choice(raw_value, allowed_values, default=""):
+    value = (raw_value or "").strip().lower()
+    return value if value in allowed_values else default
+
+
+def build_public_search_filter_options():
+    venue_type_rows = (
+        db.session.query(db.func.lower(db.func.trim(Place.venue_type)))
+        .filter(Place.venue_type.isnot(None), db.func.trim(Place.venue_type) != "")
+        .distinct()
+        .order_by(db.func.lower(db.func.trim(Place.venue_type)).asc())
+        .all()
+    )
+    venue_type_values = [row[0] for row in venue_type_rows if row[0]]
+    return {
+        "venue_type_values": venue_type_values,
+        "venue_type_options": [{"value": value, "label": humanize_label(value)} for value in venue_type_values],
+        "source_options": [
+            {"value": value, "label": humanize_label(value, VERIFICATION_SOURCE_LABELS)}
+            for value in SEARCH_PUBLIC_SOURCE_FILTERS
+        ],
+    }
+
+
+def build_search_filter_state(args):
+    public_options = build_public_search_filter_options()
+    return {
+        "q": (args.get("q") or "").strip(),
+        "town": (args.get("town") or "").strip(),
+        "accessible": normalize_search_choice(args.get("accessible"), SEARCH_BINARY_FILTER_VALUES),
+        "step_free": normalize_search_choice(args.get("step_free"), SEARCH_BINARY_FILTER_VALUES),
+        "stairs_inside": normalize_search_choice(args.get("stairs_inside"), SEARCH_BINARY_FILTER_VALUES),
+        "baby_changing": normalize_search_choice(args.get("baby_changing"), SEARCH_BINARY_FILTER_VALUES),
+        "confidence": normalize_search_choice(args.get("confidence"), SEARCH_CONFIDENCE_FILTERS),
+        "verification": normalize_search_choice(args.get("verification"), SEARCH_VERIFICATION_FILTERS),
+        "toilet_distance": normalize_search_choice(args.get("toilet_distance"), SEARCH_TOILET_DISTANCE_FILTERS),
+        "venue_type": normalize_search_choice(args.get("venue_type"), {"", *public_options["venue_type_values"]}),
+        "toilets_available": normalize_search_choice(args.get("toilets_available"), {"", "yes", "no", "unknown"}),
+        "lift_available": normalize_search_choice(args.get("lift_available"), SEARCH_BINARY_FILTER_VALUES),
+        "disabled_parking": normalize_search_choice(args.get("disabled_parking"), SEARCH_BINARY_FILTER_VALUES),
+        "sensory_notes": normalize_search_choice(args.get("sensory_notes"), SEARCH_TEXT_PRESENCE_FILTERS),
+        "public_comments": normalize_search_choice(args.get("public_comments"), SEARCH_TEXT_PRESENCE_FILTERS),
+        "source": normalize_search_choice(args.get("source"), {"", *SEARCH_PUBLIC_SOURCE_FILTERS}),
+    }
+
+
+def build_search_filter_payload(filters):
+    return {
+        "query": filters["q"] or None,
+        "town": filters["town"] or None,
+        "accessible": filters["accessible"] or None,
+        "step_free": filters["step_free"] or None,
+        "stairs_inside": filters["stairs_inside"] or None,
+        "baby_changing": filters["baby_changing"] or None,
+        "confidence": filters["confidence"] or None,
+        "verification": filters["verification"] or None,
+        "toilet_distance": filters["toilet_distance"] or None,
+        "venue_type": filters["venue_type"] or None,
+        "toilets_available": filters["toilets_available"] or None,
+        "lift_available": filters["lift_available"] or None,
+        "disabled_parking": filters["disabled_parking"] or None,
+        "sensory_notes": filters["sensory_notes"] or None,
+        "public_comments": filters["public_comments"] or None,
+        "source": filters["source"] or None,
+    }
+
+
+def build_search_active_filters(filters):
+    active_filters = []
+
+    if filters["town"]:
+        active_filters.append({"label": "Town", "value": filters["town"]})
+    if filters["venue_type"]:
+        active_filters.append({"label": "Venue type", "value": humanize_label(filters["venue_type"])})
+    if filters["accessible"]:
+        active_filters.append({"label": "Accessible toilet", "value": filters["accessible"]})
+    if filters["toilets_available"]:
+        active_filters.append({"label": "Toilets available", "value": filters["toilets_available"]})
+    if filters["step_free"]:
+        active_filters.append({"label": "Step-free entrance", "value": filters["step_free"]})
+    if filters["stairs_inside"]:
+        active_filters.append({"label": "Stairs inside", "value": filters["stairs_inside"]})
+    if filters["baby_changing"]:
+        active_filters.append({"label": "Baby changing", "value": filters["baby_changing"]})
+    if filters["lift_available"]:
+        active_filters.append({"label": "Lift available", "value": filters["lift_available"]})
+    if filters["disabled_parking"]:
+        active_filters.append({"label": "Disabled parking", "value": filters["disabled_parking"]})
+    if filters["confidence"]:
+        active_filters.append({"label": "Confidence", "value": f"{filters['confidence']}+"})
+    if filters["verification"] == "recent":
+        active_filters.append({"label": "Verification", "value": "Recently verified"})
+    elif filters["verification"] == "needs_verification":
+        active_filters.append({"label": "Verification", "value": "Needs verification"})
+    if filters["source"]:
+        active_filters.append({"label": "Source", "value": humanize_label(filters["source"], VERIFICATION_SOURCE_LABELS)})
+    if filters["toilet_distance"] == "recorded":
+        active_filters.append({"label": "Toilet distance", "value": "Recorded"})
+    elif filters["toilet_distance"] == "short":
+        active_filters.append({"label": "Toilet distance", "value": "Short distance"})
+    elif filters["toilet_distance"] == "unknown":
+        active_filters.append({"label": "Toilet distance", "value": "Unknown"})
+    if filters["sensory_notes"] == "has":
+        active_filters.append({"label": "Sensory notes", "value": "Has notes"})
+    elif filters["sensory_notes"] == "missing":
+        active_filters.append({"label": "Sensory notes", "value": "Missing"})
+    if filters["public_comments"] == "has":
+        active_filters.append({"label": "Public comments", "value": "Has comments"})
+    elif filters["public_comments"] == "missing":
+        active_filters.append({"label": "Public comments", "value": "Missing"})
+
+    return active_filters
+
+
+def build_search_pagination_args(filters, submitted):
+    return {
+        "q": filters["q"] or None,
+        "town": filters["town"] or None,
+        "accessible": filters["accessible"] or None,
+        "step_free": filters["step_free"] or None,
+        "stairs_inside": filters["stairs_inside"] or None,
+        "baby_changing": filters["baby_changing"] or None,
+        "confidence": filters["confidence"] or None,
+        "verification": filters["verification"] or None,
+        "toilet_distance": filters["toilet_distance"] or None,
+        "venue_type": filters["venue_type"] or None,
+        "toilets_available": filters["toilets_available"] or None,
+        "lift_available": filters["lift_available"] or None,
+        "disabled_parking": filters["disabled_parking"] or None,
+        "sensory_notes": filters["sensory_notes"] or None,
+        "public_comments": filters["public_comments"] or None,
+        "source": filters["source"] or None,
+        "submitted": "1" if submitted else None,
+    }
+
+
+def meaningful_text_distance_filter():
+    return db.func.length(db.func.trim(db.func.coalesce(AccessibilityProfile.toilet_distance_from_bar, ""))) > 0
+
+
+def meaningful_profile_text_filter(column):
+    return db.func.length(db.func.trim(db.func.coalesce(column, ""))) > 0
 
 
 def build_admin_venue_query(
@@ -1394,7 +1946,7 @@ def build_admin_venue_query(
     verified="all",
     sort="priority",
 ):
-    query = Place.query.outerjoin(AccessibilityProfile)
+    query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
 
     if q:
         like = f"%{q}%"
@@ -1479,13 +2031,16 @@ def build_admin_venue_rows(places):
     rows = []
     for place in places:
         profile = place.accessibility
+        signal = build_access_signal(profile)
         rows.append(
             {
                 "place": place,
-                "status_label": place.status.replace("_", " ").title(),
+                "status_label": humanize_label(place.status, PLACE_STATUS_LABELS),
                 "confidence_score": profile.confidence_score if profile and profile.confidence_score is not None else None,
                 "toilet_distance_from_bar_m": profile.toilet_distance_from_bar_m if profile else None,
-                "last_verified": profile.last_verified_at.strftime("%d %b %Y") if profile and profile.last_verified_at else "Never verified",
+                "last_verified": signal["verification"]["short_label"],
+                "verification_label": signal["verification"]["label"],
+                "signal_label": signal["label"],
                 "profile_missing": profile is None,
             }
         )
@@ -1493,14 +2048,20 @@ def build_admin_venue_rows(places):
 
 
 def build_data_rows(limit=20):
-    places = Place.query.outerjoin(AccessibilityProfile).order_by(Place.updated_at.desc(), Place.name.asc()).limit(limit).all()
+    places = (
+        Place.query.options(selectinload(Place.accessibility))
+        .outerjoin(AccessibilityProfile)
+        .order_by(Place.updated_at.desc(), Place.name.asc())
+        .limit(limit)
+        .all()
+    )
     rows = []
     for row in build_admin_venue_rows(places):
         rows.append(
             {
                 "place": row["place"],
                 "confidence": row["confidence_score"] if row["confidence_score"] is not None else 0,
-                "verification": row["last_verified"] if row["last_verified"] != "Never verified" else "Not verified",
+                "verification": row["verification_label"],
                 "status_label": row["status_label"],
             }
         )
@@ -1607,7 +2168,7 @@ def index():
     town = request.args.get("town", "").strip()
     accessible = request.args.get("accessible", "").strip()
     preview_places = (
-        Place.query.outerjoin(AccessibilityProfile)
+        Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
         .order_by(
             db.case(
                 (AccessibilityProfile.last_verified_at.isnot(None), 0),
@@ -1630,6 +2191,7 @@ def index():
         preview_cards=preview_cards,
         plans=plans,
         api_packs=api_packs,
+        signal_examples=build_signal_examples(),
     )
 
 
@@ -1664,7 +2226,7 @@ def plans():
         {
             "name": "Free visitor",
             "price": "PS0",
-            "description": "Browse the value proposition and get nudged into login when you want real venue data.",
+            "description": "Explore what Planira offers before signing in. Create an account when you're ready to save usage and unlock search access.",
             "features": [
                 "Search starts from the home experience",
                 "Google login unlocks venue results",
@@ -1674,6 +2236,7 @@ def plans():
             "checkout_enabled": False,
             "key": "free_visitor",
             "role": "visitor",
+            "limit_label": "Access",
             "search_limit_copy": "Preview only until you sign in",
             "credits_copy": "Sign in to start tracked search usage and a monthly search allowance.",
         },
@@ -1681,20 +2244,9 @@ def plans():
             {
                 **plan,
                 "checkout_enabled": stripe_checkout_ready(plan),
-                "search_limit_copy": (
-                    active_quota_copy["search_limit_copy"]
-                    if user and current_plan_catalog_key(user) == plan["key"] and active_quota_copy
-                    else format_search_limit_copy(
-                        100 if plan["key"] == "paid_consumer" else 50 if plan["key"].startswith("api_") else 10
-                    )
-                ),
-                "credits_copy": (
-                    "Extra search credits can top up the monthly allowance whenever you need more checks."
-                    if plan["key"] == "paid_consumer"
-                    else "Best for teams and structured lookup workflows."
-                    if plan["key"].startswith("api_")
-                    else "A lighter monthly allowance for occasional venue planning, with extra credits if needed."
-                ),
+                "limit_label": build_plan_tier_copy(plan, user=user, active_quota_copy=active_quota_copy)["limit_label"],
+                "search_limit_copy": build_plan_tier_copy(plan, user=user, active_quota_copy=active_quota_copy)["limit_copy"],
+                "credits_copy": build_plan_tier_copy(plan, user=user, active_quota_copy=active_quota_copy)["credits_copy"],
             }
             for plan in build_plan_catalog()
         ],
@@ -1706,10 +2258,10 @@ def plans():
         "Leaderboard widget for OBS",
     ]
     stream_revenue = [
-        "Verification missions as content",
-        "Future sponsor slots",
-        "Paid data unlocks during streams",
-        "Audience voting on where to verify next",
+        "Developer lookup packs for trusted data",
+        "Team-ready access for structured workflows",
+        "Verified records powering stronger filters",
+        "Clearer place detail for people planning ahead",
     ]
     return render_template(
         "plans.html",
@@ -1728,6 +2280,7 @@ def plans():
 def account():
     user = current_user()
     account_state = build_account_state(user)
+    developer_summary = build_developer_summary(user)
     access_map = {
         "Free": "This account uses the free plan with a tracked monthly search allowance.",
         "Paid": "This account uses the paid plan with a larger monthly search allowance.",
@@ -1741,6 +2294,7 @@ def account():
     quick_actions = [
         {"label": "Manage account", "href": url_for("account_settings"), "style": "primary"},
         {"label": "Search venues", "href": url_for("search"), "style": "secondary"},
+        {"label": "Developer API", "href": url_for("developers"), "style": "secondary"},
         {"label": "Upgrade plan", "href": url_for("plans"), "style": "secondary"},
     ]
     return render_template(
@@ -1748,6 +2302,7 @@ def account():
         current_access=current_access,
         account_state=account_state,
         account_summary=summary,
+        developer_summary=developer_summary,
         quick_actions=quick_actions,
     )
 
@@ -1760,6 +2315,7 @@ def account_settings():
     return render_template(
         "settings.html",
         settings_sections=settings_sections,
+        developer_summary=build_developer_summary(user),
     )
 
 
@@ -1804,6 +2360,103 @@ def update_account_api_key(key_id):
         return jsonify({"error": "invalid_action"}), 400
     db.session.commit()
     return jsonify({"api_key": serialize_api_key(api_key)})
+
+
+@app.route("/developers")
+def developers():
+    user = current_user()
+    developer_summary = build_developer_summary(user) if user else None
+    example_prefix = current_api_key_prefix()
+    example_response = {
+        "count": 1,
+        "results": [
+            {
+                "id": 42,
+                "name": "The Example Arms",
+                "town": "Northampton",
+                "postcode": "NN1 1AA",
+                "accessibility_summary": {
+                    "label": "Worth checking",
+                    "summary": "There is useful guidance here, but a few details still need checking before you rely on it.",
+                    "tone": "moderate",
+                },
+                "toilets_available": "yes",
+                "accessible_toilet": "yes",
+                "step_free_entrance": "yes",
+                "stairs_inside": "no",
+                "confidence_score": 82,
+                "last_verified_at": "2026-04-28T10:30:00+00:00",
+            }
+        ],
+    }
+    return render_template(
+        "developers.html",
+        developer_summary=developer_summary,
+        raw_api_key=None,
+        raw_api_key_label=None,
+        example_api_key=f"{example_prefix}replace_me",
+        api_search_url=url_for("api_places_search", _external=True),
+        example_response=example_response,
+    )
+
+
+@app.route("/developers/api-keys", methods=["POST"])
+@login_required
+def create_developer_api_key():
+    user = current_user()
+    label = request.form.get("label", "").strip() or "Primary key"
+    api_key, raw_key = create_api_key_for_user(user, label=label)
+    db.session.commit()
+    flash("API key created. Copy it now because it will not be shown again.", "success")
+    developer_summary = build_developer_summary(user)
+    example_prefix = current_api_key_prefix()
+    example_response = {
+        "count": 1,
+        "results": [
+            {
+                "id": 42,
+                "name": "The Example Arms",
+                "town": "Northampton",
+                "postcode": "NN1 1AA",
+                "accessibility_summary": {
+                    "label": "Worth checking",
+                    "summary": "There is useful guidance here, but a few details still need checking before you rely on it.",
+                    "tone": "moderate",
+                },
+                "toilets_available": "yes",
+                "accessible_toilet": "yes",
+                "step_free_entrance": "yes",
+                "stairs_inside": "no",
+                "confidence_score": 82,
+                "last_verified_at": "2026-04-28T10:30:00+00:00",
+            }
+        ],
+    }
+    return render_template(
+        "developers.html",
+        developer_summary=developer_summary,
+        raw_api_key=raw_key,
+        raw_api_key_label=label,
+        example_api_key=f"{example_prefix}replace_me",
+        api_search_url=url_for("api_places_search", _external=True),
+        example_response=example_response,
+    )
+
+
+@app.route("/developers/api-keys/<int:key_id>", methods=["POST"])
+@login_required
+def update_developer_api_key(key_id):
+    user = current_user()
+    api_key = APIKey.query.filter_by(id=key_id, user_id=user.id).first_or_404()
+    action = request.form.get("action", "").strip().lower()
+    if action != "deactivate":
+        flash("That API key action is not available.", "error")
+        return redirect(url_for("developers"))
+
+    api_key.is_active = False
+    db.session.commit()
+    flash("API key revoked.", "success")
+    return redirect(url_for("developers"))
 
 
 @app.route("/billing/checkout/<plan_key>", methods=["POST"])
@@ -1932,9 +2585,84 @@ def stripe_webhook():
         metadata = checkout_session.get("metadata", {}) or {}
         user_id = metadata.get("user_id")
         target_role = metadata.get("target_role")
+        # TODO: API pack fulfilment still needs a durable credit-assignment flow.
+        # For early testing, API lookup credits remain manually assignable per key.
         apply_plan_role_to_user(user_id, target_role)
 
     return jsonify({"received": True})
+
+
+@app.route("/api/v1/places/search")
+def api_places_search():
+    q = request.args.get("q", "").strip()
+    town = request.args.get("town", "").strip()
+    postcode = request.args.get("postcode", "").strip()
+
+    if not any([q, town, postcode]):
+        return api_error_response("missing_query", "Add a place query, town, or postcode before calling this endpoint.", 400)
+
+    auth_result = authenticate_api_key(
+        request_obj=request,
+        required_scopes=None,
+        endpoint="/api/v1/places/search",
+        query=f"q={q}&town={town}&postcode={postcode}",
+        apply_usage=False,
+        record_event=False,
+        commit=False,
+    )
+    if not auth_result["ok"]:
+        error_map = {
+            "missing_api_key": ("missing_api_key", "Send an API key using the Authorization Bearer header.", 401),
+            "malformed_api_key": ("invalid_api_key", "The API key format is not valid for this environment.", 401),
+            "invalid_api_key": ("invalid_api_key", "The API key could not be verified.", 401),
+            "inactive_api_key": ("revoked_api_key", "This API key is no longer active.", 403),
+            "insufficient_scope": ("invalid_api_key", "This API key does not have access to this endpoint.", 403),
+            "monthly_lookup_limit_reached": ("limit_reached", "This API key has used its available lookup allowance.", 429),
+        }
+        error_key, message, status_code = error_map.get(
+            auth_result["error"],
+            ("invalid_api_key", "The API request could not be authorized.", auth_result.get("status_code", 401)),
+        )
+        return api_error_response(error_key, message, status_code)
+
+    query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(
+                Place.name.ilike(like),
+                Place.address1.ilike(like),
+                Place.postcode.ilike(like),
+            )
+        )
+    if town:
+        query = query.filter(Place.town.ilike(f"%{town}%"))
+    if postcode:
+        query = query.filter(Place.postcode.ilike(f"%{postcode}%"))
+
+    places = query.order_by(Place.name.asc()).limit(25).all()
+    if not places:
+        return api_error_response("no_results", "No places matched that lookup.", 404)
+
+    # TODO: Add rate limiting before wider external release.
+    limit_context = finalize_api_lookup_success(
+        auth_result["api_key"],
+        endpoint="/api/v1/places/search",
+        query=f"q={q}&town={town}&postcode={postcode}",
+        status_code=200,
+        commit=True,
+    )
+    return jsonify(
+        {
+            "count": len(places),
+            "results": [serialize_place_for_api(place) for place in places],
+            "usage": {
+                "lookups_used": limit_context["lookups_used"],
+                "lookup_credits_remaining": limit_context["lookup_credits"],
+                "lookup_limit": None if limit_context["monthly_limit"] is None else limit_context["monthly_limit"],
+            },
+        }
+    )
 
 
 @app.route("/search")
@@ -1949,21 +2677,56 @@ def search():
         flash("Your session expired, so please sign in again.", "info")
         return redirect(url_for("login", next=request.full_path))
 
-    q = request.args.get("q", "").strip()
-    town = request.args.get("town", "").strip()
-    accessible = request.args.get("accessible", "").strip()
+    filters = build_search_filter_state(request.args)
+    public_filter_options = build_public_search_filter_options()
+    q = filters["q"]
+    town = filters["town"]
+    accessible = filters["accessible"]
+    venue_type = filters["venue_type"]
+    toilets_available = filters["toilets_available"]
+    step_free = filters["step_free"]
+    stairs_inside = filters["stairs_inside"]
+    baby_changing = filters["baby_changing"]
+    lift_available = filters["lift_available"]
+    disabled_parking = filters["disabled_parking"]
+    confidence = filters["confidence"]
+    verification = filters["verification"]
+    toilet_distance = filters["toilet_distance"]
+    sensory_notes = filters["sensory_notes"]
+    public_comments = filters["public_comments"]
+    source = filters["source"]
     submitted = request.args.get("submitted") == "1"
-    page = parse_int_field(request.args.get("page"), "Page", minimum=1, default=1)
+    try:
+        page = parse_int_field(request.args.get("page"), "Page", minimum=1, default=1)
+    except ValueError:
+        page = 1
     per_page = 12
 
-    has_filters = any([q, town, accessible])
+    has_filters = any(
+        [
+            q,
+            town,
+            venue_type,
+            toilets_available,
+            accessible,
+            step_free,
+            stairs_inside,
+            baby_changing,
+            lift_available,
+            disabled_parking,
+            confidence,
+            verification,
+            toilet_distance,
+            sensory_notes,
+            public_comments,
+            source,
+        ]
+    )
     should_search = has_filters
     limit_context = search_limit_context(user)
-    filters_payload = {
-        "query": q or None,
-        "town": town or None,
-        "accessible": accessible or None,
-    }
+    filters_payload = build_search_filter_payload(filters)
+    active_filter_chips = build_search_active_filters(filters)
+    pagination_args = build_search_pagination_args(filters, submitted)
     limit_message = None
 
     pagination = None
@@ -1984,25 +2747,112 @@ def search():
                 q=q,
                 town=town,
                 accessible=accessible,
+                venue_type=venue_type,
+                toilets_available=toilets_available,
+                step_free=step_free,
+                stairs_inside=stairs_inside,
+                baby_changing=baby_changing,
+                lift_available=lift_available,
+                disabled_parking=disabled_parking,
+                confidence=confidence,
+                verification=verification,
+                toilet_distance=toilet_distance,
+                sensory_notes=sensory_notes,
+                public_comments=public_comments,
+                source=source,
                 submitted=submitted,
                 has_filters=has_filters,
                 should_search=should_search,
-                upgrade_features=[
-                    "Verified-only results",
-                    "Advanced accessibility filters",
-                    "Richer venue summaries",
-                    "Confidence score and richer verification detail",
-                ],
+                active_filter_chips=active_filter_chips,
+                pagination_args=pagination_args,
+                venue_type_options=public_filter_options["venue_type_options"],
+                source_options=public_filter_options["source_options"],
                 search_usage=search_usage,
+                signal_examples=build_signal_examples(),
             )
-        query = Place.query
+        query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
         if q:
             like = f"%{q}%"
             query = query.filter(db.or_(Place.name.ilike(like), Place.postcode.ilike(like), Place.address1.ilike(like)))
         if town:
             query = query.filter(Place.town.ilike(f"%{town}%"))
-        if accessible == "yes":
-            query = query.join(AccessibilityProfile).filter(AccessibilityProfile.accessible_toilet == "yes")
+        if venue_type:
+            query = query.filter(db.func.lower(db.func.trim(Place.venue_type)) == venue_type)
+        if toilets_available == "unknown":
+            query = query.filter(
+                db.or_(
+                    AccessibilityProfile.id.is_(None),
+                    AccessibilityProfile.toilets_available == "unknown",
+                )
+            )
+        elif toilets_available:
+            query = query.filter(AccessibilityProfile.toilets_available == toilets_available)
+        if accessible:
+            query = query.filter(AccessibilityProfile.accessible_toilet == accessible)
+        if step_free:
+            query = query.filter(AccessibilityProfile.step_free_entrance == step_free)
+        if stairs_inside:
+            query = query.filter(AccessibilityProfile.stairs_inside == stairs_inside)
+        if baby_changing:
+            query = query.filter(AccessibilityProfile.baby_changing == baby_changing)
+        if lift_available:
+            query = query.filter(AccessibilityProfile.lift_available == lift_available)
+        if disabled_parking:
+            query = query.filter(AccessibilityProfile.disabled_parking == disabled_parking)
+        if confidence:
+            query = query.filter(AccessibilityProfile.confidence_score.isnot(None), AccessibilityProfile.confidence_score >= int(confidence))
+        if verification == "recent":
+            # TODO: Promote this search cutoff to a named constant if verification windows need tuning in more than one place.
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(days=45)
+            query = query.filter(
+                AccessibilityProfile.last_verified_at.isnot(None),
+                AccessibilityProfile.last_verified_at >= recent_cutoff,
+            )
+        elif verification == "needs_verification":
+            query = query.filter(AccessibilityProfile.last_verified_at.is_(None))
+        if toilet_distance == "recorded":
+            query = query.filter(
+                db.or_(
+                    AccessibilityProfile.toilet_distance_from_bar_m.isnot(None),
+                    meaningful_text_distance_filter(),
+                )
+            )
+        elif toilet_distance == "short":
+            # TODO: Promote this search threshold to a named constant if short-distance rules need to stay consistent across views.
+            query = query.filter(
+                AccessibilityProfile.toilet_distance_from_bar_m.isnot(None),
+                AccessibilityProfile.toilet_distance_from_bar_m <= 10,
+            )
+        elif toilet_distance == "unknown":
+            query = query.filter(
+                db.or_(
+                    AccessibilityProfile.id.is_(None),
+                    db.and_(
+                        AccessibilityProfile.toilet_distance_from_bar_m.is_(None),
+                        ~meaningful_text_distance_filter(),
+                    ),
+                )
+            )
+        if sensory_notes == "has":
+            query = query.filter(meaningful_profile_text_filter(AccessibilityProfile.sensory_notes))
+        elif sensory_notes == "missing":
+            query = query.filter(
+                db.or_(
+                    AccessibilityProfile.id.is_(None),
+                    ~meaningful_profile_text_filter(AccessibilityProfile.sensory_notes),
+                )
+            )
+        if public_comments == "has":
+            query = query.filter(meaningful_profile_text_filter(AccessibilityProfile.public_comments))
+        elif public_comments == "missing":
+            query = query.filter(
+                db.or_(
+                    AccessibilityProfile.id.is_(None),
+                    ~meaningful_profile_text_filter(AccessibilityProfile.public_comments),
+                )
+            )
+        if source:
+            query = query.filter(AccessibilityProfile.source == source)
         pagination = query.order_by(Place.name.asc()).paginate(page=page, per_page=per_page, error_out=False)
         results = pagination.items
         result_cards = [build_place_card(place) for place in results]
@@ -2017,12 +2867,6 @@ def search():
                 result_count=pagination.total,
             )
             db.session.commit()
-    upgrade_features = [
-        "Verified-only results",
-        "Advanced accessibility filters",
-        "Richer venue summaries",
-        "Confidence score and richer verification detail",
-    ]
     search_usage = build_user_summary(user)
     return render_template(
         "search.html",
@@ -2032,11 +2876,28 @@ def search():
         q=q,
         town=town,
         accessible=accessible,
+        venue_type=venue_type,
+        toilets_available=toilets_available,
+        step_free=step_free,
+        stairs_inside=stairs_inside,
+        baby_changing=baby_changing,
+        lift_available=lift_available,
+        disabled_parking=disabled_parking,
+        confidence=confidence,
+        verification=verification,
+        toilet_distance=toilet_distance,
+        sensory_notes=sensory_notes,
+        public_comments=public_comments,
+        source=source,
         submitted=submitted,
         has_filters=has_filters,
         should_search=should_search,
-        upgrade_features=upgrade_features,
+        active_filter_chips=active_filter_chips,
+        pagination_args=pagination_args,
+        venue_type_options=public_filter_options["venue_type_options"],
+        source_options=public_filter_options["source_options"],
         search_usage=search_usage,
+        signal_examples=build_signal_examples(),
     )
 
 
@@ -2051,23 +2912,12 @@ def place_detail(slug):
         comment_query = comment_query.filter_by(status="approved")
     comments = comment_query.order_by(Comment.created_at.desc()).all()
     signal = build_access_signal(profile)
-    detail_checks = [
-        ("Toilets", profile.toilets_available, profile.toilet_location or "Location unknown"),
-        ("Accessible toilet", profile.accessible_toilet, None),
-        ("Baby changing", profile.baby_changing, profile.baby_changing_location or "Location unknown"),
-        ("Step-free entrance", profile.step_free_entrance, None),
-        ("Stairs inside", profile.stairs_inside, None),
-        ("Lift", profile.lift_available, None),
-        ("Disabled parking", profile.disabled_parking, None),
-        ("Toilet distance from bar", profile.toilet_distance_from_bar, None),
-    ]
     return render_template(
         "place.html",
         place=place,
         profile=profile,
         comments=comments,
         signal=signal,
-        detail_checks=detail_checks,
     )
 
 
@@ -2092,7 +2942,7 @@ def add_comment(slug):
 
 @app.route("/dashboard")
 @login_required
-@admin_required
+@staff_required
 def dashboard():
     mission_page = parse_int_field(request.args.get("mission_page"), "Mission page", minimum=1, default=1)
     mission_per_page = 12
@@ -2151,8 +3001,10 @@ def dashboard():
     recent_activity = build_recent_activity()
     recent_search_activity = build_recent_search_activity()
     recent_audit_entries = build_recent_audit_entries()
+    api_operations = build_api_operations_summary()
     quick_actions = [
         {"label": "Venue workspace", "href": url_for("admin_venues")},
+        {"label": "Streaming control room", "href": url_for("staff_streaming_control_room")},
         {"label": "Add venue", "href": url_for("new_place")},
         {"label": "Open moderation", "href": url_for("admin_moderation")},
         {"label": "Manage users", "href": url_for("admin_users")},
@@ -2169,13 +3021,29 @@ def dashboard():
         recent_activity=recent_activity,
         recent_search_activity=recent_search_activity,
         recent_audit_entries=recent_audit_entries,
+        api_operations=api_operations,
         quick_actions=quick_actions,
+    )
+
+
+@app.route("/staff/streaming")
+@login_required
+@staff_required
+def staff_streaming_control_room():
+    active_call = serialize_obs_current_call(get_obs_active_place())
+    progress_payload = build_obs_progress_payload()
+    health_payload = build_obs_health_payload()
+    return render_template(
+        "staff_streaming_control_room.html",
+        active_call=active_call,
+        progress_payload=progress_payload,
+        health_payload=health_payload,
     )
 
 
 @app.route("/admin/moderation")
 @login_required
-@admin_required
+@staff_required
 def admin_moderation():
     moderation_items = build_moderation_items()
     return render_template(
@@ -2186,7 +3054,7 @@ def admin_moderation():
 
 @app.route("/admin/moderation/<int:comment_id>", methods=["POST"])
 @login_required
-@admin_required
+@staff_required
 def moderate_comment(comment_id):
     comment = db.session.get(Comment, comment_id)
     if not comment:
@@ -2235,18 +3103,23 @@ def moderate_comment(comment_id):
 
 @app.route("/admin/users")
 @login_required
-@admin_required
+@staff_required
 def admin_users():
     query_text = request.args.get("q", "").strip()
+    access_filter = request.args.get("access", "all").strip().lower() or "all"
     page = request.args.get("page", 1, type=int) or 1
     selected_user_id = request.args.get("selected", type=int)
     per_page = 10
+    access_filter_options = [
+        {"value": "all", "label": "All users"},
+        {"value": "member", "label": "Members"},
+        {"value": "staff", "label": "Staff"},
+        {"value": "admin", "label": "Admins"},
+        {"value": "paid", "label": "Paid plan"},
+        {"value": "business", "label": "Business plan"},
+    ]
 
-    query = User.query
-    if query_text:
-        like = f"%{query_text}%"
-        query = query.filter(db.or_(User.email.ilike(like), User.name.ilike(like)))
-
+    query = build_admin_user_query(q=query_text, access=access_filter)
     pagination = query.order_by(User.created_at.desc(), User.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
     user_rows = build_user_rows(pagination.items)
     selected_row = next((row for row in user_rows if row["user"].id == selected_user_id), None)
@@ -2258,13 +3131,126 @@ def admin_users():
     return render_template(
         "admin_users.html",
         query_text=query_text,
+        access_filter=access_filter,
+        access_filter_options=access_filter_options,
+        active_access_label=next((option["label"] for option in access_filter_options if option["value"] == access_filter), "All users"),
+        admin_stats=build_admin_user_stats(),
         user_rows=user_rows,
         pagination=pagination,
         selected_row=selected_row,
         selected_user_id=selected_row["user"].id if selected_row else None,
-        selected_api_keys=build_api_key_rows_for_user(selected_row["user"]) if selected_row else [],
+        selected_api_keys=build_api_key_rows_with_usage(selected_row["user"]) if selected_row else [],
+        selected_api_events=build_recent_api_lookup_activity(user_id=selected_row["user"].id) if selected_row else [],
         showing_start=showing_start,
         showing_end=showing_end,
+    )
+
+
+@app.route("/admin/users/<int:user_id>/credits", methods=["POST"])
+@login_required
+@admin_required
+def update_admin_user_credits(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+
+    try:
+        credit_delta = parse_int_field(
+            request.form.get("credit_delta"),
+            "Credit adjustment",
+            minimum=-500,
+            maximum=500,
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(
+            url_for(
+                "admin_users",
+                q=request.form.get("return_q") or None,
+                access=request.form.get("return_access") or "all",
+                page=request.form.get("return_page", type=int) or 1,
+                selected=user.id,
+            )
+        )
+
+    reason = (request.form.get("reason") or "").strip() or None
+    before_state = {"search_credits": user.search_credits or 0}
+    updated_credits = max((user.search_credits or 0) + credit_delta, 0)
+    user.search_credits = updated_credits
+    actor = current_user()
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="user.search_credits.updated",
+        entity_type="user",
+        entity_id=user.id,
+        before=before_state,
+        after={"search_credits": updated_credits, "credit_delta": credit_delta},
+        reason=reason,
+    )
+    db.session.commit()
+    flash(f"Updated search credits for {user.email}.", "success")
+    return redirect(
+        url_for(
+            "admin_users",
+            q=request.form.get("return_q") or None,
+            access=request.form.get("return_access") or "all",
+            page=request.form.get("return_page", type=int) or 1,
+            selected=user.id,
+        )
+    )
+
+
+@app.route("/admin/users/<int:user_id>/staff", methods=["POST"])
+@login_required
+@admin_required
+def update_admin_user_staff(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+
+    if is_admin_email(user.email) or user.role == "admin" or user.plan == "admin":
+        flash("Admin access is managed outside this screen.", "error")
+        return redirect(
+            url_for(
+                "admin_users",
+                q=request.form.get("return_q") or None,
+                access=request.form.get("return_access") or "all",
+                page=request.form.get("return_page", type=int) or 1,
+                selected=user.id,
+            )
+        )
+
+    action = (request.form.get("action") or "").strip().lower()
+    if action not in {"promote", "demote"}:
+        flash("Choose a valid staff action.", "error")
+        return redirect(url_for("admin_users", selected=user.id))
+
+    target_role = "staff" if action == "promote" else "user"
+    before_state = {"role": user.role}
+    user.role = target_role
+    actor = current_user()
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action=f"user.role.{action}",
+        entity_type="user",
+        entity_id=user.id,
+        before=before_state,
+        after={"role": target_role},
+        reason=(request.form.get("reason") or "").strip() or None,
+    )
+    db.session.commit()
+    flash(
+        f"{user.email} is now {'staff' if target_role == 'staff' else 'a member'}.",
+        "success",
+    )
+    return redirect(
+        url_for(
+            "admin_users",
+            q=request.form.get("return_q") or None,
+            access=request.form.get("return_access") or "all",
+            page=request.form.get("return_page", type=int) or 1,
+            selected=user.id,
+        )
     )
 
 
@@ -2275,7 +3261,7 @@ def admin_user_api_keys(user_id):
     user = db.session.get(User, user_id)
     if not user:
         abort(404)
-    return jsonify({"user_id": user.id, "api_keys": build_api_key_rows_for_user(user)})
+    return jsonify({"user_id": user.id, "api_keys": build_api_key_rows_with_usage(user)})
 
 
 @app.route("/admin/users/<int:user_id>/api-keys", methods=["POST"])
@@ -2300,6 +3286,22 @@ def create_admin_user_api_key(user_id):
         monthly_lookup_limit=monthly_lookup_limit,
         lookup_credits=lookup_credits,
     )
+    actor = current_user()
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="api_key.created",
+        entity_type="api_key",
+        entity_id=api_key.id,
+        after={
+            "user_id": user.id,
+            "label": api_key.label,
+            "scopes": api_key.scopes_json or [],
+            "monthly_lookup_limit": api_key.monthly_lookup_limit,
+            "lookup_credits": api_key.lookup_credits,
+            "is_active": api_key.is_active,
+        },
+        reason="Staff-created API key",
+    )
     db.session.commit()
     return (
         jsonify(
@@ -2320,14 +3322,126 @@ def create_admin_user_api_key(user_id):
 def update_admin_user_api_key(user_id, key_id):
     api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
     action = request.form.get("action", "").strip().lower()
+    actor = current_user()
+    before_state = {
+        "label": api_key.label,
+        "is_active": api_key.is_active,
+        "lookup_credits": api_key.lookup_credits or 0,
+    }
     if action == "deactivate":
         api_key.is_active = False
+        audit_action = "api_key.revoked"
     elif action == "rename":
         api_key.label = (request.form.get("label", "").strip() or api_key.label or "API key")[:120]
+        audit_action = "api_key.renamed"
     else:
         return jsonify({"error": "invalid_action"}), 400
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action=audit_action,
+        entity_type="api_key",
+        entity_id=api_key.id,
+        before=before_state,
+        after={
+            "label": api_key.label,
+            "is_active": api_key.is_active,
+            "lookup_credits": api_key.lookup_credits or 0,
+        },
+        reason=(request.form.get("reason") or "").strip() or None,
+    )
     db.session.commit()
     return jsonify({"user_id": user_id, "api_key": serialize_api_key(api_key)})
+
+
+@app.route("/admin/users/<int:user_id>/api-keys/<int:key_id>/revoke", methods=["POST"])
+@login_required
+@staff_required
+def revoke_admin_user_api_key(user_id, key_id):
+    api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
+    actor = current_user()
+    before_state = {
+        "label": api_key.label,
+        "is_active": api_key.is_active,
+        "lookup_credits": api_key.lookup_credits or 0,
+    }
+    if api_key.is_active:
+        api_key.is_active = False
+        log_audit(
+            actor_user_id=actor.id if actor else None,
+            action="api_key.revoked",
+            entity_type="api_key",
+            entity_id=api_key.id,
+            before=before_state,
+            after={
+                "label": api_key.label,
+                "is_active": api_key.is_active,
+                "lookup_credits": api_key.lookup_credits or 0,
+            },
+            reason=(request.form.get("reason") or "").strip() or None,
+        )
+        db.session.commit()
+        flash(f"Revoked API key for user #{user_id}.", "success")
+    else:
+        flash("That API key is already revoked.", "info")
+    return redirect(
+        url_for(
+            "admin_users",
+            q=request.form.get("return_q") or None,
+            access=request.form.get("return_access") or "all",
+            page=request.form.get("return_page", type=int) or 1,
+            selected=user_id,
+        )
+    )
+
+
+@app.route("/admin/users/<int:user_id>/api-keys/<int:key_id>/credits", methods=["POST"])
+@login_required
+@staff_required
+def update_admin_user_api_key_credits(user_id, key_id):
+    api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
+    try:
+        credit_delta = parse_int_field(
+            request.form.get("credit_delta"),
+            "API credit adjustment",
+            minimum=-500,
+            maximum=500,
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(
+            url_for(
+                "admin_users",
+                q=request.form.get("return_q") or None,
+                access=request.form.get("return_access") or "all",
+                page=request.form.get("return_page", type=int) or 1,
+                selected=user_id,
+            )
+        )
+
+    actor = current_user()
+    before_state = {"lookup_credits": api_key.lookup_credits or 0}
+    updated_credits = max((api_key.lookup_credits or 0) + credit_delta, 0)
+    api_key.lookup_credits = updated_credits
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="api_key.lookup_credits.updated",
+        entity_type="api_key",
+        entity_id=api_key.id,
+        before=before_state,
+        after={"lookup_credits": updated_credits, "credit_delta": credit_delta},
+        reason=(request.form.get("reason") or "").strip() or None,
+    )
+    db.session.commit()
+    flash(f"Updated API lookup credits for user #{user_id}.", "success")
+    return redirect(
+        url_for(
+            "admin_users",
+            q=request.form.get("return_q") or None,
+            access=request.form.get("return_access") or "all",
+            page=request.form.get("return_page", type=int) or 1,
+            selected=user_id,
+        )
+    )
 
 
 @app.route("/admin/venues")
@@ -2380,7 +3494,7 @@ def admin_venues():
 
 @app.route("/admin/data")
 @login_required
-@admin_required
+@staff_required
 def admin_data():
     data_rows = build_data_rows()
     return render_template(
@@ -2391,20 +3505,20 @@ def admin_data():
 
 @app.route("/admin/place/new", methods=["GET", "POST"])
 @login_required
-@admin_required
+@staff_required
 def new_place():
     if request.method == "POST":
         name = request.form["name"].strip()
         if not name:
             flash("Venue name is required.", "error")
-            return render_template("new_place.html")
+            return render_template("new_place.html", form_values=request.form)
 
         try:
             priority = parse_int_field(request.form.get("priority"), "Priority", minimum=1, maximum=5, default=3)
             website = normalize_optional_url(request.form.get("website"))
         except ValueError as exc:
             flash(str(exc), "error")
-            return render_template("new_place.html")
+            return render_template("new_place.html", form_values=request.form)
 
         base_slug = slugify(name + " " + request.form.get("town", ""))
         slug = base_slug
@@ -2429,12 +3543,12 @@ def new_place():
         get_or_create_profile(place)
         flash("Place added.", "success")
         return redirect(url_for("call_place", place_id=place.id))
-    return render_template("new_place.html")
+    return render_template("new_place.html", form_values={})
 
 
 @app.route("/admin/place/<int:place_id>/call", methods=["GET", "POST"])
 @login_required
-@admin_required
+@staff_required
 def call_place(place_id):
     place = db.session.get(Place, place_id)
     if not place:
@@ -2450,7 +3564,7 @@ def call_place(place_id):
         "Mark verified when the call genuinely supports it",
     ]
     stream_prompt = f"Mission: verify {place.name} for toilets, step-free access, baby changing, comments, and confidence."
-    toilet_distance_backend_supported = False
+    toilet_distance_backend_supported = True
     if request.method == "POST":
         fields = [
             "toilets_available",
@@ -2473,6 +3587,12 @@ def call_place(place_id):
 
         try:
             profile.confidence_score = parse_int_field(request.form.get("confidence_score"), "Confidence score", minimum=0, maximum=100, default=0)
+            profile.toilet_distance_from_bar_m = parse_float_field(
+                request.form.get("toilet_distance_from_bar_m"),
+                "Toilet distance in metres",
+                minimum=0,
+                maximum=5000,
+            )
         except ValueError as exc:
             flash(str(exc), "error")
             return render_template(
@@ -2482,11 +3602,14 @@ def call_place(place_id):
                 premium_checklist=premium_checklist,
                 stream_prompt=stream_prompt,
                 toilet_distance_backend_supported=toilet_distance_backend_supported,
+                worksheet_form=request.form,
             )
 
         if request.form.get("mark_verified") == "yes":
             profile.last_verified_at = datetime.now(timezone.utc)
             profile.last_verified_by = session["user"]["email"]
+            actor = current_user()
+            profile.verified_by_user_id = actor.id if actor else None
             place.status = "verified"
         else:
             place.status = request.form.get("status", place.status)
@@ -2508,21 +3631,32 @@ def call_place(place_id):
         premium_checklist=premium_checklist,
         stream_prompt=stream_prompt,
         toilet_distance_backend_supported=toilet_distance_backend_supported,
+        worksheet_form={},
     )
 
 
 @app.route("/obs/current-call")
+@staff_session_required
 def obs_current_call():
-    place = Place.query.filter(Place.status.in_(["calling", "needs_call", "callback"])).order_by(Place.status.desc(), Place.priority.desc(), Place.updated_at.asc()).first()
-    return render_template("obs_current_call.html", place=place)
+    payload = serialize_obs_current_call(get_obs_active_place())
+    if request_prefers_json():
+        return jsonify(payload)
+    return render_template("obs_current_call.html", obs_call=payload)
 
 
 @app.route("/obs/progress")
+@staff_session_required
 def obs_progress():
-    today = datetime.now(timezone.utc).date()
-    verified_today = AccessibilityProfile.query.filter(db.func.date(AccessibilityProfile.last_verified_at) == str(today)).count()
-    total_verified = Place.query.filter_by(status="verified").count()
-    return render_template("obs_progress.html", verified_today=verified_today, total_verified=total_verified)
+    payload = build_obs_progress_payload()
+    if request_prefers_json():
+        return jsonify(payload)
+    return render_template("obs_progress.html", progress=payload)
+
+
+@app.route("/obs/health")
+@staff_session_required
+def obs_health():
+    return jsonify(build_obs_health_payload())
 
 
 @app.route("/auth/login")

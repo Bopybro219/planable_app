@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}{{ place.name }} | Planira{% endblock %}
 {% block content %}
+{% import '_planira_macros.html' as planira %}
 <section class="page-head">
   <div class="page-title-group">
     <span class="eyebrow">{{ place.venue_type or 'place' }}</span>
@@ -22,21 +23,33 @@
         </div>
       </div>
       <p class="lead-copy">{{ signal.summary }}</p>
-      <div class="tag-row">
-        <span>Confidence {{ profile.confidence_score }}/100</span>
-        {% if profile.last_verified_at %}
-          <span>Verified {{ profile.last_verified_at.strftime('%d %b %Y %H:%M') }}</span>
-        {% else %}
-          <span>Not verified yet</span>
-        {% endif %}
-        <span>Source {{ profile.source or 'not_verified' }}</span>
+      {{ planira.confidence_panel(signal) }}
+      {{ planira.signal_badges(signal, signal.highlights[:2]) }}
+      <div class="signal-summary-grid">
+        <article class="signal-summary-card signal-summary-card-priority">
+          <strong>Toilet distance from bar</strong>
+          <span>{{ signal.distance.value }}</span>
+          <small>{{ signal.distance.highlight or 'This is one of the most useful planning signals for this page.' }}</small>
+        </article>
+        <article class="signal-summary-card">
+          <strong>{{ signal.verification.label }}</strong>
+          <span>{{ signal.source_label }}</span>
+          <small>{{ signal.confidence.label }} at {{ signal.confidence.percent }}% confidence.</small>
+        </article>
       </div>
+      {% if signal.warnings %}
+        <div class="callout-list">
+          {% for item in signal.warnings %}
+            <div class="callout-chip callout-chip-warning">{{ item }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
       <div class="detail-grid">
-        {% for label, value, note in detail_checks %}
-          <article class="detail-card">
-            <strong>{{ label }}</strong>
-            <span>{{ value or 'unknown' }}</span>
-            {% if note %}<small>{{ note }}</small>{% endif %}
+        {% for item in signal.detail_checks %}
+          <article class="detail-card {% if item.emphasis == 'priority' %}detail-card-priority{% endif %}">
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.value }}</span>
+            {% if item.note %}<small>{{ item.note }}</small>{% endif %}
           </article>
         {% endfor %}
       </div>
@@ -83,6 +96,12 @@
           <strong>Sensory notes</strong>
           <span>{{ profile.sensory_notes or 'We don’t have sensory notes on this place yet.' }}</span>
         </div>
+        {% if signal.highlights %}
+          <div class="stack-row">
+            <strong>Quick highlights</strong>
+            <span>{{ signal.highlights|join(' • ') }}</span>
+          </div>
+        {% endif %}
       </div>
     </article>
   </aside>

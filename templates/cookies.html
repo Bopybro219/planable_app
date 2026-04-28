@@ -5,17 +5,46 @@
   <div class="page-title-group">
     <span class="eyebrow">Cookies</span>
     <h1>Session and sign-in basics</h1>
-    <p class="page-subtitle">Planira currently uses cookies in a fairly simple way to keep sign-in and session behaviour working.</p>
+    <p class="page-subtitle">Planira keeps this simple. Cookies are used for sign-in and session security, not for ads or tracking.</p>
   </div>
 </section>
 
-<section class="content-stack">
+<section class="content-stack legal-grid">
   <article class="surface-panel">
+    <h2>What Planira uses cookies for</h2>
     <div class="stack-list">
-      <div class="stack-row"><strong>Session cookies</strong><span>Used to keep you signed in and protect account-specific flows.</span></div>
-      <div class="stack-row"><strong>Security tokens</strong><span>Used to help protect forms and important actions.</span></div>
-      <div class="stack-row"><strong>Beta note</strong><span>If analytics or extra tooling are added later, this page should be updated before that becomes part of the experience.</span></div>
+      <div class="stack-row">
+        <strong>Login and session state</strong>
+        <span>Planira currently uses one Flask session cookie to keep you signed in and connect requests to the right account.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Security for signed-in actions</strong>
+        <span>Planira also uses session-backed security tokens to help protect forms and account actions.</span>
+      </div>
     </div>
+  </article>
+
+  <article class="surface-panel">
+    <h2>What Planira does not use cookies for</h2>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>No ads cookies</strong>
+        <span>Planira does not use advertising cookies.</span>
+      </div>
+      <div class="stack-row">
+        <strong>No analytics or tracking cookies</strong>
+        <span>Planira does not currently use tracking cookies to follow you around the web or build ad profiles.</span>
+      </div>
+      <div class="stack-row">
+        <strong>No third-party tracking cookies</strong>
+        <span>Planira does not currently set third-party tracking cookies for marketing purposes.</span>
+      </div>
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <h2>Keeping this accurate</h2>
+    <p class="muted">If Planira adds analytics, marketing tools, or other cookie-based features later, this page should be updated before those changes are treated as normal. Questions about sign-in or privacy can be raised on {{ contact_phone }}.</p>
   </article>
 </section>
 {% endblock %}

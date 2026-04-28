@@ -14,40 +14,40 @@
   <div class="form-grid">
     <div class="field-group">
       <label for="place-name">Venue name</label>
-      <input id="place-name" name="name" placeholder="Venue name" required>
+      <input id="place-name" name="name" value="{{ form_values.get('name', '') if form_values else '' }}" placeholder="Venue name" required>
     </div>
     <div class="field-group">
       <label for="place-type">Venue type</label>
-      <input id="place-type" name="venue_type" placeholder="Pub, cafe, hotel">
+      <input id="place-type" name="venue_type" value="{{ form_values.get('venue_type', '') if form_values else '' }}" placeholder="Pub, cafe, hotel">
     </div>
     <div class="field-group">
       <label for="place-phone">Phone</label>
-      <input id="place-phone" name="phone" placeholder="Phone">
+      <input id="place-phone" name="phone" value="{{ form_values.get('phone', '') if form_values else '' }}" placeholder="Phone">
     </div>
     <div class="field-group">
       <label for="place-website">Website</label>
-      <input id="place-website" name="website" placeholder="Website">
+      <input id="place-website" name="website" value="{{ form_values.get('website', '') if form_values else '' }}" placeholder="Website">
       <p class="helper-copy">You can paste a domain and Planira will normalise it for you.</p>
     </div>
     <div class="field-group field-span-2">
       <label for="place-address">Address</label>
-      <input id="place-address" name="address1" placeholder="Address">
+      <input id="place-address" name="address1" value="{{ form_values.get('address1', '') if form_values else '' }}" placeholder="Address">
     </div>
     <div class="field-group">
       <label for="place-town">Town</label>
-      <input id="place-town" name="town" placeholder="Town">
+      <input id="place-town" name="town" value="{{ form_values.get('town', '') if form_values else '' }}" placeholder="Town">
     </div>
     <div class="field-group">
       <label for="place-county">County</label>
-      <input id="place-county" name="county" placeholder="County">
+      <input id="place-county" name="county" value="{{ form_values.get('county', '') if form_values else '' }}" placeholder="County">
     </div>
     <div class="field-group">
       <label for="place-postcode">Postcode</label>
-      <input id="place-postcode" name="postcode" placeholder="Postcode">
+      <input id="place-postcode" name="postcode" value="{{ form_values.get('postcode', '') if form_values else '' }}" placeholder="Postcode">
     </div>
     <div class="field-group">
       <label for="place-priority">Priority</label>
-      <input id="place-priority" name="priority" type="number" min="1" max="5" value="3">
+      <input id="place-priority" name="priority" type="number" min="1" max="5" value="{{ form_values.get('priority', 3) if form_values else 3 }}">
     </div>
   </div>
   <div class="form-actions">

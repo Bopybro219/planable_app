@@ -62,6 +62,38 @@
   <article class="surface-panel">
     <div class="section-head">
       <div>
+        <span class="eyebrow">API preview</span>
+        <h2>Live preview usage</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Active keys</strong>
+        <span>{{ api_operations.active_key_count }} active and {{ api_operations.revoked_key_count }} revoked.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Lookup events this month</strong>
+        <span>{{ api_operations.lookup_events_this_month }} tracked API lookups so far.</span>
+      </div>
+    </div>
+    <div class="activity-feed">
+      {% for item in api_operations.recent_events %}
+        <div class="activity-item">
+          <strong>{{ item.key_label }} · {{ item.status_code or 'No status' }}</strong>
+          <span>{{ item.user_email }}</span>
+          <p>{{ item.endpoint }}{% if item.query %} · {{ item.query }}{% endif %}</p>
+        </div>
+      {% else %}
+        <div class="empty-inline">No API lookup activity has been recorded yet.</div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
         <span class="eyebrow">Revenue readiness</span>
         <h2>Product health signals</h2>
       </div>
@@ -140,7 +172,7 @@
       </a>
       <a class="action-card" href="{{ url_for('admin_users') }}">
         <strong>Manage users</strong>
-        <span>Check activity, trust, and future-ready user controls from one place.</span>
+        <span>Check activity, plan state, credits, API usage, and staff access from one place.</span>
       </a>
       <a class="action-card" href="{{ url_for('admin_data') }}">
         <strong>Edit venue data</strong>
@@ -182,12 +214,12 @@
       <article class="surface-panel mission-card">
         <div class="result-topline mission-card-topline">
           <span class="venue-type">{{ p.venue_type or 'place' }}</span>
-          <span class="planira-chip">{{ planira.humanize_label(p.status) }}</span>
+          <span class="planira-chip">{{ humanize_label(p.status) }}</span>
         </div>
         <h3>{{ p.name }}</h3>
         <p class="muted">{{ p.phone or 'Phone not listed yet' }}{% if p.address1 or p.town %} · {{ p.address1 }}{% if p.address1 and p.town %}, {% endif %}{{ p.town }}{% endif %}</p>
         <div class="mission-meta">
-          <span class="metric-pill">{{ planira.humanize_label('priority_' ~ (p.priority or 3)) }}</span>
+          <span class="metric-pill">{{ humanize_label('priority_' ~ (p.priority or 3)) }}</span>
           <span class="planira-chip">Useful data improvement</span>
           <span class="planira-chip">2–5 min check</span>
         </div>

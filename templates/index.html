@@ -5,28 +5,38 @@
 <section class="home-hero">
   <article class="hero-card planira-card planira-card-primary">
     <div class="hero-copy">
+      {% if current_user and current_user.name %}
+        <p class="hero-greeting">Hello, {{ current_user.name.split()[0] }}.</p>
+      {% elif current_user %}
+        <p class="hero-greeting">Hello.</p>
+      {% endif %}
       <span class="eyebrow">Planira starts with search</span>
       <h1>Search first. Plan with better context.</h1>
       <p class="page-subtitle">Check a venue, town, or accessible toilet need first, then decide with clearer signals before you set off.</p>
       <form class="search-form" action="{{ url_for('search') }}">
         <input type="hidden" name="submitted" value="1">
-        <div class="search-form-home">
-          <div class="field-group">
-            <label for="home-q">Venue, postcode, or street</label>
-            <input id="home-q" name="q" placeholder="The Example Arms" value="{{ q }}">
+        <div class="planira-search-bar">
+          <div class="search-form-home">
+            <div class="field-group field-group-primary">
+              <label for="home-q">Venue, postcode, or street</label>
+              <input id="home-q" name="q" placeholder="The Example Arms" value="{{ q }}">
+            </div>
+            <div class="field-group field-group-secondary">
+              <label for="home-town">Town</label>
+              <input id="home-town" name="town" placeholder="Northampton" value="{{ town }}">
+            </div>
+            <div class="field-group field-group-secondary">
+              <label for="home-accessible">Accessibility filter</label>
+              <select id="home-accessible" name="accessible">
+                <option value="">Any accessible toilet</option>
+                <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
+              </select>
+            </div>
+            <div class="field-group field-group-action">
+              <span class="field-label-spacer" aria-hidden="true">Action</span>
+              <button class="btn-primary-planira hero-search-button">{{ 'Search places' if current_user else 'Start exploring' }}</button>
+            </div>
           </div>
-          <div class="field-group">
-            <label for="home-town">Town</label>
-            <input id="home-town" name="town" placeholder="Northampton" value="{{ town }}">
-          </div>
-          <div class="field-group">
-            <label for="home-accessible">Accessibility filter</label>
-            <select id="home-accessible" name="accessible">
-              <option value="">Any accessible toilet</option>
-              <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
-            </select>
-          </div>
-          <button class="btn-primary-planira">{{ 'Search places' if current_user else 'Start exploring' }}</button>
         </div>
       </form>
       <div class="inline-note">
@@ -41,18 +51,12 @@
 </section>
 
 <section class="signal-grid">
-  <article class="planira-stat-card">
-    <span class="status-chip chip-success">Looks straightforward</span>
-    <p>Clear, recent details that suggest the visit should feel easier to manage.</p>
-  </article>
-  <article class="planira-stat-card">
-    <span class="status-chip chip-warning">Worth checking</span>
-    <p>Useful context when some details are partial, older, or still a little unclear.</p>
-  </article>
-  <article class="planira-stat-card">
-    <span class="status-chip chip-tricky">Might be a bit tricky</span>
-    <p>More careful planning may help here, especially if step-free access or facilities are limited.</p>
-  </article>
+  {% for signal in signal_examples %}
+    <article class="planira-stat-card">
+      <span class="status-chip status-{{ signal.tone }}">{{ signal.label }}</span>
+      <p>{{ signal['copy'] }}</p>
+    </article>
+  {% endfor %}
 </section>
 
 <section class="section-block">
@@ -89,21 +93,7 @@
     <p class="muted">This is what the search flow leads with after someone intentionally searches.</p>
     <div class="card-grid">
       {% for card in preview_cards %}
-        <article class="result-card planira-card">
-          <div class="result-topline">
-            <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
-            <span class="status-badge status-{{ card.signal.tone }}">{{ card.signal.label }}</span>
-          </div>
-          <h3>{{ card.place.name }}</h3>
-          <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
-          {{ planira.confidence_panel(card.signal.label, card.signal.summary) }}
-          <div class="tag-row">
-            <span>{{ card.verified_text }}</span>
-            {% for item in card.key_bits %}
-              <span>{{ item }}</span>
-            {% endfor %}
-          </div>
-        </article>
+        {{ planira.result_card(card) }}
       {% endfor %}
     </div>
   </article>

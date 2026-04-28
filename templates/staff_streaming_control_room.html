@@ -1,0 +1,248 @@
+{% extends 'base.html' %}
+{% block title %}Streaming control room | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Staff streaming</span>
+    <h1>Streaming control room</h1>
+    <p class="page-subtitle">A calm internal view of the current call, OBS widget health, and progress signals for the live workflow.</p>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Staff dashboard</a>
+    {% if active_call.place %}
+      <a class="btn" href="{{ active_call.place.worksheet_url }}">Current call worksheet</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="metric-grid wide-metrics">
+  <article class="metric-card">
+    <span>Verified today</span>
+    <strong data-progress-today>{{ progress_payload.verified_today }}</strong>
+    <p class="muted">Updates from today’s verification session.</p>
+  </article>
+  <article class="metric-card">
+    <span>Total verified</span>
+    <strong data-progress-total>{{ progress_payload.total_verified }}</strong>
+    <p class="muted">Current verified venue count across Planira.</p>
+  </article>
+  <article class="metric-card">
+    <span>Calling now</span>
+    <strong data-queue-calling>{{ progress_payload.queue.calling }}</strong>
+    <p class="muted">Live calls currently marked as in progress.</p>
+  </article>
+  <article class="metric-card">
+    <span>Callback queue</span>
+    <strong data-queue-callback>{{ progress_payload.queue.callback }}</strong>
+    <p class="muted">Follow-up calls waiting for another pass.</p>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel" data-current-call-panel>
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Current call</span>
+        <h2>Venue in focus</h2>
+      </div>
+    </div>
+    {% if active_call.active and active_call.place %}
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong data-call-name>{{ active_call.place.name }}</strong>
+          <span data-call-status>{{ active_call.place.status_label }}</span>
+        </div>
+        <div class="stack-row">
+          <strong>Town</strong>
+          <span data-call-town>{{ active_call.place.town or 'Unknown' }}</span>
+        </div>
+        <div class="stack-row">
+          <strong>Priority</strong>
+          <span data-call-priority>{{ active_call.place.priority }}</span>
+        </div>
+      </div>
+      <p class="muted" data-call-message>{{ active_call.message }}</p>
+      <a class="planira-button-primary" data-call-worksheet href="{{ active_call.place.worksheet_url }}">Open worksheet</a>
+    {% else %}
+      <div class="empty-inline" data-call-empty>No active call. Start a worksheet from the mission board when the next venue is ready.</div>
+      <p class="muted" data-call-message>{{ active_call.message }}</p>
+      <a class="planira-button-primary" data-call-worksheet href="{{ url_for('dashboard') }}" hidden>Open worksheet</a>
+    {% endif %}
+  </article>
+
+  <article class="surface-panel" data-health-panel>
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">OBS endpoint health</span>
+        <h2>Browser source status</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Session</strong>
+        <span data-health-session>{% if health_payload.session_cookie_expected %}Signed-in staff session expected{% else %}Unknown{% endif %}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Endpoint status</strong>
+        <span data-health-status>{{ health_payload.status|title }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Access</strong>
+        <span data-health-access>{% if health_payload.staff_access %}Staff only{% else %}Unknown{% endif %}</span>
+      </div>
+    </div>
+    <p class="muted" data-health-todo>{{ health_payload.todo }}</p>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Progress preview</span>
+        <h2>Queue and verification snapshot</h2>
+      </div>
+    </div>
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Needs call</strong>
+        <span data-queue-needs-call>{{ progress_payload.queue.needs_call }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Calling</strong>
+        <span data-queue-calling-secondary>{{ progress_payload.queue.calling }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Callback</strong>
+        <span data-queue-callback-secondary>{{ progress_payload.queue.callback }}</span>
+      </div>
+    </div>
+    <p class="muted" data-progress-generated>Last refreshed from the server during this page load.</p>
+    <p class="muted" data-progress-note>{% if progress_payload.verified_today == 0 and progress_payload.queue.calling == 0 and progress_payload.queue.callback == 0 and progress_payload.queue.needs_call == 0 %}No progress available yet.{% else %}Progress is available from the current staff session.{% endif %}</p>
+  </article>
+
+  <article class="surface-panel">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Safe source links</span>
+        <h2>OBS browser source URLs</h2>
+      </div>
+    </div>
+    <div class="action-list">
+      {% for source in health_payload.browser_sources %}
+        <a class="action-card" href="{{ source.html_url }}" target="_blank" rel="noreferrer">
+          <strong>{{ source.label }}</strong>
+          <span>{{ source.html_url }}</span>
+        </a>
+      {% else %}
+        <div class="empty-inline">No OBS browser sources are configured yet.</div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<script>
+  const updateCurrentCallPanel = (payload) => {
+    const empty = document.querySelector("[data-call-empty]");
+    const name = document.querySelector("[data-call-name]");
+    const status = document.querySelector("[data-call-status]");
+    const town = document.querySelector("[data-call-town]");
+    const priority = document.querySelector("[data-call-priority]");
+    const message = document.querySelector("[data-call-message]");
+    const worksheet = document.querySelector("[data-call-worksheet]");
+
+    if (message) message.textContent = payload.message || "Unknown call state.";
+
+    if (payload.active && payload.place) {
+      if (empty) empty.hidden = true;
+      if (name) name.textContent = payload.place.name || "Unknown venue";
+      if (status) status.textContent = payload.place.status_label || "Unknown";
+      if (town) town.textContent = payload.place.town || "Unknown";
+      if (priority) priority.textContent = payload.place.priority ?? "Unknown";
+      if (worksheet && payload.place.worksheet_url) {
+        worksheet.hidden = false;
+        worksheet.href = payload.place.worksheet_url;
+      }
+      return;
+    }
+
+    if (empty) {
+      empty.hidden = false;
+      empty.textContent = payload.message || "No active call.";
+    }
+    if (name) name.textContent = "No active call";
+    if (status) status.textContent = "Unknown";
+    if (town) town.textContent = "Unknown";
+    if (priority) priority.textContent = "Unknown";
+    if (worksheet) worksheet.hidden = true;
+  };
+
+  const updateProgressPanel = (payload) => {
+    const setText = (selector, value) => {
+      const element = document.querySelector(selector);
+      if (element) element.textContent = value;
+    };
+
+    setText("[data-progress-today]", payload.verified_today ?? 0);
+    setText("[data-progress-total]", payload.total_verified ?? 0);
+    setText("[data-queue-calling]", payload.queue?.calling ?? 0);
+    setText("[data-queue-callback]", payload.queue?.callback ?? 0);
+    setText("[data-queue-needs-call]", payload.queue?.needs_call ?? 0);
+    setText("[data-queue-calling-secondary]", payload.queue?.calling ?? 0);
+    setText("[data-queue-callback-secondary]", payload.queue?.callback ?? 0);
+    setText("[data-progress-generated]", payload.generated_at ? `Last refreshed ${payload.generated_at}` : "Last refresh time unknown.");
+    setText(
+      "[data-progress-note]",
+      (payload.verified_today ?? 0) === 0 &&
+      (payload.queue?.needs_call ?? 0) === 0 &&
+      (payload.queue?.calling ?? 0) === 0 &&
+      (payload.queue?.callback ?? 0) === 0
+        ? "No progress available yet."
+        : "Progress is available from the current staff session."
+    );
+  };
+
+  const updateHealthPanel = (payload) => {
+    const setText = (selector, value) => {
+      const element = document.querySelector(selector);
+      if (element) element.textContent = value;
+    };
+
+    setText("[data-health-session]", payload.session_cookie_expected ? "Signed-in staff session expected" : "Unknown");
+    setText("[data-health-status]", payload.status || "unknown");
+    setText("[data-health-access]", payload.staff_access ? "Staff only" : "Unknown");
+    setText("[data-health-todo]", payload.todo || "No additional notes.");
+  };
+
+  const fetchPanel = async (url, onSuccess, onFailureMessage) => {
+    const response = await fetch(url, {
+      credentials: "same-origin",
+      headers: {
+        "Accept": "application/json"
+      }
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.message || onFailureMessage);
+    }
+    onSuccess(payload);
+  };
+
+  const refreshStreamingPanels = async () => {
+    try {
+      await Promise.all([
+        fetchPanel("{{ url_for('obs_current_call', format='json') }}", updateCurrentCallPanel, "Current call unavailable."),
+        fetchPanel("{{ url_for('obs_progress', format='json') }}", updateProgressPanel, "Progress unavailable."),
+        fetchPanel("{{ url_for('obs_health') }}", updateHealthPanel, "Health status unavailable."),
+      ]);
+    } catch (error) {
+      const healthStatus = document.querySelector("[data-health-status]");
+      const healthTodo = document.querySelector("[data-health-todo]");
+      if (healthStatus) healthStatus.textContent = "not connected";
+      if (healthTodo) healthTodo.textContent = error.message || "Unable to refresh OBS panels.";
+    }
+  };
+
+  window.setInterval(refreshStreamingPanels, 30000);
+</script>
+{% endblock %}

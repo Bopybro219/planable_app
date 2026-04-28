@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>{% block title %}Planira{% endblock %}</title>
+    <title>{% block title %}{{ brand_name }}{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -23,8 +23,8 @@
           <a class="planira-logo" href="{{ url_for('index') }}">
             <span class="brand-mark" aria-hidden="true">P</span>
             <div class="brand-copy">
-              <strong>Planira</strong>
-              <span>Know before you go.</span>
+              <strong>{{ brand_name }}</strong>
+              <span>{{ brand_tagline }}</span>
             </div>
           </a>
 
@@ -71,14 +71,6 @@
 
           <div class="planira-user-menu">
             {% if current_user %}
-              <a class="account-chip" href="{{ url_for('account') }}">
-                <span class="account-avatar">{{ (current_user.name or current_user.email)[0]|upper }}</span>
-                <div class="account-chip-meta">
-                  <strong>{{ current_user.name or 'Planira member' }}</strong>
-                  <span>{{ current_user.email }}</span>
-                  <span class="account-chip-badges">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
-                </div>
-              </a>
               <a class="planira-button-secondary btn-secondary" href="{{ url_for('logout') }}">Logout</a>
             {% else %}
               <a class="planira-button-primary btn" href="{{ url_for('login') }}">Continue with Google</a>
@@ -113,14 +105,6 @@
 
             <div class="planira-mobile-actions">
               {% if current_user %}
-                <a class="account-chip" href="{{ url_for('account') }}">
-                  <span class="account-avatar">{{ (current_user.name or current_user.email)[0]|upper }}</span>
-                  <div class="account-chip-meta">
-                    <strong>{{ current_user.name or 'Planira member' }}</strong>
-                    <span>{{ current_user.email }}</span>
-                    <span class="account-chip-badges">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
-                  </div>
-                </a>
                 <a class="planira-button-secondary btn-secondary" href="{{ url_for('logout') }}">Logout</a>
               {% else %}
                 <a class="planira-button-primary btn" href="{{ url_for('login') }}">Continue with Google</a>
@@ -157,15 +141,16 @@
       <footer class="planira-footer">
         <div class="planira-content planira-footer-inner">
           <div class="planira-footer-brand">
-            <strong>Planira</strong>
-            <p class="muted">Know before you go.</p>
+            <strong>{{ brand_name }}</strong>
+            <p class="muted">{{ brand_tagline }}</p>
           </div>
           <nav class="planira-footer-links" aria-label="Footer">
+            <a href="{{ url_for('developers') }}">Developers</a>
             <a href="{{ url_for('privacy') }}">Privacy</a>
             <a href="{{ url_for('terms') }}">Terms</a>
             <a href="{{ url_for('data_rights') }}">Data rights</a>
             <a href="{{ url_for('cookies') }}">Cookies</a>
-            <span>Call: <span data-phone>01604 289096</span></span>
+            <span>Call: <span data-phone>{{ contact_phone }}</span></span>
           </nav>
         </div>
       </footer>

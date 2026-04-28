@@ -36,7 +36,7 @@
       </div>
       <div class="stack-row">
         <strong>Status</strong>
-        <span>{{ planira.humanize_label(place.status) }}</span>
+        <span>{{ humanize_label(place.status) }}</span>
       </div>
       <div class="stack-row">
         <strong>Confidence</strong>
@@ -83,20 +83,18 @@
       <div class="field-group">
         <label for="call-result">Call result</label>
         <select id="call-result" name="call_result">
-          <option>answered</option>
-          <option>no_answer</option>
-          <option>callback</option>
-          <option>wrong_number</option>
-          <option>refused</option>
+          {% for option in ['answered', 'no_answer', 'callback', 'wrong_number', 'refused'] %}
+            <option value="{{ option }}" {% if (worksheet_form.get('call_result') if worksheet_form else '') == option %}selected{% endif %}>{{ option|replace('_', ' ')|title }}</option>
+          {% endfor %}
         </select>
       </div>
       <div class="field-group">
         <label for="contact-name">Contact name</label>
-        <input id="contact-name" name="contact_name" placeholder="Optional first name or role">
+        <input id="contact-name" name="contact_name" value="{{ worksheet_form.get('contact_name', '') if worksheet_form else '' }}" placeholder="Optional first name or role">
       </div>
       <div class="field-group field-span-2">
         <label for="call-notes">Call notes</label>
-        <textarea id="call-notes" name="call_notes" placeholder="Capture the exact wording that supports the public-facing record."></textarea>
+        <textarea id="call-notes" name="call_notes" placeholder="Capture the exact wording that supports the public-facing record.">{{ worksheet_form.get('call_notes', '') if worksheet_form else '' }}</textarea>
       </div>
     </div>
   </div>
@@ -135,6 +133,20 @@
         <p class="helper-copy">Use a rough estimate if exact distance is not available.</p>
       </div>
       <div class="field-group">
+        <label for="toilet-distance-from-bar-m">Toilet distance in metres</label>
+        <input
+          id="toilet-distance-from-bar-m"
+          name="toilet_distance_from_bar_m"
+          type="number"
+          min="0"
+          max="5000"
+          step="0.1"
+          value="{% if worksheet_form and worksheet_form.get('toilet_distance_from_bar_m') is not none %}{{ worksheet_form.get('toilet_distance_from_bar_m') }}{% elif profile.toilet_distance_from_bar_m is not none %}{{ profile.toilet_distance_from_bar_m }}{% endif %}"
+          placeholder="e.g. 12.5"
+        >
+        <p class="helper-copy">This powers the structured distance filters used in search and QA.</p>
+      </div>
+      <div class="field-group">
         <label for="baby-changing-location">Baby changing location</label>
         <input id="baby-changing-location" name="baby_changing_location" value="{{ profile.baby_changing_location or '' }}" placeholder="Location details">
       </div>
@@ -171,13 +183,13 @@
       </div>
       <div class="field-group">
         <label for="confidence-score">Confidence score</label>
-        <input id="confidence-score" type="number" name="confidence_score" min="0" max="100" value="{{ profile.confidence_score }}">
+        <input id="confidence-score" type="number" name="confidence_score" min="0" max="100" value="{% if worksheet_form and worksheet_form.get('confidence_score') is not none %}{{ worksheet_form.get('confidence_score') }}{% else %}{{ profile.confidence_score }}{% endif %}">
       </div>
       <div class="field-group">
         <label for="call-status">Status</label>
         <select id="call-status" name="status">
           {% for status in ['needs_call', 'callback', 'calling', 'verified'] %}
-            <option value="{{ status }}" {% if place.status == status %}selected{% endif %}>{{ planira.humanize_label(status) }}</option>
+            <option value="{{ status }}" {% if (worksheet_form.get('status') if worksheet_form else place.status) == status %}selected{% endif %}>{{ humanize_label(status) }}</option>
           {% endfor %}
         </select>
       </div>
@@ -186,7 +198,7 @@
           <strong>Mark verified now</strong>
           <p class="muted">Only use this when the call genuinely supports a confident public record.</p>
         </div>
-        <input id="mark-verified" class="checkbox-pill" type="checkbox" name="mark_verified" value="yes">
+        <input id="mark-verified" class="checkbox-pill" type="checkbox" name="mark_verified" value="yes" {% if worksheet_form and worksheet_form.get('mark_verified') == 'yes' %}checked{% endif %}>
       </label>
     </div>
   </div>
