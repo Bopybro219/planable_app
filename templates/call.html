@@ -15,6 +15,10 @@
     <span class="eyebrow">Current record</span>
     <h2>{{ place.name }}</h2>
     <div class="stack-list">
+      <div class="stack-row">
+        <strong>Verification</strong>
+        <span><span class="{{ verification.badge_class }}">{{ verification.badge_label }}</span> · {{ verification.last_checked_copy }}</span>
+      </div>
      <div class="stack-row">
       <strong>Phone</strong>
       {% if place.phone %}
@@ -43,6 +47,16 @@
         <span>{{ profile.confidence_score }}/100</span>
       </div>
       <div class="stack-row">
+        <strong>Needs next action</strong>
+        <span>{{ quality.queue_label }}</span>
+      </div>
+      {% if quality.missing_fields %}
+        <div class="stack-row">
+          <strong>Missing key fields</strong>
+          <span>{{ quality.missing_fields|join(', ') }}</span>
+        </div>
+      {% endif %}
+      <div class="stack-row">
         <strong>Toilet distance</strong>
         <span>
           {% if toilet_distance_backend_supported %}
@@ -59,6 +73,14 @@
     <span class="eyebrow">Call focus</span>
     <h2>What to confirm on this call</h2>
     <div class="stack-list">
+      <div class="stack-row">
+        <strong>Last checked</strong>
+        <span>{{ verification.last_checked_copy }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Confidence target</strong>
+        <span>{% if quality.low_confidence %}Strengthen the record before marking it trusted.{% else %}Keep confidence aligned with what this call genuinely confirms.{% endif %}</span>
+      </div>
       {% for item in premium_checklist %}
         <div class="stack-row">
           <strong>{{ item }}</strong>

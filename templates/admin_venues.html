@@ -73,6 +73,14 @@
         </select>
       </div>
       <div class="field-group">
+        <label for="venue-quality-queue">Data quality queue</label>
+        <select id="venue-quality-queue" name="quality_queue">
+          {% for option in quality_queue_options %}
+            <option value="{{ option.value }}" {% if filters.quality_queue == option.value %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field-group">
         <label for="venue-sort">Sort</label>
         <select id="venue-sort" name="sort">
           {% for option in ['priority', 'updated', 'name', 'confidence', 'last_verified'] %}
@@ -96,6 +104,12 @@
     </div>
   </div>
 
+  <div class="tag-row">
+    <a class="planira-chip" href="{{ url_for('admin_venues', quality_queue='needs_checking') }}">Needs checking</a>
+    <a class="planira-chip" href="{{ url_for('admin_venues', quality_queue='stale_verification') }}">Stale verification</a>
+    <a class="planira-chip" href="{{ url_for('admin_venues', quality_queue='missing_accessibility') }}">Missing key accessibility fields</a>
+  </div>
+
   <div class="table-list">
     {% for row in venue_rows %}
       <article class="table-row">
@@ -104,8 +118,13 @@
           <p class="muted">{{ row.place.address1 or 'Address missing' }} · {{ row.place.town or 'Town missing' }}{% if row.place.postcode %} · {{ row.place.postcode }}{% endif %}</p>
           <div class="tag-row">
             <span class="planira-chip">{{ row.status_label }}</span>
+            <span class="{{ row.verification_badge_class }}">{{ row.verification_label }}</span>
+            <span class="{{ row.quality_badge_class }}">{{ row.quality_queue_label }}</span>
             {% if row.profile_missing %}
               <span class="status-chip chip-warning">Profile missing</span>
+            {% endif %}
+            {% if row.missing_fields_count %}
+              <span class="status-chip chip-warning">{{ row.missing_fields_count }} key fields missing</span>
             {% endif %}
           </div>
         </div>
@@ -118,6 +137,13 @@
             {% endif %}
           </strong>
           <p class="muted">Last verified: {{ row.last_verified }}</p>
+          <p class="muted">{{ row.last_checked_copy }}</p>
+          {% if row.verified_by_label %}
+            <p class="muted">Verified by: {{ row.verified_by_label }}</p>
+          {% endif %}
+          {% if row.missing_fields %}
+            <p class="muted">Missing: {{ row.missing_fields|join(', ') }}</p>
+          {% endif %}
         </div>
         <div>
           <span class="metric-pill">
@@ -148,19 +174,19 @@
         <strong>Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }}–{{ ((pagination.page - 1) * pagination.per_page) + venue_rows|length }} of {{ pagination.total }} venues</strong>
         <span class="muted">Filters stay in place while you move through the queue.</span>
       </div>
-      <div class="pagination-links">
+        <div class="pagination-links">
         {% if pagination.has_prev %}
-          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=pagination.prev_num) }}">Previous</a>
+          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, quality_queue=filters.quality_queue, sort=filters.sort, page=pagination.prev_num) }}">Previous</a>
         {% endif %}
         {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
           {% if page_number %}
-            <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=page_number) }}">{{ page_number }}</a>
+            <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, quality_queue=filters.quality_queue, sort=filters.sort, page=page_number) }}">{{ page_number }}</a>
           {% else %}
             <span class="page-gap">…</span>
           {% endif %}
         {% endfor %}
         {% if pagination.has_next %}
-          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, sort=filters.sort, page=pagination.next_num) }}">Next</a>
+          <a class="btn-secondary-planira" href="{{ url_for('admin_venues', q=filters.q or None, town=filters.town or None, postcode=filters.postcode or None, status=filters.status, profile=filters.profile, toilet_distance=filters.toilet_distance, confidence=filters.confidence, verified=filters.verified, quality_queue=filters.quality_queue, sort=filters.sort, page=pagination.next_num) }}">Next</a>
         {% endif %}
       </div>
     </nav>

@@ -18,13 +18,34 @@
     <article class="surface-panel place-summary-panel">
       <div class="section-head">
         <div>
-          <span class="eyebrow">Planira summary</span>
-          <h2>Here’s what to expect</h2>
+          <span class="eyebrow">Quick answer</span>
+          <h2>What matters first</h2>
         </div>
       </div>
       <p class="lead-copy">{{ signal.summary }}</p>
-      {{ planira.confidence_panel(signal) }}
-      {{ planira.signal_badges(signal, signal.highlights[:2]) }}
+      <div class="quick-answer-list" role="list" aria-label="Quick accessibility answer">
+        {% for item in signal.quick_answer_items %}
+          <div class="quick-answer-item quick-answer-item-{{ item.tone }}" role="listitem">
+            <strong>
+              {% if item.icon == 'check' %}
+                &#10003;
+              {% elif item.icon == 'warning' %}
+                &#9888;
+              {% elif item.icon == 'info' %}
+                &#8226;
+              {% else %}
+                ?
+              {% endif %}
+            </strong>
+            <span>{{ item.label }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="verification-inline">
+        <span class="{{ signal.verification.badge_class }}">{{ signal.verification.badge_label }}</span>
+        <span class="muted">{{ signal.verification.last_checked_copy }}</span>
+      </div>
+      {{ planira.signal_badges(signal, signal.key_facts[:2]) }}
       <div class="signal-summary-grid">
         <article class="signal-summary-card signal-summary-card-priority">
           <strong>Toilet distance from bar</strong>
@@ -32,9 +53,15 @@
           <small>{{ signal.distance.highlight or 'This is one of the most useful planning signals for this page.' }}</small>
         </article>
         <article class="signal-summary-card">
-          <strong>{{ signal.verification.label }}</strong>
-          <span>{{ signal.source_label }}</span>
-          <small>{{ signal.confidence.label }} at {{ signal.confidence.percent }}% confidence.</small>
+          <strong>Verification</strong>
+          <span>{{ signal.verification.badge_label }}</span>
+          <small>
+            {% if signal.verification.date %}
+              Last checked {{ signal.verification.date }}
+            {% else %}
+              {{ signal.verification.last_checked_copy }}
+            {% endif %}
+          </small>
         </article>
       </div>
       {% if signal.warnings %}
@@ -59,7 +86,7 @@
       <div class="section-head">
         <div>
           <span class="eyebrow">Community comments</span>
-          <h2>Helpful notes from people who have checked this place</h2>
+          <h2>Helpful notes from other Planira members</h2>
         </div>
       </div>
       <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
@@ -74,11 +101,11 @@
       <div class="comment-list">
         {% for c in comments %}
           <article class="comment-card">
-            <strong>{{ c.user_email }}</strong>
+            <strong>{{ c.public_label }}</strong>
             <p>{{ c.body }}</p>
           </article>
         {% else %}
-          <div class="empty-inline">We don’t have any visitor notes here yet.</div>
+          <div class="empty-inline">We don’t have any member notes here yet.</div>
         {% endfor %}
       </div>
     </article>
@@ -88,6 +115,10 @@
     <article class="surface-panel">
       <span class="eyebrow">Before you go</span>
       <div class="stack-list">
+        <div class="stack-row">
+          <strong>Verification</strong>
+          <span>{{ signal.verification.badge_label }}{% if signal.verification.date %} · {{ signal.verification.date }}{% endif %}</span>
+        </div>
         <div class="stack-row">
           <strong>Public notes</strong>
           <span>{{ profile.public_comments or 'No public notes yet. A short update from a future visitor could make this page much more helpful.' }}</span>

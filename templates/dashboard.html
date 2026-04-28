@@ -38,6 +38,37 @@
   </article>
 </section>
 
+<section class="card-grid">
+  {% for queue in quality_queues %}
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Data quality queue</span>
+          <h2>{{ queue.label }}</h2>
+        </div>
+        <span class="metric-pill">{{ queue.count }}</span>
+      </div>
+      <p class="muted">{{ queue.description }}</p>
+      <div class="stack-list">
+        {% for row in queue.sample_rows %}
+          <div class="stack-row">
+            <strong>{{ row.place.name }}</strong>
+            <span>
+              {{ row.quality_queue_label }}
+              {% if row.missing_fields_count %}
+                · {{ row.missing_fields_count }} key fields missing
+              {% endif %}
+            </span>
+          </div>
+        {% else %}
+          <div class="empty-inline">No venues in this queue right now.</div>
+        {% endfor %}
+      </div>
+      <a class="btn-secondary-planira" href="{{ queue.href }}">Open queue</a>
+    </article>
+  {% endfor %}
+</section>
+
 <section class="dashboard-grid">
   <article class="surface-panel">
     <div class="section-head">
@@ -210,21 +241,30 @@
     {% endif %}
   </div>
   <div class="card-grid">
-    {% for p in next_places %}
+    {% for row in mission_rows %}
       <article class="surface-panel mission-card">
         <div class="result-topline mission-card-topline">
-          <span class="venue-type">{{ p.venue_type or 'place' }}</span>
-          <span class="planira-chip">{{ humanize_label(p.status) }}</span>
+          <span class="venue-type">{{ row.place.venue_type or 'place' }}</span>
+          <span class="planira-chip">{{ row.status_label }}</span>
         </div>
-        <h3>{{ p.name }}</h3>
-        <p class="muted">{{ p.phone or 'Phone not listed yet' }}{% if p.address1 or p.town %} · {{ p.address1 }}{% if p.address1 and p.town %}, {% endif %}{{ p.town }}{% endif %}</p>
+        <h3>{{ row.place.name }}</h3>
+        <p class="muted">{{ row.place.phone or 'Phone not listed yet' }}{% if row.place.address1 or row.place.town %} · {{ row.place.address1 }}{% if row.place.address1 and row.place.town %}, {% endif %}{{ row.place.town }}{% endif %}</p>
         <div class="mission-meta">
-          <span class="metric-pill">{{ humanize_label('priority_' ~ (p.priority or 3)) }}</span>
-          <span class="planira-chip">Useful data improvement</span>
+          <span class="metric-pill">{{ humanize_label('priority_' ~ (row.place.priority or 3)) }}</span>
+          <span class="{{ row.quality_badge_class }}">{{ row.quality_queue_label }}</span>
           <span class="planira-chip">2–5 min check</span>
         </div>
-        <p>Best next move: confirm the key access details, close any uncertainty, and turn this venue into a more trustworthy record.</p>
-        <a class="planira-button-primary" href="{{ url_for('call_place', place_id=p.id) }}">Start mission</a>
+        <p>
+          {% if row.low_confidence %}
+            Confidence still needs strengthening.
+          {% endif %}
+          {% if row.missing_fields_count %}
+            {{ row.missing_fields_count }} key access answers still missing.
+          {% else %}
+            Best next move: confirm the key access details and tighten the record.
+          {% endif %}
+        </p>
+        <a class="planira-button-primary" href="{{ url_for('call_place', place_id=row.place.id) }}">Start mission</a>
       </article>
     {% else %}
       <article class="surface-panel empty-state">

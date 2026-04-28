@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -222,6 +223,32 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(admin_state["plan_label"], "Business")
         self.assertEqual(admin_state["access_label"], "Admin")
 
+    def test_user_has_api_access_matches_paid_business_and_staff_states(self):
+        with app.app_context():
+            free_user = User(email="free-api@example.com", name="Free", picture="", role="member", plan="free")
+            paid_user = User(email="paid-api@example.com", name="Paid", picture="", role="member", plan="paid")
+            business_user = User(email="business-api@example.com", name="Business", picture="", role="member", plan="business")
+            staff_user = User(email="staff-api@example.com", name="Staff", picture="", role="staff", plan="free")
+
+            self.assertFalse(app_module.user_has_api_access(free_user))
+            self.assertTrue(app_module.user_has_api_access(paid_user))
+            self.assertTrue(app_module.user_has_api_access(business_user))
+            self.assertTrue(app_module.user_has_api_access(staff_user))
+
+    def test_apply_plan_role_to_user_repairs_plan_when_role_already_matches(self):
+        with app.app_context():
+            user = User(email="repair-plan@example.com", name="Repair Plan", picture="", role="api_buyer", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+            applied = app_module.apply_plan_role_to_user(user_id, "api_buyer")
+            repaired = db.session.get(User, user_id)
+
+        self.assertTrue(applied)
+        self.assertEqual(repaired.role, "api_buyer")
+        self.assertEqual(repaired.plan, "business")
+
     def test_post_routes_require_csrf(self):
         response = self.client.post("/admin/place/new", data={"name": "Test venue"})
 
@@ -250,6 +277,22 @@ class AppSmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_place_page_masks_comment_author_email(self):
+        with app.app_context():
+            user = User(email="visible@example.com", name="Visible User", picture="", role="member", plan="free")
+            place = Place(name="Masked Cafe", slug="masked-cafe", town="Mask Town")
+            db.session.add_all([user, place])
+            db.session.flush()
+            db.session.add(Comment(place=place, user_email=user.email, body="Helpful mask note", is_public=True, status="approved"))
+            db.session.commit()
+
+        self.login_session("visible@example.com", "Visible User")
+        response = self.client.get("/place/masked-cafe")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"vis...", response.data)
+        self.assertNotIn(b"visible@example.com", response.data)
 
     def test_search_submission_tracks_usage(self):
         with app.app_context():
@@ -398,6 +441,324 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"on the Free plan", response.data)
         self.assertIn(b"Free plan includes 8 searches per month.", response.data)
 
+    def test_checkout_route_metadata_contains_target_role_user_id_and_email(self):
+        with app.app_context():
+            user = User(email="checkout-fields@example.com", name="Checkout Fields", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        self.login_session("checkout-fields@example.com", "Checkout Fields")
+        session_create = unittest.mock.Mock(return_value=SimpleNamespace(url="https://checkout.stripe.test/session/fields"))
+        fake_stripe = SimpleNamespace(checkout=SimpleNamespace(Session=SimpleNamespace(create=session_create)))
+
+        with patch.dict(os.environ, {"STRIPE_PRICE_API_20": "price_api_20_test"}, clear=False):
+            with patch.object(app_module, "stripe", fake_stripe):
+                with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123"}, clear=False):
+                    response = self.client.post("/billing/checkout/api_20", data={"csrf_token": "token123"})
+
+        self.assertEqual(response.status_code, 303)
+        kwargs = session_create.call_args.kwargs
+        self.assertEqual(kwargs["metadata"]["plan_key"], "api_20")
+        self.assertEqual(kwargs["metadata"]["target_role"], "api_buyer")
+        self.assertEqual(kwargs["metadata"]["user_id"], str(user_id))
+        self.assertEqual(kwargs["metadata"]["user_email"], "checkout-fields@example.com")
+        self.assertEqual(kwargs["customer_email"], "checkout-fields@example.com")
+        self.assertEqual(kwargs["client_reference_id"], str(user_id))
+
+    def test_subscription_checkout_includes_subscription_metadata(self):
+        with app.app_context():
+            user = User(email="checkout-subscription@example.com", name="Checkout Subscription", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        self.login_session("checkout-subscription@example.com", "Checkout Subscription")
+        session_create = unittest.mock.Mock(return_value=SimpleNamespace(url="https://checkout.stripe.test/subscription"))
+        fake_stripe = SimpleNamespace(checkout=SimpleNamespace(Session=SimpleNamespace(create=session_create)))
+
+        with patch.dict(os.environ, {"STRIPE_PRICE_PAID_CONSUMER": "price_paid_test"}, clear=False):
+            with patch.object(app_module, "stripe", fake_stripe):
+                with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123"}, clear=False):
+                    response = self.client.post("/billing/checkout/paid_consumer", data={"csrf_token": "token123"})
+
+        self.assertEqual(response.status_code, 303)
+        kwargs = session_create.call_args.kwargs
+        self.assertEqual(kwargs["subscription_data"]["metadata"]["user_id"], str(user_id))
+        self.assertEqual(kwargs["subscription_data"]["metadata"]["target_role"], "paid_consumer")
+
+    def test_billing_success_for_paid_consumer_grants_paid_plan_and_api_access(self):
+        with app.app_context():
+            user = User(email="paid-success@example.com", name="Paid Success", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        self.login_session("paid-success@example.com", "Paid Success")
+        fake_session = SimpleNamespace(
+            metadata={"plan_key": "paid_consumer", "target_role": "paid_consumer"},
+            payment_status="paid",
+            status="complete",
+            client_reference_id=str(user_id),
+            customer="cus_paid_success",
+            subscription="sub_paid_success",
+        )
+        fake_stripe = SimpleNamespace(checkout=SimpleNamespace(Session=SimpleNamespace(retrieve=unittest.mock.Mock(return_value=fake_session))))
+
+        with patch.dict(os.environ, {"STRIPE_PRICE_PAID_CONSUMER": "price_paid_test"}, clear=False):
+            with patch.object(app_module, "stripe", fake_stripe):
+                with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123"}, clear=False):
+                    response = self.client.get("/billing/success?session_id=cs_test_paid", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Paid consumer is now active on your account.", response.data)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "paid_consumer")
+        self.assertEqual(refreshed.plan, "paid")
+        self.assertEqual(refreshed.stripe_customer_id, "cus_paid_success")
+        self.assertEqual(refreshed.stripe_subscription_id, "sub_paid_success")
+        self.assertIsNone(refreshed.subscription_status)
+        self.assertTrue(app_module.user_has_api_access(refreshed))
+
+    def test_stripe_webhook_for_api_buyer_grants_business_plan_and_api_access(self):
+        with app.app_context():
+            user = User(email="api-webhook@example.com", name="API Webhook", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "api_buyer",
+                    },
+                    "customer": "cus_api_webhook",
+                    "subscription": None,
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "api_buyer")
+        self.assertEqual(refreshed.plan, "business")
+        self.assertEqual(refreshed.stripe_customer_id, "cus_api_webhook")
+        self.assertTrue(app_module.user_has_api_access(refreshed))
+
+    def test_stripe_subscription_deleted_downgrades_paid_member_to_free(self):
+        with app.app_context():
+            user = User(email="subscription-deleted@example.com", name="Subscription Deleted", picture="", role="paid_consumer", plan="paid")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "paid_consumer",
+                        "user_email": "subscription-deleted@example.com",
+                    },
+                    "status": "canceled",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+            audit = AuditLog.query.filter_by(action="billing.entitlement.revoked", entity_type="user", entity_id=str(user_id)).first()
+        self.assertEqual(refreshed.role, "member")
+        self.assertEqual(refreshed.plan, "free")
+        self.assertFalse(app_module.user_has_api_access(refreshed))
+        self.assertIsNotNone(audit)
+
+    def test_subscription_deleted_can_resolve_user_by_stored_subscription_id(self):
+        with app.app_context():
+            user = User(
+                email="stored-subscription@example.com",
+                name="Stored Subscription",
+                picture="",
+                role="paid_consumer",
+                plan="paid",
+                stripe_customer_id="cus_stored_subscription",
+                stripe_subscription_id="sub_stored_subscription",
+                subscription_status="active",
+            )
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "id": "sub_stored_subscription",
+                    "object": "subscription",
+                    "customer": "cus_stored_subscription",
+                    "status": "canceled",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "member")
+        self.assertEqual(refreshed.plan, "free")
+        self.assertEqual(refreshed.stripe_subscription_id, "sub_stored_subscription")
+        self.assertEqual(refreshed.subscription_status, "canceled")
+
+    def test_invoice_payment_failed_downgrades_paid_member_to_free(self):
+        with app.app_context():
+            user = User(email="invoice-failed@example.com", name="Invoice Failed", picture="", role="paid_consumer", plan="paid")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "invoice.payment_failed",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "paid_consumer",
+                    }
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "member")
+        self.assertEqual(refreshed.plan, "free")
+        self.assertFalse(app_module.user_has_api_access(refreshed))
+
+    def test_subscription_updated_only_revokes_terminal_statuses(self):
+        with app.app_context():
+            user = User(email="subscription-active@example.com", name="Subscription Active", picture="", role="paid_consumer", plan="paid")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "paid_consumer",
+                    },
+                    "status": "active",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "paid_consumer")
+        self.assertEqual(refreshed.plan, "paid")
+        self.assertTrue(app_module.user_has_api_access(refreshed))
+
+    def test_subscription_lifecycle_webhooks_do_not_demote_staff_or_admin_accounts(self):
+        staff_email = "staff-subscription@example.com"
+        ADMIN_EMAILS.add(staff_email)
+        with app.app_context():
+            staff = User(email=staff_email, name="Staff Subscription", picture="", role="admin", plan="admin")
+            db.session.add(staff)
+            db.session.commit()
+            user_id = staff.id
+
+        fake_event = {
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "paid_consumer",
+                    },
+                    "status": "canceled",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "admin")
+        self.assertEqual(refreshed.plan, "admin")
+
+    def test_subscription_lifecycle_does_not_revoke_one_off_api_pack_entitlement(self):
+        with app.app_context():
+            user = User(email="api-pack-owner@example.com", name="API Pack Owner", picture="", role="api_buyer", plan="business")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "target_role": "paid_consumer",
+                    },
+                    "status": "canceled",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "api_buyer")
+        self.assertEqual(refreshed.plan, "business")
+        self.assertTrue(app_module.user_has_api_access(refreshed))
+
     def test_search_first_load_stays_empty(self):
         with app.app_context():
             user = User.query.filter_by(email="presearch@example.com").first()
@@ -465,6 +826,82 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Page 2 of", response.data)
         self.assertIn(b"Previous", response.data)
+
+    def test_verification_status_helper_covers_public_states(self):
+        now = app_module.datetime.now(app_module.timezone.utc)
+
+        recent_profile = AccessibilityProfile(last_verified_at=now - app_module.timedelta(days=14))
+        checked_profile = AccessibilityProfile(last_verified_at=now - app_module.timedelta(days=70))
+        stale_profile = AccessibilityProfile(last_verified_at=now - app_module.timedelta(days=160))
+
+        recent = app_module.verification_status(recent_profile)
+        checked = app_module.verification_status(checked_profile)
+        stale = app_module.verification_status(stale_profile)
+        missing = app_module.verification_status(None)
+
+        self.assertEqual(recent["status"], "Verified")
+        self.assertEqual(recent["relative_time"], "2 weeks ago")
+        self.assertTrue(recent["verified"])
+        self.assertEqual(checked["status"], "Checked recently")
+        self.assertEqual(stale["status"], "Needs checking")
+        self.assertEqual(missing["status"], "Not verified yet")
+        self.assertEqual(missing["last_checked_copy"], "Not checked yet")
+
+    def test_search_and_place_pages_prioritise_quick_answer_and_verification(self):
+        with app.app_context():
+            user = User(email="clarity@example.com", name="Clarity User", picture="", role="member", plan="free")
+            place = Place(
+                name="Clear Cafe",
+                slug="clear-cafe",
+                address1="12 Broad Street",
+                town="Northampton",
+                postcode="NN1 4AA",
+            )
+            db.session.add_all([user, place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    toilets_available="yes",
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    stairs_inside="no",
+                    toilet_distance_from_bar_m=8,
+                    confidence_score=84,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=14),
+                )
+            )
+            db.session.commit()
+
+        self.login_session("clarity@example.com", "Clarity User")
+        search_response = self.client.get("/search?q=Clear&submitted=1")
+        place_response = self.client.get("/place/clear-cafe")
+
+        self.assertEqual(search_response.status_code, 200)
+        self.assertIn(b"Verified", search_response.data)
+        self.assertIn(b"Last checked 2 weeks ago", search_response.data)
+        self.assertIn(b"Step-free entrance", search_response.data)
+        self.assertIn(b"Accessible toilet", search_response.data)
+
+        self.assertEqual(place_response.status_code, 200)
+        self.assertIn(b"Quick answer", place_response.data)
+        self.assertIn(b"Last checked 2 weeks ago", place_response.data)
+        self.assertIn(b"Accessible toilet confirmed", place_response.data)
+
+    def test_developers_page_shows_upgrade_message_without_api_access(self):
+        with app.app_context():
+            user = User(email="developer-view@example.com", name="Developer View", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("developer-view@example.com", "Developer View")
+        response = self.client.get("/developers")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Upgrade before creating keys", response.data)
+        self.assertIn(b"Free search access does not unlock the API.", response.data)
+        self.assertNotIn(b"Create new key", response.data)
+
 
     def test_dashboard_mission_board_paginates(self):
         admin_email = "admin-pagination@example.com"
@@ -648,7 +1085,26 @@ class AppSmokeTests(unittest.TestCase):
             user = User(email="searcher@example.com", name="Searcher", picture="", role="member", plan="free")
             place = Place(name="Dash Venue", slug="dash-venue", town="Dash Town", status="needs_call")
             pending = Comment(place=place, user_email="pending@example.com", body="Pending moderation item", status="pending")
-            db.session.add_all([moderator, user, place, pending])
+            stale_place = Place(name="Stale Venue", slug="stale-venue", town="Old Town", status="verified")
+            missing_place = Place(name="Missing Venue", slug="missing-venue", town="Gap Town", status="needs_call")
+            db.session.add_all([moderator, user, place, pending, stale_place, missing_place])
+            db.session.flush()
+            db.session.add_all(
+                [
+                    AccessibilityProfile(
+                        place_id=stale_place.id,
+                        confidence_score=30,
+                        last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=120),
+                    ),
+                    AccessibilityProfile(
+                        place_id=missing_place.id,
+                        toilets_available="unknown",
+                        accessible_toilet="unknown",
+                        step_free_entrance="unknown",
+                        stairs_inside="unknown",
+                    ),
+                ]
+            )
             db.session.commit()
             db.session.add(SearchEvent(user_id=user.id, query_text="Dash Search", result_count=3))
             db.session.add(
@@ -669,6 +1125,9 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Pending submissions", response.data)
         self.assertIn(b"Recent searches", response.data)
         self.assertIn(b"Audit trail", response.data)
+        self.assertIn(b"Needs checking", response.data)
+        self.assertIn(b"Stale verification", response.data)
+        self.assertIn(b"Missing key accessibility fields", response.data)
         self.assertIn(b"<strong>1</strong>", response.data)
         self.assertIn(b"Dash Search", response.data)
         self.assertIn(b"Comment Approved", response.data)
@@ -690,6 +1149,29 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(users_response.status_code, 200)
         self.assertIn(b"Manage Planira users", users_response.data)
         self.assertIn(b"Only admins can change member search credits.", users_response.data)
+
+    def test_admin_staff_demote_uses_member_role_name(self):
+        admin_email = "admin-demote@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Admin Demote", picture="", role="admin", plan="admin")
+            staff_user = User(email="to-demote@example.com", name="To Demote", picture="", role="staff", plan="free")
+            db.session.add_all([admin, staff_user])
+            db.session.commit()
+            user_id = staff_user.id
+
+        self.login_session(admin_email, "Admin Demote")
+        response = self.client.post(
+            f"/admin/users/{user_id}/staff",
+            data={"csrf_token": "token123", "action": "demote"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+        self.assertEqual(refreshed.role, "member")
+        self.assertIn(b"is now a member", response.data)
 
     def test_non_staff_cannot_see_staff_only_audit_or_search_activity(self):
         with app.app_context():
@@ -840,9 +1322,84 @@ class AppSmokeTests(unittest.TestCase):
         self.assertNotIn(b"Beta Bar", query_response.data)
         self.assertNotIn(b"Gamma Gate", query_response.data)
 
+        quality_response = self.client.get("/admin/venues?quality_queue=missing_accessibility")
+        self.assertEqual(quality_response.status_code, 200)
+        self.assertIn(b"Beta Bar", quality_response.data)
+        self.assertIn(b"Alpha Arms", quality_response.data)
+        self.assertIn(b"key fields missing", quality_response.data)
+
+    def test_staff_views_show_verification_metadata_without_public_simplification(self):
+        staff_email = "metadata-staff@example.com"
+        with app.app_context():
+            staff = User(email=staff_email, name="Metadata Staff", picture="", role="staff", plan="free")
+            place = Place(
+                name="Metadata Arms",
+                slug="metadata-arms",
+                address1="8 Audit Lane",
+                town="Leicester",
+                postcode="LE1 8ZZ",
+                status="verified",
+            )
+            db.session.add_all([staff, place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    confidence_score=91,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=10),
+                    last_verified_by="auditor@example.com",
+                    verified_by_user_id=staff.id,
+                )
+            )
+            db.session.commit()
+
+        self.login_session(staff_email, "Metadata Staff")
+        venues_response = self.client.get("/admin/venues")
+        data_response = self.client.get("/admin/data")
+
+        self.assertEqual(venues_response.status_code, 200)
+        self.assertIn(b"Metadata Arms", venues_response.data)
+        self.assertIn(b"Confidence 91", venues_response.data)
+        self.assertIn(b"Verified by: auditor@example.com", venues_response.data)
+        self.assertIn(b"Last verified:", venues_response.data)
+
+        self.assertEqual(data_response.status_code, 200)
+        self.assertIn(b"Confidence 91", data_response.data)
+        self.assertIn(b"Verified by: auditor@example.com", data_response.data)
+
+    def test_call_worksheet_shows_quality_and_verification_cues(self):
+        staff_email = "worksheet-staff@example.com"
+        with app.app_context():
+            staff = User(email=staff_email, name="Worksheet Staff", picture="", role="staff", plan="free")
+            place = Place(name="Worksheet Venue", slug="worksheet-venue", town="Worksheet Town", status="needs_call")
+            db.session.add_all([staff, place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    confidence_score=25,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=150),
+                    toilets_available="unknown",
+                    accessible_toilet="unknown",
+                    step_free_entrance="unknown",
+                    stairs_inside="unknown",
+                )
+            )
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session(staff_email, "Worksheet Staff")
+        response = self.client.get(f"/admin/place/{place_id}/call")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Needs next action", response.data)
+        self.assertIn(b"Needs checking", response.data)
+        self.assertIn(b"Missing key fields", response.data)
+        self.assertIn(b"Last checked", response.data)
+
     def test_account_api_key_creation_stores_hash_only_and_returns_raw_once(self):
         with app.app_context():
-            user = User(email="api-owner@example.com", name="API Owner", picture="", role="member", plan="free")
+            user = User(email="api-owner@example.com", name="API Owner", picture="", role="member", plan="business")
             db.session.add(user)
             db.session.commit()
 
@@ -872,6 +1429,29 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Primary developer key", list_response.data)
         self.assertNotIn(raw_key.encode(), list_response.data)
         self.assertNotIn(saved_key.key_hash.encode(), list_response.data)
+
+    def test_account_api_key_creation_requires_api_access_plan(self):
+        with app.app_context():
+            user = User(email="blocked-api-owner@example.com", name="Blocked Owner", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("blocked-api-owner@example.com", "Blocked Owner")
+        response = self.client.post(
+            "/account/api-keys",
+            data={"csrf_token": "token123", "label": "Blocked key", "scopes": "search:read"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "api_access_required",
+                "message": "API access requires an active Planira API or Early Access plan.",
+            },
+        )
+        with app.app_context():
+            self.assertIsNone(APIKey.query.filter_by(label="Blocked key").first())
 
     def test_api_key_list_responses_do_not_expose_hashes(self):
         admin_email = "api-admin@example.com"
@@ -920,6 +1500,92 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(lookup_event.endpoint, "/internal/api/search")
         self.assertEqual(lookup_event.query, "Blue venue")
         self.assertEqual(lookup_event.status_code, 200)
+
+    def test_authenticate_api_key_requires_owner_api_access(self):
+        with app.app_context():
+            user = User(email="lost-access@example.com", name="Lost Access", picture="", role="member", plan="business")
+            db.session.add(user)
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Former access key", scopes=["search:read"])
+            db.session.commit()
+
+            user.plan = "free"
+            user.role = "member"
+            db.session.commit()
+
+            result = app_module.authenticate_api_key(raw_key=raw_key, endpoint="/internal/api/search", query="Two", status_code=200)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "api_access_required")
+
+    def test_place_search_api_exposes_public_verification_fields_only(self):
+        with app.app_context():
+            user = User(email="public-api@example.com", name="Public API", picture="", role="member", plan="business")
+            place = Place(
+                name="API Arms",
+                slug="api-arms",
+                address1="44 Station Road",
+                town="Northampton",
+                postcode="NN1 9ZZ",
+            )
+            db.session.add_all([user, place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    confidence_score=82,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=8),
+                    last_verified_by="staff@example.com",
+                    verified_by_user_id=user.id,
+                )
+            )
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Search key", scopes=["places:read"])
+            db.session.add(api_key)
+            db.session.commit()
+
+        response = self.client.get(
+            "/api/v1/places/search?q=API",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["count"], 1)
+        result = payload["results"][0]
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["verification_status"], "Verified")
+        self.assertIsNotNone(result["last_verified_at"])
+        self.assertNotIn("verified_by_user_id", result)
+        self.assertNotIn("last_verified_by", result)
+
+    def test_place_search_api_blocks_keys_when_owner_lacks_api_access(self):
+        with app.app_context():
+            user = User(email="blocked-public-api@example.com", name="Blocked Public API", picture="", role="member", plan="business")
+            place = Place(name="Blocked API Arms", slug="blocked-api-arms", town="Northampton")
+            db.session.add_all([user, place])
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Soon blocked key", scopes=["places:read"])
+            db.session.commit()
+
+            user.plan = "free"
+            user.role = "member"
+            db.session.commit()
+
+        response = self.client.get(
+            "/api/v1/places/search?q=Blocked",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "api_access_required",
+                "message": "API access requires an active Planira API or Early Access plan.",
+            },
+        )
 
     def test_invalid_api_key_is_rejected(self):
         with app.app_context():
@@ -1001,6 +1667,24 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with app.app_context():
             self.assertEqual(APIKey.query.filter_by(user_id=owner_id).count(), 0)
+
+    def test_developer_key_creation_requires_api_access_plan(self):
+        with app.app_context():
+            user = User(email="developer-blocked@example.com", name="Developer Blocked", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("developer-blocked@example.com", "Developer Blocked")
+        response = self.client.post(
+            "/developers/api-keys",
+            data={"csrf_token": "token123", "label": "Blocked dev key"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"API access requires an active Planira API or Early Access plan.", response.data)
+        with app.app_context():
+            self.assertIsNone(APIKey.query.filter_by(label="Blocked dev key").first())
 
     def test_staff_can_manage_user_api_keys(self):
         with app.app_context():

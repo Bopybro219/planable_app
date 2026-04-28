@@ -13,11 +13,8 @@
 
 {% macro signal_badges(signal, extra_tags=None) -%}
   <div class="tag-row">
-    <span class="badge-strong">{{ signal.verification.short_label }}</span>
-    <span>{{ signal.source_label }}</span>
-    {% if signal.distance.value != 'Unknown' %}
-      <span>{{ signal.distance.value }}</span>
-    {% endif %}
+    <span class="status-badge status-{{ signal.tone }}">{{ signal.label }}</span>
+    <span class="{{ signal.verification.badge_class }}">{{ signal.verification.badge_label }}</span>
     {% for item in extra_tags or [] %}
       <span>{{ item }}</span>
     {% endfor %}
@@ -27,14 +24,20 @@
 {% macro result_card(card, detail_url=None, link_text='Open place details') -%}
   {% set href = detail_url or url_for('place_detail', slug=card.place.slug) %}
   <a class="result-card planira-card interactive-panel" href="{{ href }}">
-    <div class="result-topline">
+    <div class="result-topline result-topline-compact">
       <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
-      <span class="status-badge status-{{ card.signal.tone }}">{{ card.signal.label }}</span>
     </div>
     <h3>{{ card.place.name }}</h3>
     <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
-    {{ confidence_panel(card.signal) }}
-    {{ signal_badges(card.signal, card.key_bits) }}
+    {{ signal_badges(card.signal) }}
+    {% if card.signal.verification.relative_time %}
+      <p class="result-meta muted">Last checked {{ card.signal.verification.relative_time }}</p>
+    {% endif %}
+    <div class="tag-row result-fact-row">
+      {% for item in card.key_bits %}
+        <span>{{ item }}</span>
+      {% endfor %}
+    </div>
     <span class="result-link-copy">{{ link_text }}</span>
   </a>
 {%- endmacro %}

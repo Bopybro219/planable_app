@@ -34,16 +34,16 @@
             </div>
             <div class="field-group field-group-action">
               <span class="field-label-spacer" aria-hidden="true">Action</span>
-              <button class="btn-primary-planira hero-search-button">{{ 'Search places' if current_user else 'Start exploring' }}</button>
+              <button class="btn-primary-planira hero-search-button">{{ 'Search places' if current_user else 'Continue with Google' }}</button>
             </div>
           </div>
         </div>
       </form>
       <div class="inline-note">
         {% if current_user %}
-          Search is the main experience. Place pages, account tools, and staff-reviewed updates all build from that same flow.
+          Search stays at the centre of the product, with place pages and account tools branching out from the same flow.
         {% else %}
-          Start with a search, then sign in when you want fuller results and contribution tools.
+          Search starts here, then Google sign-in unlocks results, place pages, and contribution tools.
         {% endif %}
       </div>
     </div>

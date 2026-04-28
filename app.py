@@ -27,6 +27,7 @@ from planira_presenters import (
     build_signal_examples,
     humanize_label,
     humanize_plan_name as present_plan_name,
+    verification_status as present_verification_status,
 )
 from slugify_fallback import slugify
 
@@ -92,6 +93,8 @@ API_KEY_TEST_PREFIX = "plnr_test_"
 API_KEY_LIVE_PREFIX = "plnr_live_"
 API_KEY_PATTERN = re.compile(r"^plnr_(?:live|test)_[A-Za-z0-9_-]{24,}$")
 CONTACT_PHONE = os.getenv("PUBLIC_CONTACT_PHONE", "01604 289096").strip() or "01604 289096"
+API_ACCESS_REQUIRED_MESSAGE = "API access requires an active Planira API or Early Access plan."
+DEFAULT_MEMBER_ROLE = "member"
 
 proxy_fix_count = int(os.getenv("PROXY_FIX_COUNT", "0"))
 if proxy_fix_count:
@@ -131,8 +134,13 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     name = db.Column(db.String(255))
     picture = db.Column(db.Text)
-    role = db.Column(db.String(50), default="user")
+    role = db.Column(db.String(50), default=DEFAULT_MEMBER_ROLE)
     plan = db.Column(db.String(50), default="free", nullable=False)
+    stripe_customer_id = db.Column(db.String(255), unique=True, index=True)
+    stripe_subscription_id = db.Column(db.String(255), unique=True, index=True)
+    subscription_status = db.Column(db.String(80), index=True)
+    subscription_current_period_end = db.Column(db.DateTime)
+    subscription_cancel_at_period_end = db.Column(db.Boolean)
     monthly_search_limit = db.Column(db.Integer)
     search_credits = db.Column(db.Integer, default=0, nullable=False)
     community_points = db.Column(db.Integer, default=0, nullable=False)
@@ -337,6 +345,15 @@ def inject_user():
 
 def is_admin_email(email):
     return bool(email and email.lower() in ADMIN_EMAILS)
+
+
+def build_public_author_label(email):
+    cleaned = (email or "").strip().lower()
+    if not cleaned or "@" not in cleaned:
+        return "Planira member"
+
+    local_part = cleaned.split("@", 1)[0]
+    return f"{local_part[:3]}..."
 
 
 def is_safe_redirect_target(target):
@@ -547,6 +564,10 @@ def build_place_card(place):
     return present_place_card(place)
 
 
+def verification_status(profile):
+    return present_verification_status(profile)
+
+
 def build_plan_catalog():
     return [
         {
@@ -650,6 +671,32 @@ def stripe_checkout_ready(plan):
     return bool(stripe and app.config["STRIPE_SECRET_KEY"] and plan and plan["price_id"] and plan["checkout_mode"])
 
 
+def target_plan_for_role(target_role):
+    if target_role == "paid_consumer":
+        return "paid"
+    if target_role == "api_buyer":
+        return "business"
+    return None
+
+
+def role_for_plan_name(plan_name):
+    if plan_name == "paid":
+        return "paid_consumer"
+    if plan_name == "business":
+        return "api_buyer"
+    return DEFAULT_MEMBER_ROLE
+
+
+def infer_entitlement_role(user):
+    if not user:
+        return None
+    if user.role in {"paid_consumer", "api_buyer"}:
+        return user.role
+    if user.plan in {"paid", "business"}:
+        return role_for_plan_name(user.plan)
+    return None
+
+
 def apply_plan_role_to_user(user_id, target_role):
     if not user_id or not target_role:
         return False
@@ -658,13 +705,248 @@ def apply_plan_role_to_user(user_id, target_role):
     if not user:
         return False
 
+    desired_plan = target_plan_for_role(target_role)
+    changed = False
+
     if user.role != target_role:
         user.role = target_role
-        if target_role == "paid_consumer":
-            user.plan = "paid"
-        elif target_role == "api_buyer":
-            user.plan = "business"
+        changed = True
+
+    if desired_plan and user.plan != desired_plan:
+        user.plan = desired_plan
+        changed = True
+
+    if changed:
         db.session.commit()
+    return True
+
+
+def build_checkout_metadata(user, plan):
+    return {
+        "plan_key": plan["key"],
+        "user_id": str(user.id),
+        "user_email": user.email,
+        "target_role": plan["role"],
+    }
+
+
+def plan_uses_subscription(plan):
+    return bool(plan and plan.get("checkout_mode") == "subscription")
+
+
+def should_manage_subscription_lifecycle(target_role):
+    plan_name = target_plan_for_role(target_role)
+    return plan_name == "paid"
+
+
+def stripe_object_value(data, key, default=None):
+    if isinstance(data, dict):
+        return data.get(key, default)
+    return getattr(data, key, default)
+
+
+def stripe_metadata_from_object(data):
+    metadata = stripe_object_value(data, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = dict(metadata)
+
+    if metadata:
+        return metadata
+
+    subscription_details = stripe_object_value(data, "subscription_details", {}) or {}
+    if isinstance(subscription_details, dict):
+        details_metadata = subscription_details.get("metadata", {}) or {}
+        if isinstance(details_metadata, dict) and details_metadata:
+            return details_metadata
+
+    lines = stripe_object_value(data, "lines", {}) or {}
+    line_items = []
+    if isinstance(lines, dict):
+        line_items = lines.get("data", []) or []
+    for item in line_items:
+        item_metadata = stripe_metadata_from_object(item)
+        if item_metadata:
+            return item_metadata
+
+    return {}
+
+
+def stripe_datetime_value(value):
+    if value in {None, ""}:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    return None
+
+
+def stripe_subscription_snapshot(data):
+    object_type = stripe_object_value(data, "object")
+    subscription_id = stripe_object_value(data, "subscription")
+    if isinstance(subscription_id, dict):
+        subscription_id = stripe_object_value(subscription_id, "id")
+
+    return {
+        "customer_id": stripe_object_value(data, "customer"),
+        "subscription_id": stripe_object_value(data, "id") if object_type == "subscription" else subscription_id,
+        "subscription_status": stripe_object_value(data, "status") if object_type == "subscription" else None,
+        "subscription_current_period_end": stripe_datetime_value(stripe_object_value(data, "current_period_end")) if object_type == "subscription" else None,
+        "subscription_cancel_at_period_end": stripe_object_value(data, "cancel_at_period_end") if object_type == "subscription" else None,
+    }
+
+
+def find_user_for_stripe_object(data, metadata=None):
+    metadata = metadata or stripe_metadata_from_object(data)
+
+    user_id = metadata.get("user_id")
+    if user_id:
+        try:
+            user = db.session.get(User, int(user_id))
+        except (TypeError, ValueError):
+            user = None
+        if user:
+            return user
+
+    client_reference_id = stripe_object_value(data, "client_reference_id")
+    if client_reference_id:
+        try:
+            user = db.session.get(User, int(client_reference_id))
+        except (TypeError, ValueError):
+            user = None
+        if user:
+            return user
+
+    for email_value in (
+        metadata.get("user_email"),
+        stripe_object_value(data, "customer_email"),
+        stripe_object_value(data, "receipt_email"),
+    ):
+        normalized_email = (email_value or "").strip().lower()
+        if normalized_email:
+            user = User.query.filter_by(email=normalized_email).first()
+            if user:
+                return user
+
+    subscription_snapshot = stripe_subscription_snapshot(data)
+    subscription_id = subscription_snapshot["subscription_id"]
+    if subscription_id:
+        user = User.query.filter_by(stripe_subscription_id=subscription_id).first()
+        if user:
+            return user
+
+    customer_id = subscription_snapshot["customer_id"]
+    if customer_id:
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+        if user:
+            return user
+
+    return None
+
+
+def user_matches_entitlement(user, target_role):
+    expected_plan = target_plan_for_role(target_role)
+    if not user or not expected_plan:
+        return False
+    if user.plan == expected_plan:
+        return True
+    return user.role == target_role
+
+
+def update_user_stripe_billing_fields(user, data, *, commit=False):
+    if not user:
+        return False
+
+    snapshot = stripe_subscription_snapshot(data)
+    changed = False
+
+    if snapshot["customer_id"] and user.stripe_customer_id != snapshot["customer_id"]:
+        user.stripe_customer_id = snapshot["customer_id"]
+        changed = True
+    if snapshot["subscription_id"] and user.stripe_subscription_id != snapshot["subscription_id"]:
+        user.stripe_subscription_id = snapshot["subscription_id"]
+        changed = True
+    if snapshot["subscription_status"] is not None and user.subscription_status != snapshot["subscription_status"]:
+        user.subscription_status = snapshot["subscription_status"]
+        changed = True
+    if snapshot["subscription_current_period_end"] is not None and user.subscription_current_period_end != snapshot["subscription_current_period_end"]:
+        user.subscription_current_period_end = snapshot["subscription_current_period_end"]
+        changed = True
+    if snapshot["subscription_cancel_at_period_end"] is not None and user.subscription_cancel_at_period_end != snapshot["subscription_cancel_at_period_end"]:
+        user.subscription_cancel_at_period_end = snapshot["subscription_cancel_at_period_end"]
+        changed = True
+
+    if commit and changed:
+        db.session.commit()
+    return changed
+
+
+def sync_user_entitlement(user, *, target_role, reason, actor_user_id=None, allow_staff=False):
+    if not user or not target_role:
+        return False
+
+    if not allow_staff and is_staff_user(user):
+        return False
+
+    target_plan = target_plan_for_role(target_role)
+    changed = False
+    before_state = {"role": user.role, "plan": user.plan}
+
+    if user.role != target_role:
+        user.role = target_role
+        changed = True
+    if target_plan and user.plan != target_plan:
+        user.plan = target_plan
+        changed = True
+
+    if not changed:
+        return False
+
+    log_audit(
+        actor_user_id=actor_user_id,
+        action="billing.entitlement.synced",
+        entity_type="user",
+        entity_id=user.id,
+        before=before_state,
+        after={"role": user.role, "plan": user.plan, "target_role": target_role},
+        reason=reason,
+    )
+    db.session.commit()
+    return True
+
+
+def revoke_user_entitlement(user, *, target_role, reason, actor_user_id=None):
+    if not user or not target_role:
+        return False
+    if is_staff_user(user):
+        return False
+    if not should_manage_subscription_lifecycle(target_role):
+        return False
+    if not user_matches_entitlement(user, target_role):
+        return False
+
+    changed = False
+    before_state = {"role": user.role, "plan": user.plan}
+    if user.role != DEFAULT_MEMBER_ROLE:
+        user.role = DEFAULT_MEMBER_ROLE
+        changed = True
+    if user.plan != "free":
+        user.plan = "free"
+        changed = True
+
+    if not changed:
+        return False
+
+    log_audit(
+        actor_user_id=actor_user_id,
+        action="billing.entitlement.revoked",
+        entity_type="user",
+        entity_id=user.id,
+        before=before_state,
+        after={"role": user.role, "plan": user.plan, "target_role": target_role},
+        reason=reason,
+    )
+    db.session.commit()
     return True
 
 
@@ -748,6 +1030,17 @@ def current_plan_catalog_key(user):
     if plan_name == "business":
         return "api_buyer"
     return "logged_in_free"
+
+
+def user_has_api_access(user):
+    if not user:
+        return False
+    if is_staff_user(user):
+        return True
+    return (
+        user.plan in {"paid", "business"}
+        or user.role in {"paid_consumer", "api_buyer"}
+    )
 
 
 def get_monthly_search_limit(user):
@@ -889,11 +1182,12 @@ def count_api_lookups_for_key(api_key):
     )
 
 
-def api_key_limit_context(api_key):
+def build_api_key_limit_context(api_key, *, lookups_used=None):
     monthly_limit = api_key.monthly_lookup_limit
     if monthly_limit is None:
         monthly_limit = default_api_lookup_limit_for_user(api_key.user)
-    lookups_used = count_api_lookups_for_key(api_key)
+    if lookups_used is None:
+        lookups_used = count_api_lookups_for_key(api_key)
     lookup_credits = max(api_key.lookup_credits or 0, 0)
     bypass = monthly_limit is None
     limit_reached = not bypass and lookups_used >= monthly_limit and lookup_credits <= 0
@@ -904,6 +1198,10 @@ def api_key_limit_context(api_key):
         "bypass": bypass,
         "limit_reached": limit_reached,
     }
+
+
+def api_key_limit_context(api_key):
+    return build_api_key_limit_context(api_key)
 
 
 def api_key_has_required_scopes(api_key, required_scopes=None):
@@ -939,6 +1237,8 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
         return {"ok": False, "error": "inactive_api_key", "status_code": 403}
     if not matched_key:
         return {"ok": False, "error": "invalid_api_key", "status_code": 401}
+    if not user_has_api_access(matched_key.user):
+        return {"ok": False, "error": "api_access_required", "status_code": 403}
     if not api_key_has_required_scopes(matched_key, required_scopes=required_scopes):
         return {"ok": False, "error": "insufficient_scope", "status_code": 403}
 
@@ -1105,11 +1405,12 @@ def build_api_key_rows_with_usage(user):
         }
 
     for api_key in keys:
-        limit_context = api_key_limit_context(api_key)
+        lookups_used = monthly_counts.get(api_key.id, 0)
+        limit_context = build_api_key_limit_context(api_key, lookups_used=lookups_used)
         rows.append(
             {
                 **serialize_api_key(api_key),
-                "lookups_used": monthly_counts.get(api_key.id, 0),
+                "lookups_used": lookups_used,
                 "total_lookups": total_counts.get(api_key.id, 0),
                 "lookup_limit": "Unlimited" if limit_context["monthly_limit"] is None else limit_context["monthly_limit"],
                 "lookup_credits": limit_context["lookup_credits"],
@@ -1215,9 +1516,49 @@ def build_developer_summary(user):
     }
 
 
+def build_developer_example_response():
+    return {
+        "count": 1,
+        "results": [
+            {
+                "id": 42,
+                "name": "The Example Arms",
+                "town": "Northampton",
+                "postcode": "NN1 1AA",
+                "accessibility_summary": {
+                    "label": "Worth checking",
+                    "summary": "There is useful guidance here, but a few details still need checking before you rely on it.",
+                    "tone": "moderate",
+                },
+                "toilets_available": "yes",
+                "accessible_toilet": "yes",
+                "step_free_entrance": "yes",
+                "stairs_inside": "no",
+                "confidence_score": 82,
+                "verified": True,
+                "verification_status": "Verified",
+                "last_verified_at": "2026-04-28T10:30:00+00:00",
+            }
+        ],
+    }
+
+
+def build_developers_page_context(user, *, raw_api_key=None, raw_api_key_label=None):
+    return {
+        "developer_summary": build_developer_summary(user) if user else None,
+        "raw_api_key": raw_api_key,
+        "raw_api_key_label": raw_api_key_label,
+        "has_api_access": user_has_api_access(user) if user else False,
+        "example_api_key": f"{current_api_key_prefix()}replace_me",
+        "api_search_url": url_for("api_places_search", _external=True),
+        "example_response": build_developer_example_response(),
+    }
+
+
 def serialize_place_for_api(place):
     profile = getattr(place, "accessibility", None)
     signal = build_access_signal(profile)
+    verification = verification_status(profile)
     return {
         "id": place.id,
         "name": place.name,
@@ -1233,6 +1574,8 @@ def serialize_place_for_api(place):
         "step_free_entrance": getattr(profile, "step_free_entrance", "unknown") if profile else "unknown",
         "stairs_inside": getattr(profile, "stairs_inside", "unknown") if profile else "unknown",
         "confidence_score": getattr(profile, "confidence_score", None) if profile else None,
+        "verified": verification["verified"],
+        "verification_status": verification["status"],
         "last_verified_at": profile.last_verified_at.isoformat() if profile and profile.last_verified_at else None,
     }
 
@@ -1788,6 +2131,21 @@ SEARCH_VERIFICATION_FILTERS = {"", "recent", "needs_verification"}
 SEARCH_TOILET_DISTANCE_FILTERS = {"", "recorded", "short", "unknown"}
 SEARCH_TEXT_PRESENCE_FILTERS = {"", "has", "missing"}
 SEARCH_PUBLIC_SOURCE_FILTERS = ("phone_verified", "owner_verified", "user_submitted", "not_verified")
+STALE_VERIFICATION_DAYS = 90
+LOW_CONFIDENCE_THRESHOLD = 40
+REVIEW_CONFIDENCE_THRESHOLD = 60
+KEY_ACCESSIBILITY_FIELDS = (
+    ("toilets_available", "Toilets available"),
+    ("accessible_toilet", "Accessible toilet"),
+    ("step_free_entrance", "Step-free entrance"),
+    ("stairs_inside", "Stairs inside"),
+)
+ADMIN_QUALITY_QUEUE_OPTIONS = [
+    {"value": "all", "label": "All venues"},
+    {"value": "needs_checking", "label": "Needs checking"},
+    {"value": "stale_verification", "label": "Stale verification"},
+    {"value": "missing_accessibility", "label": "Missing key accessibility fields"},
+]
 
 
 def normalize_search_choice(raw_value, allowed_values, default=""):
@@ -1934,6 +2292,112 @@ def meaningful_profile_text_filter(column):
     return db.func.length(db.func.trim(db.func.coalesce(column, ""))) > 0
 
 
+def stale_verification_cutoff():
+    return datetime.now(timezone.utc) - timedelta(days=STALE_VERIFICATION_DAYS)
+
+
+def missing_key_accessibility_fields(profile):
+    if not profile:
+        return [label for _, label in KEY_ACCESSIBILITY_FIELDS]
+
+    missing = []
+    for field_name, label in KEY_ACCESSIBILITY_FIELDS:
+        if getattr(profile, field_name, "unknown") in {"", None, "unknown", "partial"}:
+            missing.append(label)
+    return missing
+
+
+def quality_queue_for_profile(profile):
+    verification = verification_status(profile)
+    missing_fields = missing_key_accessibility_fields(profile)
+    confidence_score = getattr(profile, "confidence_score", None) if profile else None
+    low_confidence = confidence_score is None or confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+    urgent_confidence = confidence_score is None or confidence_score < LOW_CONFIDENCE_THRESHOLD
+
+    if verification["status"] == "Needs checking" or verification["status"] == "Not verified yet" or urgent_confidence:
+        queue_label = "Needs checking"
+    elif missing_fields:
+        queue_label = "Missing key accessibility fields"
+    else:
+        queue_label = "Checked recently"
+
+    return {
+        "queue_label": queue_label,
+        "missing_fields": missing_fields,
+        "missing_fields_count": len(missing_fields),
+        "low_confidence": low_confidence,
+        "urgent_confidence": urgent_confidence,
+        "stale_verification": verification["status"] == "Needs checking",
+        "never_verified": verification["status"] == "Not verified yet",
+    }
+
+
+def missing_key_accessibility_filter():
+    unknown_values = {"unknown", "partial"}
+    conditions = []
+    for field_name, _ in KEY_ACCESSIBILITY_FIELDS:
+        column = getattr(AccessibilityProfile, field_name)
+        conditions.append(column.is_(None))
+        conditions.append(column.in_(unknown_values))
+    return db.or_(AccessibilityProfile.id.is_(None), *conditions)
+
+
+def build_quality_queue_query(kind):
+    query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
+    cutoff = stale_verification_cutoff()
+
+    if kind == "needs_checking":
+        return query.filter(
+            db.or_(
+                AccessibilityProfile.id.is_(None),
+                AccessibilityProfile.last_verified_at.is_(None),
+                AccessibilityProfile.last_verified_at < cutoff,
+                AccessibilityProfile.confidence_score.is_(None),
+                AccessibilityProfile.confidence_score < REVIEW_CONFIDENCE_THRESHOLD,
+            )
+        )
+    if kind == "stale_verification":
+        return query.filter(
+            AccessibilityProfile.last_verified_at.isnot(None),
+            AccessibilityProfile.last_verified_at < cutoff,
+        )
+    if kind == "missing_accessibility":
+        return query.filter(missing_key_accessibility_filter())
+    return query
+
+
+def build_dashboard_quality_queues(limit=5):
+    queue_map = {
+        "needs_checking": {
+            "label": "Needs checking",
+            "description": "Records with no recent verification or low confidence.",
+        },
+        "stale_verification": {
+            "label": "Stale verification",
+            "description": "Previously checked records that now need a fresh confirmation.",
+        },
+        "missing_accessibility": {
+            "label": "Missing key accessibility fields",
+            "description": "Core access answers still missing or too vague to trust.",
+        },
+    }
+    queues = []
+    for key, config in queue_map.items():
+        query = build_quality_queue_query(key).order_by(Place.priority.desc(), Place.updated_at.desc(), Place.name.asc())
+        sample_places = query.limit(limit).all()
+        queues.append(
+            {
+                "key": key,
+                "label": config["label"],
+                "description": config["description"],
+                "count": query.count(),
+                "href": url_for("admin_venues", quality_queue=key),
+                "sample_rows": build_admin_venue_rows(sample_places),
+            }
+        )
+    return queues
+
+
 def build_admin_venue_query(
     *,
     q="",
@@ -1944,6 +2408,7 @@ def build_admin_venue_query(
     toilet_distance="all",
     confidence="all",
     verified="all",
+    quality_queue="all",
     sort="priority",
 ):
     query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
@@ -2000,7 +2465,7 @@ def build_admin_venue_query(
             )
         )
 
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    stale_cutoff = stale_verification_cutoff()
     if verified == "verified":
         query = query.filter(
             AccessibilityProfile.last_verified_at.isnot(None),
@@ -2016,8 +2481,40 @@ def build_admin_venue_query(
     elif verified == "stale":
         query = query.filter(AccessibilityProfile.last_verified_at.isnot(None), AccessibilityProfile.last_verified_at < stale_cutoff)
 
+    if quality_queue == "needs_checking":
+        query = query.filter(
+            db.or_(
+                AccessibilityProfile.id.is_(None),
+                AccessibilityProfile.last_verified_at.is_(None),
+                AccessibilityProfile.last_verified_at < stale_cutoff,
+                AccessibilityProfile.confidence_score.is_(None),
+                AccessibilityProfile.confidence_score < REVIEW_CONFIDENCE_THRESHOLD,
+            )
+        )
+    elif quality_queue == "stale_verification":
+        query = query.filter(
+            AccessibilityProfile.last_verified_at.isnot(None),
+            AccessibilityProfile.last_verified_at < stale_cutoff,
+        )
+    elif quality_queue == "missing_accessibility":
+        query = query.filter(missing_key_accessibility_filter())
+
+    priority_ordering = [
+        db.case((AccessibilityProfile.id.is_(None), 0), else_=1).asc(),
+        db.case((AccessibilityProfile.last_verified_at.is_(None), 0), (AccessibilityProfile.last_verified_at < stale_cutoff, 1), else_=2).asc(),
+        db.case(
+            (AccessibilityProfile.confidence_score.is_(None), 0),
+            (AccessibilityProfile.confidence_score < LOW_CONFIDENCE_THRESHOLD, 1),
+            (AccessibilityProfile.confidence_score < REVIEW_CONFIDENCE_THRESHOLD, 2),
+            else_=3,
+        ).asc(),
+        db.case((missing_key_accessibility_filter(), 0), else_=1).asc(),
+        Place.priority.desc(),
+        Place.updated_at.desc(),
+        Place.name.asc(),
+    ]
     sort_map = {
-        "priority": [Place.priority.desc(), Place.updated_at.desc(), Place.name.asc()],
+        "priority": priority_ordering,
         "updated": [Place.updated_at.desc(), Place.priority.desc(), Place.name.asc()],
         "name": [Place.name.asc()],
         "confidence": [AccessibilityProfile.confidence_score.desc().nullslast(), Place.name.asc()],
@@ -2032,16 +2529,29 @@ def build_admin_venue_rows(places):
     for place in places:
         profile = place.accessibility
         signal = build_access_signal(profile)
+        verification = verification_status(profile)
+        quality = quality_queue_for_profile(profile)
         rows.append(
             {
                 "place": place,
+                "profile": profile,
                 "status_label": humanize_label(place.status, PLACE_STATUS_LABELS),
                 "confidence_score": profile.confidence_score if profile and profile.confidence_score is not None else None,
                 "toilet_distance_from_bar_m": profile.toilet_distance_from_bar_m if profile else None,
-                "last_verified": signal["verification"]["short_label"],
-                "verification_label": signal["verification"]["label"],
+                "last_verified": verification["date"] or "Not checked yet",
+                "last_checked_copy": verification["last_checked_copy"],
+                "verification_label": verification["label"],
+                "verification_badge_class": verification["badge_class"],
+                "verification_relative_time": verification["relative_time"],
+                "verified_by_label": profile.last_verified_by if profile and profile.last_verified_by else None,
                 "signal_label": signal["label"],
                 "profile_missing": profile is None,
+                "quality_queue_label": quality["queue_label"],
+                "quality_badge_class": "badge-warning" if quality["queue_label"] != "Checked recently" else "badge-verified",
+                "missing_fields": quality["missing_fields"],
+                "missing_fields_count": quality["missing_fields_count"],
+                "low_confidence": quality["low_confidence"],
+                "stale_verification": quality["stale_verification"],
             }
         )
     return rows
@@ -2060,8 +2570,13 @@ def build_data_rows(limit=20):
         rows.append(
             {
                 "place": row["place"],
-                "confidence": row["confidence_score"] if row["confidence_score"] is not None else 0,
+                "profile": row["profile"],
+                "confidence": row["confidence_score"],
                 "verification": row["verification_label"],
+                "verification_badge_class": row["verification_badge_class"],
+                "last_verified": row["last_verified"],
+                "last_checked_copy": row["last_checked_copy"],
+                "verified_by_label": row["verified_by_label"],
                 "status_label": row["status_label"],
             }
         )
@@ -2330,6 +2845,8 @@ def account_api_keys():
 @login_required
 def create_account_api_key():
     user = current_user()
+    if not user_has_api_access(user):
+        return jsonify({"error": "api_access_required", "message": API_ACCESS_REQUIRED_MESSAGE}), 403
     label = request.form.get("label", "").strip() or "Primary key"
     scopes = request.form.get("scopes", "").strip() or None
     api_key, raw_key = create_api_key_for_user(user, label=label, scopes=scopes)
@@ -2365,82 +2882,21 @@ def update_account_api_key(key_id):
 @app.route("/developers")
 def developers():
     user = current_user()
-    developer_summary = build_developer_summary(user) if user else None
-    example_prefix = current_api_key_prefix()
-    example_response = {
-        "count": 1,
-        "results": [
-            {
-                "id": 42,
-                "name": "The Example Arms",
-                "town": "Northampton",
-                "postcode": "NN1 1AA",
-                "accessibility_summary": {
-                    "label": "Worth checking",
-                    "summary": "There is useful guidance here, but a few details still need checking before you rely on it.",
-                    "tone": "moderate",
-                },
-                "toilets_available": "yes",
-                "accessible_toilet": "yes",
-                "step_free_entrance": "yes",
-                "stairs_inside": "no",
-                "confidence_score": 82,
-                "last_verified_at": "2026-04-28T10:30:00+00:00",
-            }
-        ],
-    }
-    return render_template(
-        "developers.html",
-        developer_summary=developer_summary,
-        raw_api_key=None,
-        raw_api_key_label=None,
-        example_api_key=f"{example_prefix}replace_me",
-        api_search_url=url_for("api_places_search", _external=True),
-        example_response=example_response,
-    )
+    return render_template("developers.html", **build_developers_page_context(user))
 
 
 @app.route("/developers/api-keys", methods=["POST"])
 @login_required
 def create_developer_api_key():
     user = current_user()
+    if not user_has_api_access(user):
+        flash(API_ACCESS_REQUIRED_MESSAGE, "info")
+        return redirect(url_for("developers"))
     label = request.form.get("label", "").strip() or "Primary key"
     api_key, raw_key = create_api_key_for_user(user, label=label)
     db.session.commit()
     flash("API key created. Copy it now because it will not be shown again.", "success")
-    developer_summary = build_developer_summary(user)
-    example_prefix = current_api_key_prefix()
-    example_response = {
-        "count": 1,
-        "results": [
-            {
-                "id": 42,
-                "name": "The Example Arms",
-                "town": "Northampton",
-                "postcode": "NN1 1AA",
-                "accessibility_summary": {
-                    "label": "Worth checking",
-                    "summary": "There is useful guidance here, but a few details still need checking before you rely on it.",
-                    "tone": "moderate",
-                },
-                "toilets_available": "yes",
-                "accessible_toilet": "yes",
-                "step_free_entrance": "yes",
-                "stairs_inside": "no",
-                "confidence_score": 82,
-                "last_verified_at": "2026-04-28T10:30:00+00:00",
-            }
-        ],
-    }
-    return render_template(
-        "developers.html",
-        developer_summary=developer_summary,
-        raw_api_key=raw_key,
-        raw_api_key_label=label,
-        example_api_key=f"{example_prefix}replace_me",
-        api_search_url=url_for("api_places_search", _external=True),
-        example_response=example_response,
-    )
+    return render_template("developers.html", **build_developers_page_context(user, raw_api_key=raw_key, raw_api_key_label=label))
 
 
 @app.route("/developers/api-keys/<int:key_id>", methods=["POST"])
@@ -2488,21 +2944,23 @@ def create_checkout(plan_key):
         flash(f"You already have {plan['name']} on this account.", "info")
         return redirect(url_for("plans"))
 
+    metadata = build_checkout_metadata(user, plan)
+    checkout_kwargs = {
+        "mode": plan["checkout_mode"],
+        "line_items": [{"price": plan["price_id"], "quantity": 1}],
+        "success_url": url_for("billing_success", _external=True) + "?session_id={CHECKOUT_SESSION_ID}",
+        "cancel_url": url_for("billing_cancel", _external=True),
+        "customer_email": user.email,
+        "client_reference_id": str(user.id),
+        "metadata": metadata,
+    }
+    if plan_uses_subscription(plan):
+        # Mirror user and entitlement metadata onto the subscription so later
+        # lifecycle webhooks can resolve the right account without schema changes.
+        checkout_kwargs["subscription_data"] = {"metadata": metadata}
+
     try:
-        session_checkout = stripe.checkout.Session.create(
-            mode=plan["checkout_mode"],
-            line_items=[{"price": plan["price_id"], "quantity": 1}],
-            success_url=url_for("billing_success", _external=True) + "?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url=url_for("billing_cancel", _external=True),
-            customer_email=user.email,
-            client_reference_id=str(user.id),
-            metadata={
-                "plan_key": plan["key"],
-                "user_id": str(user.id),
-                "user_email": user.email,
-                "target_role": plan["role"],
-            },
-        )
+        session_checkout = stripe.checkout.Session.create(**checkout_kwargs)
     except Exception as exc:  # pragma: no cover - third-party API path
         app.logger.exception("Stripe checkout creation failed")
         flash(f"Stripe could not start checkout: {exc}", "error")
@@ -2548,7 +3006,17 @@ def billing_success():
         flash("Checkout completed, but it could not be matched to your signed-in account.", "error")
         return redirect(url_for("plans"))
 
-    if apply_plan_role_to_user(user.id, target_role):
+    stripe_fields_changed = update_user_stripe_billing_fields(user, checkout_session)
+    entitlement_changed = sync_user_entitlement(
+        user,
+        target_role=target_role,
+        reason=f"Stripe checkout completed for {plan['key']}.",
+    )
+    if entitlement_changed:
+        db.session.refresh(user)
+        refresh_session_user(user)
+    elif stripe_fields_changed:
+        db.session.commit()
         db.session.refresh(user)
         refresh_session_user(user)
 
@@ -2580,14 +3048,48 @@ def stripe_webhook():
     except Exception:
         return "Invalid webhook signature", 400
 
-    if event["type"] == "checkout.session.completed":
-        checkout_session = event["data"]["object"]
-        metadata = checkout_session.get("metadata", {}) or {}
-        user_id = metadata.get("user_id")
-        target_role = metadata.get("target_role")
+    event_type = event["type"]
+    event_object = event["data"]["object"]
+    metadata = stripe_metadata_from_object(event_object)
+    user = find_user_for_stripe_object(event_object, metadata=metadata)
+    target_role = metadata.get("target_role") or infer_entitlement_role(user)
+    stripe_fields_changed = False
+    entitlement_changed = False
+
+    if user:
+        stripe_fields_changed = update_user_stripe_billing_fields(user, event_object)
+
+    if event_type == "checkout.session.completed":
         # TODO: API pack fulfilment still needs a durable credit-assignment flow.
         # For early testing, API lookup credits remain manually assignable per key.
-        apply_plan_role_to_user(user_id, target_role)
+        entitlement_changed = sync_user_entitlement(
+            user,
+            target_role=target_role,
+            reason=f"Stripe webhook {event_type}.",
+        )
+    elif event_type == "customer.subscription.deleted":
+        entitlement_changed = revoke_user_entitlement(
+            user,
+            target_role=target_role,
+            reason=f"Stripe webhook {event_type}.",
+        )
+    elif event_type == "customer.subscription.updated":
+        subscription_status = stripe_object_value(event_object, "status", "") or ""
+        if subscription_status in {"canceled", "unpaid", "incomplete_expired"}:
+            entitlement_changed = revoke_user_entitlement(
+                user,
+                target_role=target_role,
+                reason=f"Stripe webhook {event_type} with status {subscription_status}.",
+            )
+    elif event_type == "invoice.payment_failed":
+        entitlement_changed = revoke_user_entitlement(
+            user,
+            target_role=target_role,
+            reason=f"Stripe webhook {event_type}.",
+        )
+
+    if stripe_fields_changed and not entitlement_changed:
+        db.session.commit()
 
     return jsonify({"received": True})
 
@@ -2616,6 +3118,7 @@ def api_places_search():
             "malformed_api_key": ("invalid_api_key", "The API key format is not valid for this environment.", 401),
             "invalid_api_key": ("invalid_api_key", "The API key could not be verified.", 401),
             "inactive_api_key": ("revoked_api_key", "This API key is no longer active.", 403),
+            "api_access_required": ("api_access_required", API_ACCESS_REQUIRED_MESSAGE, 403),
             "insufficient_scope": ("invalid_api_key", "This API key does not have access to this endpoint.", 403),
             "monthly_lookup_limit_reached": ("limit_reached", "This API key has used its available lookup allowance.", 429),
         }
@@ -2911,12 +3414,19 @@ def place_detail(slug):
     if not is_staff_user(user):
         comment_query = comment_query.filter_by(status="approved")
     comments = comment_query.order_by(Comment.created_at.desc()).all()
+    comment_rows = [
+        {
+            "public_label": build_public_author_label(comment.user_email),
+            "body": comment.body,
+        }
+        for comment in comments
+    ]
     signal = build_access_signal(profile)
     return render_template(
         "place.html",
         place=place,
         profile=profile,
-        comments=comments,
+        comments=comment_rows,
         signal=signal,
     )
 
@@ -2946,6 +3456,7 @@ def add_comment(slug):
 def dashboard():
     mission_page = parse_int_field(request.args.get("mission_page"), "Mission page", minimum=1, default=1)
     mission_per_page = 12
+    quality_queues = build_dashboard_quality_queues(limit=4)
     stats = {
         "total": Place.query.count(),
         "needs_call": Place.query.filter_by(status="needs_call").count(),
@@ -3014,8 +3525,10 @@ def dashboard():
         stats=stats,
         next_places=next_places,
         mission_pagination=mission_pagination,
+        mission_rows=build_admin_venue_rows(next_places),
         user_stats=user_stats,
         monetisation_stats=monetisation_stats,
+        quality_queues=quality_queues,
         plan_highlights=plan_highlights,
         community_ranks=community_ranks,
         recent_activity=recent_activity,
@@ -3225,7 +3738,7 @@ def update_admin_user_staff(user_id):
         flash("Choose a valid staff action.", "error")
         return redirect(url_for("admin_users", selected=user.id))
 
-    target_role = "staff" if action == "promote" else "user"
+    target_role = "staff" if action == "promote" else DEFAULT_MEMBER_ROLE
     before_state = {"role": user.role}
     user.role = target_role
     actor = current_user()
@@ -3456,6 +3969,7 @@ def admin_venues():
     toilet_distance = request.args.get("toilet_distance", "all").strip() or "all"
     confidence = request.args.get("confidence", "all").strip() or "all"
     verified = request.args.get("verified", "all").strip() or "all"
+    quality_queue = request.args.get("quality_queue", "all").strip() or "all"
     sort = request.args.get("sort", "priority").strip() or "priority"
     page = parse_int_field(request.args.get("page"), "Page", minimum=1, default=1)
     per_page = 25
@@ -3469,6 +3983,7 @@ def admin_venues():
         toilet_distance=toilet_distance,
         confidence=confidence,
         verified=verified,
+        quality_queue=quality_queue,
         sort=sort,
     )
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
@@ -3482,6 +3997,7 @@ def admin_venues():
         "toilet_distance": toilet_distance,
         "confidence": confidence,
         "verified": verified,
+        "quality_queue": quality_queue,
         "sort": sort,
     }
     return render_template(
@@ -3489,6 +4005,7 @@ def admin_venues():
         venue_rows=venue_rows,
         pagination=pagination,
         filters=filters,
+        quality_queue_options=ADMIN_QUALITY_QUEUE_OPTIONS,
     )
 
 
@@ -3565,6 +4082,8 @@ def call_place(place_id):
     ]
     stream_prompt = f"Mission: verify {place.name} for toilets, step-free access, baby changing, comments, and confidence."
     toilet_distance_backend_supported = True
+    verification = verification_status(profile)
+    quality = quality_queue_for_profile(profile)
     if request.method == "POST":
         fields = [
             "toilets_available",
@@ -3599,6 +4118,8 @@ def call_place(place_id):
                 "call.html",
                 place=place,
                 profile=profile,
+                verification=verification,
+                quality=quality,
                 premium_checklist=premium_checklist,
                 stream_prompt=stream_prompt,
                 toilet_distance_backend_supported=toilet_distance_backend_supported,
@@ -3628,6 +4149,8 @@ def call_place(place_id):
         "call.html",
         place=place,
         profile=profile,
+        verification=verification_status(profile),
+        quality=quality_queue_for_profile(profile),
         premium_checklist=premium_checklist,
         stream_prompt=stream_prompt,
         toilet_distance_backend_supported=toilet_distance_backend_supported,
@@ -3690,7 +4213,7 @@ def auth_callback():
             email=email,
             name=info.get("name"),
             picture=info.get("picture"),
-            role="admin" if is_admin_email(email) else "member",
+            role="admin" if is_admin_email(email) else DEFAULT_MEMBER_ROLE,
         )
         db.session.add(user)
     else:

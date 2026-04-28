@@ -31,6 +31,10 @@
     <h2>Calm limits for an early preview</h2>
     <div class="stack-list">
       <div class="stack-row">
+        <strong>Who can create keys</strong>
+        <span>Only paid, business, or staff access can create API keys. Free search access does not unlock the API.</span>
+      </div>
+      <div class="stack-row">
         <strong>Required query</strong>
         <span>Send at least one of `q`, `town`, or `postcode`.</span>
       </div>
@@ -68,23 +72,29 @@
   <section class="card-grid">
     <article class="planira-card">
       <span class="eyebrow">Key management</span>
-      <h2>Create and revoke API keys</h2>
-      <p class="muted">Keys belong to your account. Only the hashed key is stored on the server.</p>
-      <form method="post" action="{{ url_for('create_developer_api_key') }}" class="comment-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="field-group">
-          <label for="developer-key-label">Key label</label>
-          <input id="developer-key-label" name="label" maxlength="120" placeholder="Primary integration key">
-        </div>
-        <button type="submit" class="btn-primary-planira">Create new key</button>
-      </form>
+      {% if has_api_access %}
+        <h2>Create and revoke API keys</h2>
+        <p class="muted">Keys belong to your account. Only the hashed key is stored on the server.</p>
+        <form method="post" action="{{ url_for('create_developer_api_key') }}" class="comment-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field-group">
+            <label for="developer-key-label">Key label</label>
+            <input id="developer-key-label" name="label" maxlength="120" placeholder="Primary integration key">
+          </div>
+          <button type="submit" class="btn-primary-planira">Create new key</button>
+        </form>
 
-      {% if raw_api_key %}
-        <div class="empty-inline">
-          <strong>{{ raw_api_key_label or 'New API key' }}</strong>
-          <p class="muted">Copy this key now. It will not be shown again.</p>
-          <code>{{ raw_api_key }}</code>
-        </div>
+        {% if raw_api_key %}
+          <div class="empty-inline">
+            <strong>{{ raw_api_key_label or 'New API key' }}</strong>
+            <p class="muted">Copy this key now. It will not be shown again.</p>
+            <code>{{ raw_api_key }}</code>
+          </div>
+        {% endif %}
+      {% else %}
+        <h2>Upgrade before creating keys</h2>
+        <p class="muted">This account can browse the API preview, but API key creation is only available on paid, business, or staff access.</p>
+        <a class="btn-primary-planira" href="{{ url_for('plans') }}">See access options</a>
       {% endif %}
     </article>
 
@@ -112,28 +122,35 @@
     <span class="eyebrow">Your keys</span>
     <h2>Existing API keys</h2>
     <div class="stack-list">
-      {% for key in developer_summary.api_key_rows %}
-        <div class="stack-row">
-          <div>
-            <strong>{{ key.label }}</strong>
-            <p class="muted">{{ key.key_hint }} · {{ 'Active' if key.is_active else 'Revoked' }} · {{ key.lookups_used }} lookups this month · {{ key.lookup_credits }} credits remaining</p>
-          </div>
-          {% if key.is_active %}
-            <form method="post" action="{{ url_for('update_developer_api_key', key_id=key.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="action" value="deactivate">
-              <button type="submit" class="planira-button-danger">Revoke key</button>
-            </form>
-          {% else %}
-            <span class="status-chip chip-warning">Revoked</span>
-          {% endif %}
+      {% if not has_api_access %}
+        <div class="empty-inline">
+          <strong>No API access on this account yet</strong>
+          <p class="muted">Upgrade when you want to create keys and track lookup usage here.</p>
         </div>
       {% else %}
-        <div class="empty-inline">
-          <strong>No API keys yet</strong>
-          <p class="muted">Create your first key when you're ready to test the Planira API preview.</p>
-        </div>
-      {% endfor %}
+        {% for key in developer_summary.api_key_rows %}
+          <div class="stack-row">
+            <div>
+              <strong>{{ key.label }}</strong>
+              <p class="muted">{{ key.key_hint }} · {{ 'Active' if key.is_active else 'Revoked' }} · {{ key.lookups_used }} lookups this month · {{ key.lookup_credits }} credits remaining</p>
+            </div>
+            {% if key.is_active %}
+              <form method="post" action="{{ url_for('update_developer_api_key', key_id=key.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="deactivate">
+                <button type="submit" class="planira-button-danger">Revoke key</button>
+              </form>
+            {% else %}
+              <span class="status-chip chip-warning">Revoked</span>
+            {% endif %}
+          </div>
+        {% else %}
+          <div class="empty-inline">
+            <strong>No API keys yet</strong>
+            <p class="muted">Create your first key when you're ready to test the Planira API preview.</p>
+          </div>
+        {% endfor %}
+      {% endif %}
     </div>
   </section>
 {% else %}

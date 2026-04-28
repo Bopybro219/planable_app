@@ -26,10 +26,21 @@
         </div>
         <div>
           <strong>{{ row.status_label }}</strong>
-          <p class="muted">{{ row.verification }}</p>
+          <p class="muted"><span class="{{ row.verification_badge_class }}">{{ row.verification }}</span></p>
+          <p class="muted">{{ row.last_checked_copy }}</p>
+          <p class="muted">Last verified: {{ row.last_verified }}</p>
+          {% if row.verified_by_label %}
+            <p class="muted">Verified by: {{ row.verified_by_label }}</p>
+          {% endif %}
         </div>
         <div>
-          <span class="metric-pill">Confidence {{ row.confidence }}</span>
+          <span class="metric-pill">
+            {% if row.confidence is not none %}
+              Confidence {{ row.confidence }}
+            {% else %}
+              Confidence missing
+            {% endif %}
+          </span>
         </div>
         <div class="row-actions">
           <a class="btn btn-small" href="{{ url_for('call_place', place_id=row.place.id) }}">Edit venue</a>

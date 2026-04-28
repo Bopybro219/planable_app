@@ -768,6 +768,11 @@ p {
   gap: 10px;
 }
 
+.result-card {
+  gap: 8px;
+  padding: 16px 18px;
+}
+
 .hero-copy,
 .progress-block,
 .results-summary-panel,
@@ -835,6 +840,45 @@ p {
 
 .field-group {
   gap: 7px;
+}
+
+.result-topline-compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.result-fact-row {
+  gap: 8px;
+}
+
+.result-meta {
+  font-size: 0.9rem;
+}
+
+.verification-inline,
+.quick-answer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.quick-answer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+}
+
+.quick-answer-item strong {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.quick-answer-item span {
+  font-weight: 700;
 }
 
 .field-group label {
@@ -923,7 +967,10 @@ p {
 
 .planira-chip,
 .tag-row span,
-.metric-pill {
+.metric-pill,
+.badge-verified,
+.badge-warning,
+.badge-neutral {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1685,6 +1732,9 @@ textarea::placeholder {
 .tab-button,
 .tab-button.active,
 .badge-strong,
+.badge-verified,
+.badge-warning,
+.badge-neutral,
 .callout-chip,
 .pill {
   background: rgba(230, 184, 156, 0.12);
@@ -1717,6 +1767,27 @@ textarea::placeholder {
 .chip-tricky {
   background: rgba(248, 113, 113, 0.14);
   color: #fca5a5;
+}
+
+.badge-verified,
+.quick-answer-item-positive {
+  background: rgba(52, 211, 153, 0.14);
+  color: #9ef0c5;
+  border-color: rgba(52, 211, 153, 0.22);
+}
+
+.badge-warning,
+.quick-answer-item-warning {
+  background: rgba(251, 191, 36, 0.14);
+  color: #facc15;
+  border-color: rgba(251, 191, 36, 0.2);
+}
+
+.badge-neutral,
+.quick-answer-item-neutral {
+  background: rgba(120, 144, 150, 0.12);
+  color: #d7e3e5;
+  border-color: rgba(120, 144, 150, 0.2);
 }
 
 .chip-neutral {

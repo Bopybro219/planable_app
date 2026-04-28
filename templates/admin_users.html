@@ -56,7 +56,7 @@
         <span class="eyebrow">User directory</span>
         <h2>{{ pagination.total if pagination else user_rows|length }} users</h2>
         {% if pagination %}
-          <p class="muted">Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} accounts.</p>
+          <p class="muted">Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users.</p>
         {% endif %}
       </div>
       {% if pagination %}

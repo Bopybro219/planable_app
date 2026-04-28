@@ -60,7 +60,7 @@ PROFILE_VALUE_LABELS = {
 
 SIGNAL_EXAMPLES = [
     {
-        "label": "Looks straightforward",
+        "label": "Easy",
         "tone": "easy",
         "copy": "Clear, recent details that suggest the visit should feel easier to manage.",
     },
@@ -70,7 +70,7 @@ SIGNAL_EXAMPLES = [
         "copy": "Useful context when some details are partial, older, or still a little unclear.",
     },
     {
-        "label": "Might be tricky",
+        "label": "Tricky",
         "tone": "difficult",
         "copy": "More careful planning may help here, especially if step-free access or facilities are limited.",
     },
@@ -101,14 +101,51 @@ def format_short_date(value):
     return value.strftime("%d %b %Y")
 
 
-def build_verification_state(profile):
+def format_relative_time(value, *, now=None):
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    current = now or datetime.now(timezone.utc)
+    delta = current - value
+    total_seconds = max(int(delta.total_seconds()), 0)
+    days = total_seconds // 86400
+
+    if days == 0:
+        if total_seconds < 3600:
+            minutes = max(total_seconds // 60, 1)
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        hours = max(total_seconds // 3600, 1)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    if days == 1:
+        return "1 day ago"
+    if days < 14:
+        return f"{days} days ago"
+    if days < 60:
+        weeks = max(round(days / 7), 1)
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    if days < 365:
+        months = max(round(days / 30), 1)
+        return f"{months} month{'s' if months != 1 else ''} ago"
+    years = max(round(days / 365), 1)
+    return f"{years} year{'s' if years != 1 else ''} ago"
+
+
+def verification_status(profile):
     verified_at = getattr(profile, "last_verified_at", None) if profile else None
     if not verified_at:
         return {
-            "label": "Needs verification",
+            "status": "Not verified yet",
+            "label": "Not verified yet",
+            "badge_label": "Not verified yet",
             "short_label": "Not verified yet",
-            "tone": "moderate",
+            "tone": "neutral",
+            "badge_class": "badge-neutral",
+            "verified": False,
             "date": None,
+            "relative_time": None,
+            "last_checked_copy": "Not checked yet",
         }
 
     now = datetime.now(timezone.utc)
@@ -116,21 +153,31 @@ def build_verification_state(profile):
         verified_at = verified_at.replace(tzinfo=timezone.utc)
     age_days = max((now - verified_at).days, 0)
     if age_days <= 45:
-        label = "Recently verified"
+        status = "Verified"
         tone = "easy"
+        badge_class = "badge-verified"
     elif age_days <= 120:
-        label = "Verified earlier"
+        status = "Checked recently"
         tone = "moderate"
+        badge_class = "badge-warning"
     else:
-        label = "Verification is getting old"
+        status = "Needs checking"
         tone = "difficult"
+        badge_class = "badge-warning"
 
     date_label = format_short_date(verified_at)
+    relative_time = format_relative_time(verified_at, now=now)
     return {
-        "label": label,
-        "short_label": f"Verified {date_label}",
+        "status": status,
+        "label": status,
+        "badge_label": status,
+        "short_label": status if not relative_time else f"{status} · {relative_time}",
         "tone": tone,
+        "badge_class": badge_class,
+        "verified": status == "Verified",
         "date": date_label,
+        "relative_time": relative_time,
+        "last_checked_copy": f"Last checked {relative_time}" if relative_time else f"Last checked {date_label}",
     }
 
 
@@ -206,10 +253,80 @@ def build_toilet_distance_summary(profile):
     }
 
 
+def build_quick_answer_items(profile, distance):
+    if not profile:
+        return [
+            {"tone": "warning", "icon": "?", "label": "Entrance still needs checking"},
+            {"tone": "warning", "icon": "?", "label": "Toilet details still need checking"},
+            {"tone": "warning", "icon": "!", "label": "Layout may vary"},
+        ]
+
+    step_free = getattr(profile, "step_free_entrance", "unknown")
+    accessible = getattr(profile, "accessible_toilet", "unknown")
+    toilets_available = getattr(profile, "toilets_available", "unknown")
+    stairs = getattr(profile, "stairs_inside", "unknown")
+
+    items = []
+    if step_free == "yes":
+        items.append({"tone": "positive", "icon": "check", "label": "Step-free entrance"})
+    elif step_free == "no":
+        items.append({"tone": "warning", "icon": "warning", "label": "Entrance has steps"})
+    else:
+        items.append({"tone": "warning", "icon": "?", "label": "Entrance still needs checking"})
+
+    if accessible == "yes":
+        items.append({"tone": "positive", "icon": "check", "label": "Accessible toilet confirmed"})
+    elif toilets_available == "yes":
+        items.append({"tone": "positive", "icon": "check", "label": "Toilet available"})
+    elif accessible == "no":
+        items.append({"tone": "warning", "icon": "warning", "label": "No accessible toilet confirmed"})
+    else:
+        items.append({"tone": "warning", "icon": "?", "label": "Toilet details still need checking"})
+
+    if stairs == "yes":
+        items.append({"tone": "warning", "icon": "warning", "label": "Stairs inside"})
+    elif distance["value"] != "Unknown":
+        items.append({"tone": "neutral", "icon": "info", "label": distance["value"]})
+    else:
+        items.append({"tone": "warning", "icon": "warning", "label": "Layout may vary"})
+
+    return items[:3]
+
+
+def build_key_facts(profile, distance):
+    if not profile:
+        return ["Details still being checked"]
+
+    facts = []
+    step_free = getattr(profile, "step_free_entrance", "unknown")
+    accessible = getattr(profile, "accessible_toilet", "unknown")
+    toilets_available = getattr(profile, "toilets_available", "unknown")
+
+    if step_free == "yes":
+        facts.append("Step-free entrance")
+    elif step_free == "no":
+        facts.append("Entrance has steps")
+
+    if accessible == "yes":
+        facts.append("Accessible toilet")
+    elif accessible == "no":
+        facts.append("No accessible toilet confirmed")
+    elif toilets_available == "yes":
+        facts.append("Toilet available")
+
+    if distance["value"] != "Unknown":
+        facts.append(distance["value"])
+
+    if not facts:
+        facts.append("More access detail needed")
+    return facts[:3]
+
+
 def build_access_signal(profile):
     if not profile:
         confidence = build_confidence_state(0)
-        verification = build_verification_state(None)
+        verification = verification_status(None)
+        distance = build_toilet_distance_summary(None)
         return {
             "tone": "moderate",
             "label": "Worth checking",
@@ -222,7 +339,9 @@ def build_access_signal(profile):
             "source_label": "Needs verification",
             "highlights": [],
             "warnings": ["Toilet distance from bar still needs confirming."],
-            "distance": build_toilet_distance_summary(None),
+            "distance": distance,
+            "quick_answer_items": build_quick_answer_items(None, distance),
+            "key_facts": build_key_facts(None, distance),
             "detail_checks": [],
         }
 
@@ -230,7 +349,7 @@ def build_access_signal(profile):
     step_free = getattr(profile, "step_free_entrance", "unknown")
     stairs = getattr(profile, "stairs_inside", "unknown")
     confidence = build_confidence_state(getattr(profile, "confidence_score", 0))
-    verification = build_verification_state(profile)
+    verification = verification_status(profile)
     distance = build_toilet_distance_summary(profile)
 
     highlights = []
@@ -265,11 +384,11 @@ def build_access_signal(profile):
         warnings.append("Needs a fresh verification before it feels dependable.")
 
     if accessible == "yes" and step_free == "yes" and stairs in {"no", "unknown"} and confidence["percent"] >= 75:
-        label = "Looks straightforward"
+        label = "Easy"
         tone = "easy"
         summary = "Step-free entry and toilet details line up well, so this looks simpler to plan around."
     elif accessible == "no" or step_free == "no" or stairs == "yes":
-        label = "Might be tricky"
+        label = "Tricky"
         tone = "difficult"
         summary = "Some access details suggest this visit could take more planning before you set off."
     else:
@@ -341,6 +460,8 @@ def build_access_signal(profile):
         "highlights": highlights[:4],
         "warnings": warnings[:4],
         "distance": distance,
+        "quick_answer_items": build_quick_answer_items(profile, distance),
+        "key_facts": build_key_facts(profile, distance),
         "detail_checks": detail_checks,
     }
 
@@ -348,13 +469,12 @@ def build_access_signal(profile):
 def build_place_card(place):
     profile = getattr(place, "accessibility", None)
     signal = build_access_signal(profile)
-    key_bits = list(signal["highlights"])[:3]
 
     return {
         "place": place,
         "signal": signal,
-        "verified_text": signal["verification"]["short_label"],
-        "key_bits": key_bits,
+        "verified_text": signal["verification"]["badge_label"],
+        "key_bits": signal["key_facts"],
     }
 
 
