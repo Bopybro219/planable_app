@@ -2,6 +2,7 @@
 {% block title %}{{ place.name }} | Planira{% endblock %}
 {% block content %}
 {% import '_planira_macros.html' as planira %}
+{% import '_turnstile.html' as turnstile %}
 <section class="page-head">
   <div class="page-title-group">
     <span class="eyebrow">{{ place.venue_type or 'place' }}</span>
@@ -82,6 +83,72 @@
       </div>
     </article>
 
+    <article class="surface-panel place-gallery-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Place photos</span>
+          <h2>Helpful visual context</h2>
+        </div>
+      </div>
+      <p class="helper-copy">Photos can make the route, entrance, and layout easier to plan before you arrive.</p>
+
+      {% if can_upload_place_images %}
+        <form method="post" action="{{ url_for('upload_place_image', place_id=place.id) }}" enctype="multipart/form-data" class="place-image-upload-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field-group">
+            <label for="place-image">Add a place photo</label>
+            <input id="place-image" type="file" name="place_image" accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" required>
+            <p class="helper-copy">PNG, JPG, WEBP, or GIF up to 2MB.</p>
+          </div>
+          <div class="field-group">
+            <label for="place-image-caption">Caption</label>
+            <input id="place-image-caption" type="text" name="caption" maxlength="255" placeholder="Optional note about what the photo shows">
+          </div>
+          {{ turnstile.widget(turnstile_place_image, 'Place image anti-abuse check') }}
+          <button class="btn-primary-planira" type="submit">Upload photo</button>
+        </form>
+      {% elif current_user and account_state.plan_name == 'free' %}
+        <div class="empty-inline place-image-upgrade-callout">
+          <strong>Upgrade to add your own place photos.</strong>
+          <p class="muted"><a href="{{ url_for('plans') }}">See plans</a> if you want to contribute visual context here.</p>
+        </div>
+      {% elif not current_user %}
+        <div class="empty-inline place-image-login-callout">
+          <strong>Sign in to contribute photos.</strong>
+          <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> to add place images on an eligible plan.</p>
+        </div>
+      {% endif %}
+
+      <div class="place-image-gallery">
+        {% for image in place_images %}
+          {% set image_url = get_place_image_url(image) %}
+          {% if image_url %}
+            <figure class="place-image-card">
+              <img src="{{ image_url }}" alt="{{ image.caption or (place.name ~ ' photo') }}">
+              {% if image.caption or (current_user and (current_user.id == image.user_id or account_state.is_staff)) %}
+                <figcaption>
+                  {% if image.caption %}
+                    <span>{{ image.caption }}</span>
+                  {% endif %}
+                  {% if current_user and (current_user.id == image.user_id or account_state.is_staff) %}
+                    <form method="post" action="{{ url_for('delete_place_image', image_id=image.id) }}" class="place-image-delete-form">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="planira-button-quiet" type="submit">Delete</button>
+                    </form>
+                  {% endif %}
+                </figcaption>
+              {% endif %}
+            </figure>
+          {% endif %}
+        {% else %}
+          <div class="empty-inline">
+            <strong>No photos yet</strong>
+            <p class="muted">The gallery will appear here as members add useful visual context for this place.</p>
+          </div>
+        {% endfor %}
+      </div>
+    </article>
+
     <article class="surface-panel">
       <div class="section-head">
         <div>
@@ -89,15 +156,23 @@
           <h2>Helpful notes from other Planira members</h2>
         </div>
       </div>
-      <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="field-group">
-          <label for="comment-body">Add a note</label>
-          <textarea id="comment-body" name="body" placeholder="Add a useful note that could help someone plan ahead"></textarea>
-          <p class="helper-copy">Short, specific context is usually more useful than a long review.</p>
+      {% if current_user %}
+        <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field-group">
+            <label for="comment-body">Add a note</label>
+            <textarea id="comment-body" name="body" placeholder="Add a useful note that could help someone plan ahead"></textarea>
+            <p class="helper-copy">Short, specific context is usually more useful than a long review.</p>
+          </div>
+          {{ turnstile.widget(turnstile_comment, 'Comment anti-abuse check') }}
+          <button>Share note</button>
+        </form>
+      {% else %}
+        <div class="empty-inline">
+          <strong>Sign in to add a note</strong>
+          <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> if you want to share practical context for this place.</p>
         </div>
-        <button>Share note</button>
-      </form>
+      {% endif %}
       <div class="comment-list">
         {% for c in comments %}
           <article class="comment-card">

@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Developer API | Planira{% endblock %}
 {% block content %}
+{% import '_turnstile.html' as turnstile %}
 <section class="page-head">
   <div class="page-title-group">
     <span class="eyebrow">Developer preview</span>
@@ -81,6 +82,7 @@
             <label for="developer-key-label">Key label</label>
             <input id="developer-key-label" name="label" maxlength="120" placeholder="Primary integration key">
           </div>
+          {{ turnstile.widget(turnstile_create_api_key, 'API key anti-abuse check') }}
           <button type="submit" class="btn-primary-planira">Create new key</button>
         </form>
 

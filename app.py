@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import os
 import re
@@ -8,7 +9,10 @@ import warnings
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from urllib.parse import urljoin, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urljoin, urlparse
+from urllib.request import Request, urlopen
+from xml.sax.saxutils import escape as xml_escape
 
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
@@ -100,6 +104,21 @@ API_PACK_ACCESS_DISABLED_MESSAGE = (
 RATE_LIMIT_ERROR_MESSAGE = "Too many requests. Please wait a moment and try again."
 _RATE_LIMIT_STATE = defaultdict(deque)
 _RATE_LIMIT_LOCK = threading.Lock()
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+DEFAULT_OG_IMAGE_FILENAME = "logo.png"
+PRIVATE_PATH_PREFIXES = (
+    "/account",
+    "/admin",
+    "/api/",
+    "/auth/",
+    "/billing/",
+    "/dashboard",
+    "/health",
+    "/obs/",
+    "/staff/",
+)
+NOINDEX_FOLLOW_PATHS = {"/search"}
+NOINDEX_NOFOLLOW_PATHS = {"/health"}
 
 
 def env_flag(name, default=False):
@@ -163,6 +182,8 @@ app.config["PLACE_IMAGE_UPLOAD_DIR"] = os.getenv(
     "PLACE_IMAGE_UPLOAD_DIR",
     os.path.join(app.static_folder, "uploads", "place_images"),
 )
+app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = os.getenv("CLOUDFLARE_TURNSTILE_SITE_KEY", "").strip()
+app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = os.getenv("CLOUDFLARE_TURNSTILE_SECRET_KEY", "").strip()
 
 trusted_hosts = [host.strip() for host in os.getenv("TRUSTED_HOSTS", "").split(",") if host.strip()]
 if trusted_hosts:
@@ -458,7 +479,265 @@ def missing_config_keys():
             missing.append("PROXY_FIX_COUNT")
         if env_flag("FLASK_DEBUG", default=False):
             missing.append("FLASK_DEBUG must be disabled")
+        if not app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY"):
+            missing.append("CLOUDFLARE_TURNSTILE_SITE_KEY")
+        if not app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"):
+            missing.append("CLOUDFLARE_TURNSTILE_SECRET_KEY")
     return missing
+
+
+def build_absolute_url(endpoint, **values):
+    return url_for(endpoint, _external=True, **values)
+
+
+def absolute_static_url(filename):
+    return build_absolute_url("static", filename=filename)
+
+
+def canonical_url_for_request(*, allowed_query_keys=None):
+    allowed_query_keys = set(allowed_query_keys or ())
+    query_pairs = []
+    for key in sorted(allowed_query_keys):
+        values = [value.strip() for value in request.args.getlist(key) if value and value.strip()]
+        for value in values:
+            query_pairs.append((key, value))
+    query_string = urlencode(query_pairs, doseq=True)
+    return f"{request.base_url}?{query_string}" if query_string else request.base_url
+
+
+def robots_directive_for_request():
+    path = request.path.rstrip("/") or "/"
+    if path in NOINDEX_NOFOLLOW_PATHS:
+        return "noindex, nofollow"
+    if path in NOINDEX_FOLLOW_PATHS:
+        return "noindex, follow"
+    if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in PRIVATE_PATH_PREFIXES):
+        return "noindex, nofollow"
+    return "index, follow"
+
+
+def page_title_for_endpoint(endpoint):
+    titles = {
+        "account": "Account",
+        "account_settings": "Settings",
+        "developers": "Developer API",
+        "index": APP_NAME,
+        "plans": "Plans",
+        "privacy": "Privacy",
+        "cookies": "Cookies",
+        "terms": "Terms",
+        "data_rights": "Data rights",
+        "search": "Search",
+        "login": "Continue with Google",
+    }
+    if endpoint in titles:
+        return f"{titles[endpoint]} | {APP_NAME}" if endpoint != "index" else f"{APP_NAME} | {TAGLINE}"
+    fallback = (endpoint or APP_NAME).replace("_", " ").replace(".", " ").strip().title()
+    return f"{fallback} | {APP_NAME}"
+
+
+def default_description_for_request():
+    descriptions = {
+        "index": "Planira helps people check practical accessibility and venue details before they travel.",
+        "plans": "Compare Planira plans for venue search access, richer account tools, and developer API workflows.",
+        "privacy": "Read how Planira handles account details, search records, moderation data, and service security.",
+        "cookies": "Planira uses essential cookies for sign-in, session security, and anti-abuse protection only.",
+        "terms": "Review the terms that apply when you use Planira.",
+        "data_rights": "Understand the choices you have over your Planira account data.",
+        "developers": "Explore the Planira API preview for trusted place signals and structured venue lookups.",
+        "login": "Continue to Planira with Google sign-in and anti-abuse protection.",
+        "search": "Search results in Planira help members review venue details before they travel.",
+    }
+    return descriptions.get(request.endpoint, f"{APP_NAME} helps people know before they go.")
+
+
+def build_organization_schema():
+    return {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": APP_NAME,
+        "url": build_absolute_url("index"),
+        "logo": absolute_static_url(DEFAULT_OG_IMAGE_FILENAME),
+        "description": "Planira helps people know before they go with practical venue information.",
+    }
+
+
+def build_website_schema():
+    return {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": APP_NAME,
+        "url": build_absolute_url("index"),
+        "description": "Know before you go with calm, practical venue information from Planira.",
+    }
+
+
+def seo_place_detail_items(profile):
+    if not profile:
+        return []
+
+    facts = []
+    fact_mappings = (
+        ("step_free_entrance", "Step-free entrance"),
+        ("accessible_toilet", "Accessible toilet"),
+        ("toilets_available", "Toilets available"),
+        ("disabled_parking", "Disabled parking"),
+        ("lift_available", "Lift available"),
+        ("baby_changing", "Baby changing"),
+    )
+    for field_name, label in fact_mappings:
+        value = getattr(profile, field_name, None)
+        if value and value != "unknown":
+            facts.append(f"{label}: {humanize_label(value)}")
+    return facts[:3]
+
+
+def build_place_seo_description(place, profile, signal):
+    location_parts = [part for part in [place.town, place.county] if part]
+    location_copy = ", ".join(location_parts) if location_parts else "the local area"
+    details = seo_place_detail_items(profile)
+    description_parts = [f"Accessibility and planning details for {place.name} in {location_copy}."]
+    if signal and signal.get("summary"):
+        description_parts.append(signal["summary"])
+    if details:
+        description_parts.append("Key details include " + "; ".join(details) + ".")
+    return " ".join(description_parts)[:300]
+
+
+def build_place_structured_data(place):
+    schema_type = "LocalBusiness" if any([place.address1, place.town, place.postcode, place.phone, place.website]) else "Place"
+    payload = {
+        "@context": "https://schema.org",
+        "@type": schema_type,
+        "name": place.name,
+        "url": build_absolute_url("place_detail", slug=place.slug),
+    }
+    if place.phone:
+        payload["telephone"] = place.phone
+    if place.website:
+        payload["sameAs"] = [place.website]
+    address_fields = {
+        "streetAddress": place.address1,
+        "addressLocality": place.town,
+        "addressRegion": place.county,
+        "postalCode": place.postcode,
+    }
+    if any(address_fields.values()):
+        payload["address"] = {"@type": "PostalAddress", **{key: value for key, value in address_fields.items() if value}}
+    if place.latitude is not None and place.longitude is not None:
+        payload["geo"] = {
+            "@type": "GeoCoordinates",
+            "latitude": place.latitude,
+            "longitude": place.longitude,
+        }
+    return payload
+
+
+def build_seo_payload(
+    *,
+    title=None,
+    description=None,
+    canonical_url=None,
+    robots=None,
+    og_title=None,
+    og_description=None,
+    og_image=None,
+    structured_data=None,
+):
+    resolved_title = title or page_title_for_endpoint(request.endpoint)
+    resolved_description = description or default_description_for_request()
+    resolved_canonical = canonical_url or canonical_url_for_request()
+    resolved_robots = robots or robots_directive_for_request()
+    resolved_og_image = og_image or absolute_static_url(DEFAULT_OG_IMAGE_FILENAME)
+    return {
+        "title": resolved_title,
+        "description": resolved_description,
+        "canonical_url": resolved_canonical,
+        "robots": resolved_robots,
+        "og_title": og_title or resolved_title,
+        "og_description": og_description or resolved_description,
+        "og_image": resolved_og_image,
+        "twitter_card": "summary_large_image",
+        "structured_data": structured_data or [],
+    }
+
+
+def turnstile_is_configured():
+    return bool(app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY") and app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"))
+
+
+def turnstile_bypass_allowed():
+    return app.config["ENVIRONMENT"] != "production" and not turnstile_is_configured()
+
+
+def build_turnstile_context(action):
+    if turnstile_is_configured():
+        mode = "enabled"
+    elif turnstile_bypass_allowed():
+        mode = "bypass"
+    else:
+        mode = "unavailable"
+    return {
+        "action": action,
+        "mode": mode,
+        "site_key": app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY", ""),
+    }
+
+
+def verify_turnstile_submission(action):
+    if turnstile_bypass_allowed():
+        warning_message = "Turnstile verification is bypassed in this non-production environment because the keys are not configured."
+        app.logger.warning(warning_message)
+        return True, warning_message
+
+    if not turnstile_is_configured():
+        return False, "This form is temporarily unavailable because anti-abuse protection is not configured."
+
+    response_token = (request.form.get("cf-turnstile-response") or "").strip()
+    if not response_token:
+        return False, "Please complete the anti-abuse check and try again."
+
+    payload = urlencode(
+        {
+            "secret": app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"],
+            "response": response_token,
+            "remoteip": request_client_identifier(),
+        }
+    ).encode("utf-8")
+    try:
+        verification_request = Request(
+            TURNSTILE_VERIFY_URL,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urlopen(verification_request, timeout=5) as response:
+            verification = response.read()
+    except (HTTPError, URLError, TimeoutError) as exc:
+        app.logger.warning("Turnstile verification request failed for action=%s: %s", action, exc)
+        return False, "The anti-abuse check could not be verified right now. Please try again."
+
+    result = json.loads(verification.decode("utf-8"))
+
+    if not result.get("success"):
+        app.logger.info("Turnstile verification rejected action=%s errors=%s", action, result.get("error-codes"))
+        return False, "Please complete the anti-abuse check and try again."
+
+    returned_action = (result.get("action") or "").strip()
+    if action and returned_action and returned_action != action:
+        app.logger.warning("Turnstile action mismatch expected=%s actual=%s", action, returned_action)
+        return False, "The anti-abuse check could not be matched to this form. Please try again."
+
+    return True, None
+
+
+def protect_with_turnstile(action, failure_category="error"):
+    verified, message = verify_turnstile_submission(action)
+    if verified:
+        if message:
+            flash(message, "info")
+        return True
+    flash(message, failure_category)
+    return False
 
 
 def refresh_session_user(user):
@@ -495,6 +774,9 @@ def inject_user():
         "shell_navigation": build_shell_navigation(user),
         "staff_navigation": staff_navigation,
         "staff_nav_active": bool(request.endpoint and any(item["endpoint"] == request.endpoint for item in staff_navigation)),
+        "seo": build_seo_payload(),
+        "turnstile_site_key": app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY", ""),
+        "turnstile_enabled": turnstile_is_configured(),
     }
 
 
@@ -3851,6 +4133,7 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("X-Robots-Tag", robots_directive_for_request())
     if request.is_secure:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
@@ -3908,8 +4191,67 @@ def health():
             "database": app.config["SQLALCHEMY_DATABASE_URI"].split(":", 1)[0],
             "oauth_configured": bool(os.getenv("GOOGLE_CLIENT_ID", "").strip() and os.getenv("GOOGLE_CLIENT_SECRET", "").strip()),
             "stripe_configured": bool(app.config["STRIPE_SECRET_KEY"]),
+            "turnstile_configured": turnstile_is_configured(),
         }
     )
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /account",
+        "Disallow: /admin",
+        "Disallow: /api/",
+        "Disallow: /auth/",
+        "Disallow: /billing/",
+        "Disallow: /dashboard",
+        "Disallow: /health",
+        "Disallow: /obs/",
+        "Disallow: /search",
+        "Disallow: /staff/",
+        f"Sitemap: {build_absolute_url('sitemap_xml')}",
+    ]
+    return app.response_class("\n".join(lines) + "\n", mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    entries = [
+        build_absolute_url("index"),
+        build_absolute_url("plans"),
+        build_absolute_url("developers"),
+        build_absolute_url("privacy"),
+        build_absolute_url("terms"),
+        build_absolute_url("data_rights"),
+        build_absolute_url("cookies"),
+    ]
+    xml_parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for url in entries:
+        xml_parts.append(f"<url><loc>{xml_escape(url)}</loc></url>")
+
+    place_rows = (
+        db.session.query(Place.slug, Place.updated_at)
+        .filter(Place.slug.isnot(None))
+        .order_by(Place.id.asc())
+        .yield_per(500)
+    )
+    for slug, updated_at in place_rows:
+        if not slug:
+            continue
+        lastmod = ""
+        if updated_at:
+            lastmod = f"<lastmod>{updated_at.date().isoformat()}</lastmod>"
+        xml_parts.append(
+            f"<url><loc>{xml_escape(build_absolute_url('place_detail', slug=slug))}</loc>{lastmod}</url>"
+        )
+
+    xml_parts.append("</urlset>")
+    return app.response_class("\n".join(xml_parts), mimetype="application/xml")
 
 
 @app.route("/")
@@ -3942,27 +4284,61 @@ def index():
         plans=plans,
         api_packs=api_packs,
         signal_examples=build_signal_examples(),
+        seo=build_seo_payload(
+            title=f"{APP_NAME} | {TAGLINE}",
+            description="Planira helps you know before you go with practical venue accessibility and planning details.",
+            canonical_url=build_absolute_url("index"),
+            structured_data=[build_organization_schema(), build_website_schema()],
+        ),
     )
 
 
 @app.route("/privacy")
 def privacy():
-    return render_template("privacy.html")
+    return render_template(
+        "privacy.html",
+        seo=build_seo_payload(
+            title=f"Privacy | {APP_NAME}",
+            description="Learn what personal data Planira stores, why it is needed, and how abuse protection is handled.",
+            canonical_url=build_absolute_url("privacy"),
+        ),
+    )
 
 
 @app.route("/terms")
 def terms():
-    return render_template("terms.html")
+    return render_template(
+        "terms.html",
+        seo=build_seo_payload(
+            title=f"Terms | {APP_NAME}",
+            description="Read the terms for using Planira and contributing to the service.",
+            canonical_url=build_absolute_url("terms"),
+        ),
+    )
 
 
 @app.route("/data-rights")
 def data_rights():
-    return render_template("data_rights.html")
+    return render_template(
+        "data_rights.html",
+        seo=build_seo_payload(
+            title=f"Data Rights | {APP_NAME}",
+            description="Understand your account data choices and how to contact Planira about them.",
+            canonical_url=build_absolute_url("data_rights"),
+        ),
+    )
 
 
 @app.route("/cookies")
 def cookies():
-    return render_template("cookies.html")
+    return render_template(
+        "cookies.html",
+        seo=build_seo_payload(
+            title=f"Cookies | {APP_NAME}",
+            description="Planira uses essential cookies for sign-in, session security, and Turnstile anti-abuse checks.",
+            canonical_url=build_absolute_url("cookies"),
+        ),
+    )
 
 
 @app.route("/plans")
@@ -4022,6 +4398,11 @@ def plans():
         active_key=active_key,
         account_summary=account_summary,
         account_state=account_state,
+        seo=build_seo_payload(
+            title=f"Plans | {APP_NAME}",
+            description="Compare Planira plans for calm place search, account tools, and developer API access.",
+            canonical_url=build_absolute_url("plans"),
+        ),
     )
 
 
@@ -4054,6 +4435,12 @@ def account():
         account_summary=summary,
         developer_summary=developer_summary,
         quick_actions=quick_actions,
+        seo=build_seo_payload(
+            title=f"Account | {APP_NAME}",
+            description="Manage your Planira account, plan, search usage, and developer access.",
+            canonical_url=build_absolute_url("account"),
+            robots="noindex, nofollow",
+        ),
     )
 
 
@@ -4066,6 +4453,12 @@ def account_settings():
         "settings.html",
         settings_sections=settings_sections,
         developer_summary=build_developer_summary(user),
+        seo=build_seo_payload(
+            title=f"Settings | {APP_NAME}",
+            description="Update your Planira account settings and profile preferences.",
+            canonical_url=build_absolute_url("account_settings"),
+            robots="noindex, nofollow",
+        ),
     )
 
 
@@ -4166,7 +4559,14 @@ def update_account_api_key(key_id):
 @app.route("/developers")
 def developers():
     user = current_user()
-    return render_template("developers.html", **build_developers_page_context(user))
+    page_context = build_developers_page_context(user)
+    page_context["seo"] = build_seo_payload(
+        title=f"Developer API | {APP_NAME}",
+        description="Explore the Planira developer API preview for structured place search and trusted venue signals.",
+        canonical_url=build_absolute_url("developers"),
+    )
+    page_context["turnstile_create_api_key"] = build_turnstile_context("create_api_key")
+    return render_template("developers.html", **page_context)
 
 
 @app.route("/developers/api-keys", methods=["POST"])
@@ -4176,6 +4576,8 @@ def create_developer_api_key():
     has_api_access, message = api_access_status(user)
     if not has_api_access:
         flash(message, "info")
+        return redirect(url_for("developers"))
+    if not protect_with_turnstile("create_api_key"):
         return redirect(url_for("developers"))
     label = request.form.get("label", "").strip() or "Primary key"
     try:
@@ -4647,6 +5049,12 @@ def search():
                 source_options=public_filter_options["source_options"],
                 search_usage=search_usage,
                 signal_examples=build_signal_examples(),
+                seo=build_seo_payload(
+                    title=f"Search | {APP_NAME}",
+                    description="Search Planira for place details, then open the venue page when you need more context.",
+                    canonical_url=build_absolute_url("search"),
+                    robots="noindex, follow",
+                ),
             )
         query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
         if selected_place_id:
@@ -4778,6 +5186,12 @@ def search():
         source_options=public_filter_options["source_options"],
         search_usage=search_usage,
         signal_examples=build_signal_examples(),
+        seo=build_seo_payload(
+            title=f"Search | {APP_NAME}",
+            description="Search Planira for place details, then open the venue page when you need more context.",
+            canonical_url=build_absolute_url("search"),
+            robots="noindex, follow",
+        ),
     )
 
 
@@ -4828,6 +5242,14 @@ def place_detail(slug):
         can_upload_place_images=can_upload_place_images(user),
         get_place_image_url=get_place_image_url,
         signal=signal,
+        seo=build_seo_payload(
+            title=f"{place.name} | {APP_NAME}",
+            description=build_place_seo_description(place, profile, signal),
+            canonical_url=build_absolute_url("place_detail", slug=place.slug),
+            structured_data=[build_place_structured_data(place)],
+        ),
+        turnstile_comment=build_turnstile_context("comment_submission"),
+        turnstile_place_image=build_turnstile_context("place_image_upload"),
     )
 
 
@@ -4841,6 +5263,8 @@ def upload_place_image(place_id):
     user = current_user()
     if not can_upload_place_images(user):
         flash("Upgrade to a paid Planira plan to add place photos.", "info")
+        return redirect(url_for("place_detail", slug=place.slug))
+    if not protect_with_turnstile("place_image_upload"):
         return redirect(url_for("place_detail", slug=place.slug))
 
     caption = (request.form.get("caption") or "").strip()
@@ -4909,6 +5333,8 @@ def add_comment(slug):
         description="You have submitted several comments recently. Please wait a few minutes and try again.",
     )
     place = Place.query.filter_by(slug=slug).first_or_404()
+    if not protect_with_turnstile("comment_submission"):
+        return redirect(url_for("place_detail", slug=slug))
     body = request.form.get("body", "").strip()
     if not body:
         flash("Please add a comment before submitting.", "error")
@@ -5713,15 +6139,32 @@ def obs_health():
     return jsonify(build_obs_health_payload())
 
 
-@app.route("/auth/login")
+@app.route("/auth/login", methods=["GET", "POST"])
 def login():
     enforce_rate_limit("login", limit=20, window_seconds=300)
-    if not os.getenv("GOOGLE_CLIENT_ID"):
-        flash("Google OAuth is not configured yet. Add your keys to .env.", "error")
-        return redirect(url_for("index"))
+    if request.method == "POST":
+        if not os.getenv("GOOGLE_CLIENT_ID"):
+            flash("Google OAuth is not configured yet. Add your keys to .env.", "error")
+            return redirect(url_for("index"))
+        next_url = request.form.get("next") or session.get("next_url") or url_for("search")
+        session["next_url"] = next_url if is_safe_redirect_target(next_url) else url_for("search")
+        if not protect_with_turnstile("login"):
+            return redirect(url_for("login", next=session["next_url"]))
+        return google.authorize_redirect(url_for("auth_callback", _external=True))
+
     next_url = request.args.get("next") or url_for("search")
     session["next_url"] = next_url if is_safe_redirect_target(next_url) else url_for("search")
-    return google.authorize_redirect(url_for("auth_callback", _external=True))
+    return render_template(
+        "login.html",
+        next_url=session["next_url"],
+        turnstile_login=build_turnstile_context("login"),
+        seo=build_seo_payload(
+            title=f"Continue with Google | {APP_NAME}",
+            description="Continue to Planira with Google sign-in and a server-verified anti-abuse check.",
+            canonical_url=build_absolute_url("login"),
+            robots="noindex, nofollow",
+        ),
+    )
 
 
 @app.route("/auth/google/callback")

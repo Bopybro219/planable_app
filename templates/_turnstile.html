@@ -1,0 +1,24 @@
+{% macro widget(config, label='Anti-abuse check') -%}
+  {% if config %}
+    <div class="turnstile-block">
+      <span class="sr-only">{{ label }}</span>
+      {% if config.mode == 'enabled' %}
+        <div
+          class="cf-turnstile turnstile-widget-shell"
+          data-sitekey="{{ config.site_key }}"
+          data-action="{{ config.action }}"
+          data-theme="light"
+        ></div>
+        <p class="helper-copy">This quick check helps protect Planira from automated abuse.</p>
+      {% elif config.mode == 'bypass' %}
+        <div class="turnstile-widget-shell turnstile-widget-shell-bypass" aria-live="polite">
+          <p class="helper-copy">Turnstile is bypassed in this non-production environment because the keys are not configured.</p>
+        </div>
+      {% else %}
+        <div class="turnstile-widget-shell turnstile-widget-shell-unavailable" aria-live="polite">
+          <p class="helper-copy">Anti-abuse protection is not configured right now, so this form may be unavailable.</p>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+{%- endmacro %}

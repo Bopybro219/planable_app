@@ -29,6 +29,10 @@
         <strong>Community and staff records</strong>
         <span>Planira stores comments, moderation decisions, staff audit logs, and internal venue workflow records so the service can be reviewed, improved, and protected from misuse.</span>
       </div>
+      <div class="stack-row">
+        <strong>Anti-abuse checks</strong>
+        <span>Protected forms may use Cloudflare Turnstile to help distinguish real visitors from automated abuse. Planira verifies the Turnstile response on the server before accepting the submission.</span>
+      </div>
     </div>
   </article>
 
@@ -45,7 +49,7 @@
       </div>
       <div class="stack-row">
         <strong>Moderation and abuse review</strong>
-        <span>Comments, API usage logs, and staff audit records help Planira review suspicious activity, moderation decisions, and operational changes.</span>
+        <span>Comments, API usage logs, staff audit records, and Turnstile verification outcomes help Planira review suspicious activity, moderation decisions, and operational changes.</span>
       </div>
       <div class="stack-row">
         <strong>Improving venue information</strong>
@@ -66,7 +70,7 @@
 
   <article class="surface-panel">
     <h2>What Planira does not claim</h2>
-    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
+    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. Planira does not currently run Google Analytics, Google Tag Manager, Google Ads, or similar ad-tracking tools. If that changes later, these pages should be updated first. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
   </article>
 </section>
 {% endblock %}

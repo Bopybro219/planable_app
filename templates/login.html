@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% import '_turnstile.html' as turnstile %}
+{% block title %}Continue with Google | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Secure sign-in</span>
+    <h1>Continue with Google</h1>
+    <p class="page-subtitle">Use your Google account to reach Planira, with a quick anti-abuse check before the redirect.</p>
+  </div>
+</section>
+
+<section class="content-stack legal-grid">
+  <article class="surface-panel">
+    <h2>Sign in to Planira</h2>
+    <p class="muted">Planira uses Google sign-in for account access. No ads, analytics, or tag-manager scripts are loaded here.</p>
+    <form method="post" action="{{ url_for('login') }}" class="comment-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      {{ turnstile.widget(turnstile_login, 'Login anti-abuse check') }}
+      <button type="submit" class="btn-primary-planira">Continue with Google</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

@@ -1,14 +1,184 @@
 <!doctype html>
+{% import '_planira_macros.html' as ui %}
+{% import '_seo_macros.html' as seo_macros %}
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>{% block title %}{{ brand_name }}{% endblock %}</title>
+    <title>{% block title %}{{ seo.title }}{% endblock %}</title>
+    <meta name="description" content="{% block description %}{{ seo.description }}{% endblock %}">
+    <link rel="canonical" href="{% block canonical_url %}{{ seo.canonical_url }}{% endblock %}">
+    <meta name="robots" content="{% block robots %}{{ seo.robots }}{% endblock %}">
+    <meta property="og:site_name" content="{{ brand_name }}">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{{ seo.canonical_url }}">
+    <meta property="og:title" content="{% block og_title %}{{ seo.og_title }}{% endblock %}">
+    <meta property="og:description" content="{% block og_description %}{{ seo.og_description }}{% endblock %}">
+    <meta property="og:image" content="{% block og_image %}{{ seo.og_image }}{% endblock %}">
+    <meta name="twitter:card" content="{{ seo.twitter_card }}">
+    <meta name="twitter:title" content="{% block twitter_title %}{{ seo.og_title }}{% endblock %}">
+    <meta name="twitter:description" content="{% block twitter_description %}{{ seo.og_description }}{% endblock %}">
+    <meta name="twitter:image" content="{% block twitter_image %}{{ seo.og_image }}{% endblock %}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='mapicon.svg') }}?v=1">
+    {% if turnstile_enabled %}
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    {% endif %}
+    {% block structured_data %}
+      {{ seo_macros.render_structured_data(seo.structured_data) }}
+    {% endblock %}
+    <style>
+      .planira-autocomplete {
+        position: relative;
+      }
+
+      .planira-autocomplete-panel {
+        position: absolute;
+        top: calc(100% + 8px);
+        left: 0;
+        right: 0;
+        z-index: 80;
+        display: grid;
+        gap: 4px;
+        padding: 8px;
+        border-radius: 20px;
+        border: 1px solid rgba(118, 138, 146, 0.18);
+        background: rgba(255, 252, 248, 0.98);
+        box-shadow: 0 20px 48px rgba(53, 66, 76, 0.16);
+        backdrop-filter: blur(18px);
+        opacity: 1;
+        transform: translateY(0);
+        transition: opacity 140ms ease-out, transform 140ms ease-out;
+      }
+
+      .planira-autocomplete-panel[hidden] {
+        display: none;
+      }
+
+      .planira-autocomplete-panel.is-opening {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      .planira-autocomplete-item {
+        width: 100%;
+        display: grid;
+        gap: 2px;
+        padding: 12px 14px;
+        border: 0;
+        border-radius: 14px;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        overflow: hidden;
+      }
+
+      .planira-autocomplete-item:hover,
+      .planira-autocomplete-item:focus-visible,
+      .planira-autocomplete-item.is-active {
+        background: rgba(126, 163, 158, 0.16);
+        outline: none;
+      }
+
+      .planira-autocomplete-item strong {
+        font-size: 0.96rem;
+      }
+
+      .planira-autocomplete-item span {
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+
+      .planira-autocomplete-empty {
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .planira-autocomplete-group {
+        display: grid;
+        gap: 4px;
+      }
+
+      .planira-autocomplete-group + .planira-autocomplete-group {
+        padding-top: 4px;
+        border-top: 1px solid rgba(118, 138, 146, 0.12);
+      }
+
+      .planira-autocomplete-group-label {
+        padding: 6px 10px 2px;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .planira-autocomplete-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .planira-autocomplete-title,
+      .planira-autocomplete-subtitle {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .planira-autocomplete-title {
+        display: block;
+      }
+
+      .planira-autocomplete-badges {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 8px;
+        margin-top: 6px;
+        overflow: hidden;
+      }
+
+      .planira-autocomplete-badge {
+        display: inline-flex;
+        align-items: center;
+        flex: 0 0 auto;
+        min-height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid rgba(118, 138, 146, 0.24);
+        color: var(--text);
+        font-size: 0.72rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .ac-highlight {
+        padding: 0;
+        border-radius: 4px;
+        background: rgba(126, 163, 158, 0.16);
+        color: inherit;
+        font-weight: 800;
+      }
+
+      .ac-selected-input {
+        background: rgba(126, 163, 158, 0.12);
+        border-color: rgba(126, 163, 158, 0.34);
+        box-shadow: 0 0 0 3px rgba(126, 163, 158, 0.12);
+      }
+
+      .ac-selected-input::placeholder {
+        color: var(--text);
+      }
+    </style>
 
   </head>
   <body class="planira-theme-calm">
@@ -44,7 +214,30 @@
           <div class="planira-nav-wrap">
             <form class="planira-nav-search" action="{{ url_for('search') }}" method="get" role="search">
               <label class="sr-only" for="nav-search-q">Search places</label>
-              <input id="nav-search-q" name="q" type="search" value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}" placeholder="Search a venue, postcode, or town">
+              <div class="planira-autocomplete" data-autocomplete-root>
+                <input
+                  id="nav-search-q"
+                  name="q"
+                  type="search"
+                  value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}"
+                  placeholder="Search a venue, postcode, or town"
+                  autocomplete="off"
+                  data-autocomplete-input
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="nav-search-autocomplete"
+                  role="combobox"
+                >
+                <div
+                  class="planira-autocomplete-panel"
+                  id="nav-search-autocomplete"
+                  data-autocomplete-panel
+                  role="listbox"
+                  hidden
+                ></div>
+              </div>
+              <input type="hidden" name="town" value="{{ request.args.get('town', '') if request.endpoint == 'search' else '' }}" data-autocomplete-town>
+              <input type="hidden" name="selected_place_id" value="{{ request.args.get('selected_place_id', '') if request.endpoint == 'search' else '' }}" data-autocomplete-place-id>
               <input type="hidden" name="submitted" value="1">
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
@@ -59,7 +252,7 @@
             {% if current_user %}
               <div class="planira-account-dropdown">
                 <button class="account-chip account-chip-button" type="button" aria-expanded="false" data-account-toggle>
-                  <span class="account-avatar" aria-hidden="true">{{ (current_user.name or current_user.email or 'P')[0]|upper }}</span>
+                  {{ ui.avatar(current_user, size='small', class_name='account-avatar') }}
                   <span class="account-chip-meta">
                     <strong>{{ current_user.name.split()[0] if current_user.name else 'Your account' }}</strong>
                     <span>Account menu</span>
@@ -75,7 +268,7 @@
                   {% if staff_navigation %}
                     <div class="planira-staff-dropdown planira-account-staff-dropdown">
                       <button
-                        class="planira-staff-menu-link planira-staff-dropdown-toggle {% if staff_nav_active %}active{% endif %}"
+                        class="planira-staff-menu-link planira-staff-dropdown-toggle {% if staff_nav_active %}planira-nav-link-active active{% endif %}"
                         type="button"
                         aria-expanded="false"
                         data-staff-toggle
@@ -110,7 +303,30 @@
           <div class="planira-content planira-mobile-menu-inner">
             <form class="planira-nav-search planira-nav-search-mobile" action="{{ url_for('search') }}" method="get" role="search">
               <label class="sr-only" for="mobile-nav-search-q">Search places</label>
-              <input id="mobile-nav-search-q" name="q" type="search" value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}" placeholder="Search a venue, postcode, or town">
+              <div class="planira-autocomplete" data-autocomplete-root>
+                <input
+                  id="mobile-nav-search-q"
+                  name="q"
+                  type="search"
+                  value="{{ request.args.get('q', '') if request.endpoint == 'search' else '' }}"
+                  placeholder="Search a venue, postcode, or town"
+                  autocomplete="off"
+                  data-autocomplete-input
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="mobile-nav-search-autocomplete"
+                  role="combobox"
+                >
+                <div
+                  class="planira-autocomplete-panel"
+                  id="mobile-nav-search-autocomplete"
+                  data-autocomplete-panel
+                  role="listbox"
+                  hidden
+                ></div>
+              </div>
+              <input type="hidden" name="town" value="{{ request.args.get('town', '') if request.endpoint == 'search' else '' }}" data-autocomplete-town>
+              <input type="hidden" name="selected_place_id" value="{{ request.args.get('selected_place_id', '') if request.endpoint == 'search' else '' }}" data-autocomplete-place-id>
               <input type="hidden" name="submitted" value="1">
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
@@ -181,7 +397,6 @@
           <div class="planira-footer-brand">
             <strong>{{ brand_name }}</strong>
             <p class="muted">{{ brand_tagline }}</p>
-            <p class="helper-copy">Know before you go, with clear signals you can trust.</p>
           </div>
           <nav class="planira-footer-links" aria-label="Footer">
             <a href="{{ url_for('search') }}">Search</a>
@@ -363,6 +578,263 @@
         });
 
         group.querySelector('[data-tab-button].active')?.click();
+      });
+
+      document.querySelectorAll("form[role='search']").forEach((form, formIndex) => {
+        const root = form.querySelector("[data-autocomplete-root]");
+        const input = form.querySelector("[data-autocomplete-input]");
+        const panel = form.querySelector("[data-autocomplete-panel]");
+        if (!root || !input || !panel) return;
+
+        const cache = new Map();
+        const townField = form.querySelector("[data-autocomplete-town]");
+        const selectedPlaceField = form.querySelector("[data-autocomplete-place-id]");
+        let activeIndex = -1;
+        let suggestions = [];
+        let debounceTimer = null;
+        let requestSequence = 0;
+        let hasOpened = false;
+
+        const BADGE_PRIORITY = [
+          "Verified",
+          "Step-free",
+          "Accessible toilet",
+          "Looks straightforward",
+          "Worth checking",
+          "Might be tricky",
+        ];
+
+        const escapeHtml = (value) =>
+          value.replace(/[&<>"']/g, (character) => (
+            {
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            }[character]
+          ));
+
+        const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        const highlightMatch = (value, query) => {
+          if (!query) return escapeHtml(value);
+          const escapedValue = escapeHtml(value);
+          const matcher = new RegExp(`(${escapeRegExp(query)})`, "ig");
+          return escapedValue.replace(matcher, '<span class="ac-highlight">$1</span>');
+        };
+
+        const setSelectedState = (isSelected) => {
+          input.classList.toggle("ac-selected-input", Boolean(isSelected));
+        };
+
+        const openPanel = () => {
+          if (panel.hidden) {
+            panel.hidden = false;
+            input.setAttribute("aria-expanded", "true");
+            if (!hasOpened) {
+              panel.classList.add("is-opening");
+              requestAnimationFrame(() => {
+                panel.classList.remove("is-opening");
+              });
+              hasOpened = true;
+            }
+          }
+        };
+
+        const orderedBadges = (badges) => {
+          return [...(badges || [])]
+            .sort((left, right) => {
+              const leftIndex = BADGE_PRIORITY.indexOf(left);
+              const rightIndex = BADGE_PRIORITY.indexOf(right);
+              return (leftIndex === -1 ? BADGE_PRIORITY.length : leftIndex) - (rightIndex === -1 ? BADGE_PRIORITY.length : rightIndex);
+            })
+            .slice(0, 3);
+        };
+
+        const closePanel = () => {
+          panel.hidden = true;
+          panel.innerHTML = "";
+          suggestions = [];
+          activeIndex = -1;
+          input.setAttribute("aria-expanded", "false");
+          input.removeAttribute("aria-activedescendant");
+          hasOpened = false;
+        };
+
+        const setActiveIndex = (index) => {
+          activeIndex = index;
+          const items = Array.from(panel.querySelectorAll(".planira-autocomplete-item"));
+          items.forEach((item, itemIndex) => {
+            const isActive = itemIndex === activeIndex;
+            item.classList.toggle("is-active", isActive);
+            item.setAttribute("aria-selected", isActive ? "true" : "false");
+            if (isActive) {
+              input.setAttribute("aria-activedescendant", item.id);
+              item.scrollIntoView({ block: "nearest" });
+            }
+          });
+          if (activeIndex < 0) {
+            input.removeAttribute("aria-activedescendant");
+          }
+        };
+
+        const submitSuggestion = (suggestion) => {
+          input.value = suggestion.query || suggestion.title || suggestion.name || "";
+          if (townField) townField.value = suggestion.town || "";
+          if (selectedPlaceField) selectedPlaceField.value = suggestion.selected_place_id || "";
+          setSelectedState(Boolean(suggestion.selected_place_id));
+          closePanel();
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+        };
+
+        const renderSuggestions = (groups, query) => {
+          suggestions = groups.flatMap((group) => group.items || []);
+          activeIndex = -1;
+
+          if (!suggestions.length) {
+            panel.innerHTML = '<div class="planira-autocomplete-empty">No results</div>';
+            openPanel();
+            input.removeAttribute("aria-activedescendant");
+            return;
+          }
+
+          let runningIndex = 0;
+          panel.innerHTML = groups
+            .map((group) => {
+              const groupHtml = (group.items || [])
+                .map((item) => {
+                  const itemIndex = runningIndex++;
+                  const subtitle = item.subtitle || item.town || "Town not listed";
+                  const badges = orderedBadges(item.badges)
+                    .map((badge) => `<span class="planira-autocomplete-badge">${escapeHtml(badge)}</span>`)
+                    .join("");
+                  return `
+                    <button
+                      class="planira-autocomplete-item"
+                      type="button"
+                      id="autocomplete-option-${formIndex}-${itemIndex}"
+                      role="option"
+                      aria-selected="false"
+                      data-autocomplete-index="${itemIndex}"
+                    >
+                      <div class="planira-autocomplete-meta">
+                        <strong class="planira-autocomplete-title">${highlightMatch(item.title || item.name || "", query)}</strong>
+                      </div>
+                      <span class="planira-autocomplete-subtitle">${highlightMatch(subtitle, query)}</span>
+                      ${badges ? `<div class="planira-autocomplete-badges">${badges}</div>` : ""}
+                    </button>
+                  `;
+                })
+                .join("");
+              return `
+                <div class="planira-autocomplete-group">
+                  <div class="planira-autocomplete-group-label">${escapeHtml(group.label || "")}</div>
+                  ${groupHtml}
+                </div>
+              `;
+            })
+            .join("");
+          openPanel();
+
+          panel.querySelectorAll(".planira-autocomplete-item").forEach((button) => {
+            button.addEventListener("mousedown", (event) => {
+              event.preventDefault();
+            });
+            button.addEventListener("click", () => {
+              const index = Number(button.getAttribute("data-autocomplete-index"));
+              const suggestion = suggestions[index];
+              if (suggestion) submitSuggestion(suggestion);
+            });
+          });
+        };
+
+        const fetchSuggestions = async (query) => {
+          if (query.length < 2) {
+            closePanel();
+            return;
+          }
+
+          const townContext = townField ? townField.value.trim() : "";
+          const cacheKey = `${query}::${townContext}`;
+          if (cache.has(cacheKey)) {
+            renderSuggestions(cache.get(cacheKey), query);
+            return;
+          }
+
+          const sequence = ++requestSequence;
+
+          try {
+            const params = new URLSearchParams({ q: query });
+            if (townContext) params.set("town", townContext);
+            const response = await fetch(`/api/autocomplete?${params.toString()}`, {
+              headers: { "Accept": "application/json" },
+            });
+            if (!response.ok) throw new Error("Autocomplete request failed");
+            const groups = await response.json();
+            if (sequence !== requestSequence) return;
+            cache.set(cacheKey, groups);
+            renderSuggestions(groups, query);
+          } catch (error) {
+            if (sequence !== requestSequence) return;
+            closePanel();
+          }
+        };
+
+        input.addEventListener("input", () => {
+          const query = input.value.trim();
+          if (townField) townField.value = "";
+          if (selectedPlaceField) selectedPlaceField.value = "";
+          setSelectedState(false);
+          window.clearTimeout(debounceTimer);
+          debounceTimer = window.setTimeout(() => {
+            fetchSuggestions(query);
+          }, 250);
+        });
+
+        input.addEventListener("keydown", (event) => {
+          if (panel.hidden) {
+            if (event.key === "Escape") closePanel();
+            return;
+          }
+
+          if (!suggestions.length) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closePanel();
+            }
+            return;
+          }
+
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setActiveIndex((activeIndex + 1) % suggestions.length);
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setActiveIndex((activeIndex - 1 + suggestions.length) % suggestions.length);
+          } else if (event.key === "Enter" && activeIndex >= 0) {
+            event.preventDefault();
+            submitSuggestion(suggestions[activeIndex]);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            closePanel();
+          }
+        });
+
+        input.addEventListener("focus", () => {
+          const query = input.value.trim();
+          const townContext = townField ? townField.value.trim() : "";
+          const cacheKey = `${query}::${townContext}`;
+          if (query.length >= 2 && cache.has(cacheKey)) {
+            renderSuggestions(cache.get(cacheKey), query);
+          }
+        });
+
+        input.addEventListener("blur", () => {
+          window.setTimeout(() => {
+            if (!root.contains(document.activeElement)) closePanel();
+          }, 120);
+        });
       });
     </script>
   </body>

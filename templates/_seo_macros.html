@@ -1,0 +1,5 @@
+{% macro render_structured_data(items) -%}
+  {% for item in items or [] %}
+    <script type="application/ld+json">{{ item|tojson }}</script>
+  {% endfor %}
+{%- endmacro %}

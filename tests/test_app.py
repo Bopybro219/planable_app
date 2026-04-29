@@ -49,6 +49,8 @@ class AppSmokeTests(unittest.TestCase):
         self._original_max_content_length = app.config.get("MAX_CONTENT_LENGTH")
         self._original_profile_image_max_bytes = app.config.get("PROFILE_IMAGE_MAX_BYTES")
         self._original_place_image_max_bytes = app.config.get("PLACE_IMAGE_MAX_BYTES")
+        self._original_turnstile_site_key = app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY")
+        self._original_turnstile_secret_key = app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY")
         self._db_fd, self._db_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(self._db_fd)
         self._upload_dir = tempfile.mkdtemp(prefix="planira-profile-images-")
@@ -63,6 +65,8 @@ class AppSmokeTests(unittest.TestCase):
         app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
         app.config["PROFILE_IMAGE_MAX_BYTES"] = 2 * 1024 * 1024
         app.config["PLACE_IMAGE_MAX_BYTES"] = 2 * 1024 * 1024
+        app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = ""
+        app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = ""
         self.client = app.test_client()
 
         with app.app_context():
@@ -85,6 +89,8 @@ class AppSmokeTests(unittest.TestCase):
         app.config["MAX_CONTENT_LENGTH"] = self._original_max_content_length
         app.config["PROFILE_IMAGE_MAX_BYTES"] = self._original_profile_image_max_bytes
         app.config["PLACE_IMAGE_MAX_BYTES"] = self._original_place_image_max_bytes
+        app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = self._original_turnstile_site_key
+        app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = self._original_turnstile_secret_key
 
         with app.app_context():
             rebind_sqlalchemy_for_current_config()
@@ -138,6 +144,32 @@ class AppSmokeTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn(snippet, response.data)
 
+    def test_robots_and_sitemap_routes_render_expected_public_entries(self):
+        with app.app_context():
+            db.session.add(Place(name="Sitemap Venue", slug="sitemap-venue", town="Map Town"))
+            db.session.commit()
+
+        robots_response = self.client.get("/robots.txt")
+        sitemap_response = self.client.get("/sitemap.xml")
+
+        self.assertEqual(robots_response.status_code, 200)
+        self.assertIn(b"Disallow: /account", robots_response.data)
+        self.assertIn(b"Disallow: /search", robots_response.data)
+        self.assertIn(b"Sitemap: http://localhost/sitemap.xml", robots_response.data)
+        self.assertEqual(sitemap_response.status_code, 200)
+        self.assertIn(b"http://localhost/", sitemap_response.data)
+        self.assertIn(b"http://localhost/plans", sitemap_response.data)
+        self.assertIn(b"http://localhost/place/sitemap-venue", sitemap_response.data)
+
+    def test_homepage_renders_seo_meta_and_structured_data(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<meta name="description" content="Planira helps you know before you go', response.data)
+        self.assertIn(b'<link rel="canonical" href="http://localhost/">', response.data)
+        self.assertIn(b'"@type": "Organization"', response.data)
+        self.assertIn(b'"@type": "WebSite"', response.data)
+
     def test_sqlite_fallback_still_works_when_database_url_missing(self):
         self.assertEqual(app_module.normalize_database_url(None), "sqlite:///planable.db")
 
@@ -172,12 +204,14 @@ class AppSmokeTests(unittest.TestCase):
         original_trusted_hosts = app.config.get("TRUSTED_HOSTS")
         original_cookie_secure = app.config.get("SESSION_COOKIE_SECURE")
         original_scheme = app.config.get("PREFERRED_URL_SCHEME")
+        original_secret_key = app.config.get("SECRET_KEY")
 
         app.config["ENVIRONMENT"] = "production"
         app.config["SERVER_NAME"] = None
         app.config["TRUSTED_HOSTS"] = None
         app.config["SESSION_COOKIE_SECURE"] = False
         app.config["PREFERRED_URL_SCHEME"] = "http"
+        app.config["SECRET_KEY"] = "change-me"
 
         try:
             missing = app_module.missing_config_keys()
@@ -187,6 +221,7 @@ class AppSmokeTests(unittest.TestCase):
             app.config["TRUSTED_HOSTS"] = original_trusted_hosts
             app.config["SESSION_COOKIE_SECURE"] = original_cookie_secure
             app.config["PREFERRED_URL_SCHEME"] = original_scheme
+            app.config["SECRET_KEY"] = original_secret_key
 
         self.assertTrue(any(item.startswith("SECRET_KEY") for item in missing))
         self.assertIn("SESSION_COOKIE_SECURE=true", missing)
@@ -319,6 +354,77 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             self.assertIsNone(User.query.filter_by(email="oauth-unverified@example.com").first())
 
+    def test_login_page_renders_turnstile_bypass_notice_in_testing(self):
+        response = self.client.get("/auth/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Turnstile is bypassed in this non-production environment", response.data)
+        self.assertIn(b"Continue with Google", response.data)
+
+    def test_login_post_redirects_to_google_when_turnstile_is_bypassed_in_testing(self):
+        fake_google = SimpleNamespace(authorize_redirect=unittest.mock.Mock(return_value=app.response_class(status=302)))
+
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        with patch.object(app_module, "google", fake_google), patch.dict(os.environ, {"GOOGLE_CLIENT_ID": "client-id"}):
+            response = self.client.post(
+                "/auth/login",
+                data={"csrf_token": "token123", "next": "/search"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        fake_google.authorize_redirect.assert_called_once()
+
+    def test_turnstile_missing_in_production_blocks_protected_submission(self):
+        with app.app_context():
+            user = User(email="prod-turnstile@example.com", name="Prod Turnstile", picture="", role="member", plan="free")
+            place = Place(name="Prod Place", slug="prod-place", town="Prod Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+
+        app.config["ENVIRONMENT"] = "production"
+        self.login_session("prod-turnstile@example.com", "Prod Turnstile")
+
+        response = self.client.post(
+            "/place/prod-place/comment",
+            data={"csrf_token": "token123", "body": "Blocked without Turnstile"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"anti-abuse protection is not configured", response.data)
+        with app.app_context():
+            self.assertEqual(Comment.query.count(), 0)
+
+    def test_turnstile_server_verification_rejects_failed_comment_submission(self):
+        with app.app_context():
+            user = User(email="turnstile-fail@example.com", name="Turnstile Fail", picture="", role="member", plan="free")
+            place = Place(name="Turnstile Place", slug="turnstile-place", town="Turnstile Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+
+        app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = "site-key"
+        app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = "secret-key"
+        self.login_session("turnstile-fail@example.com", "Turnstile Fail")
+
+        fake_response = io.BytesIO(b'{"success": false, "error-codes": ["invalid-input-response"]}')
+        with patch.object(app_module, "urlopen", return_value=fake_response):
+            response = self.client.post(
+                "/place/turnstile-place/comment",
+                data={
+                    "csrf_token": "token123",
+                    "body": "This should fail",
+                    "cf-turnstile-response": "bad-token",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Please complete the anti-abuse check and try again.", response.data)
+        with app.app_context():
+            self.assertEqual(Comment.query.count(), 0)
+
     def test_google_callback_links_existing_user_to_google_sub(self):
         with app.app_context():
             user = User(email="oauth-link@example.com", name="Old Name", picture="", role="member", plan="free")
@@ -416,6 +522,19 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_search_page_sets_noindex_robots_headers(self):
+        with app.app_context():
+            user = User(email="robots@example.com", name="Robots User", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("robots@example.com", "Robots User")
+        response = self.client.get("/search?submitted=1&q=test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<meta name="robots" content="noindex, follow">', response.data)
+        self.assertEqual(response.headers.get("X-Robots-Tag"), "noindex, follow")
+
     def test_place_page_masks_comment_author_email(self):
         with app.app_context():
             user = User(email="visible@example.com", name="Visible User", picture="", role="member", plan="free")
@@ -431,6 +550,38 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"vis...", response.data)
         self.assertNotIn(b"visible@example.com", response.data)
+
+    def test_place_page_renders_place_schema_and_accessibility_meta(self):
+        with app.app_context():
+            place = Place(
+                name="Schema Cafe",
+                slug="schema-cafe",
+                address1="1 High Street",
+                town="Schema Town",
+                postcode="SC1 1AA",
+                phone="01234 567890",
+                website="https://example.com/schema-cafe",
+                latitude=52.24,
+                longitude=-0.89,
+            )
+            db.session.add(place)
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place=place,
+                    step_free_entrance="yes",
+                    accessible_toilet="yes",
+                    toilets_available="yes",
+                )
+            )
+            db.session.commit()
+
+        response = self.client.get("/place/schema-cafe")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Accessibility and planning details for Schema Cafe in Schema Town.', response.data)
+        self.assertIn(b'"@type": "LocalBusiness"', response.data)
+        self.assertIn(b'"streetAddress": "1 High Street"', response.data)
 
     def test_search_submission_tracks_usage(self):
         with app.app_context():
