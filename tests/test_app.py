@@ -14,6 +14,8 @@ import app as app_module
 import venue_import
 from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, ContactMessage, EmailEvent, NewsletterDraft, NewsletterSubscriber, Place, PlaceImage, SearchEvent, StripeEvent, User, app, db
 
+DOCS_API_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs", "api.md")
+
 
 def rebind_sqlalchemy_for_current_config():
     extension = app.extensions["sqlalchemy"]
@@ -172,6 +174,18 @@ class AppSmokeTests(unittest.TestCase):
             session["user"] = {"email": email, "name": name, "picture": picture}
             session["_csrf_token"] = "token123"
 
+    def test_api_docs_cover_current_auth_and_rate_limit_contracts(self):
+        with open(DOCS_API_PATH, "r", encoding="utf-8") as docs_file:
+            docs = docs_file.read()
+
+        self.assertIn("Authorization: Bearer <API_KEY>", docs)
+        self.assertIn("Retry-After", docs)
+        self.assertIn("abuse throttling", docs)
+        self.assertIn("quota exhaustion", docs)
+        self.assertIn("Too many API search requests. Please wait and try again.", docs)
+        self.assertIn("This API key has used its available lookup allowance.", docs)
+        self.assertNotIn('"error": "write_access_required"', docs)
+
     def png_bytes(self):
         return (
             b"\x89PNG\r\n\x1a\n"
@@ -246,6 +260,10 @@ class AppSmokeTests(unittest.TestCase):
         cookies_response = self.client.get("/cookies")
 
         self.assertIn(b"Transactional and support emails", privacy_response.data)
+        self.assertIn(b"Data retention", privacy_response.data)
+        self.assertIn(b"up to 90 days", privacy_response.data)
+        self.assertIn(b"up to 30 days", privacy_response.data)
+        self.assertIn(b"you can request that through Planira support", privacy_response.data)
         self.assertIn(b"Minimal analytics only after consent", privacy_response.data)
         self.assertIn(b"Advertising only after consent", privacy_response.data)
         self.assertIn(b"Consent preferences", cookies_response.data)
@@ -1105,6 +1123,40 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(event.filters_json["accessible"], "yes")
         self.assertEqual(event.result_count, 0)
 
+    def test_anonymous_user_can_access_search_without_redirect(self):
+        response = self.client.get("/search?q=Tracked&town=Test+Town&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Find a place", response.data)
+        self.assertIn(b"Anonymous browsing is enabled", response.data)
+        self.assertIn(b"Sign in to save places, contribute, and access more features.", response.data)
+
+    def test_anonymous_search_does_not_create_search_event_or_consume_quota(self):
+        with app.app_context():
+            user = User(
+                email="anon-quota@example.com",
+                name="Anon Quota",
+                picture="",
+                role="member",
+                plan="free",
+                monthly_search_limit=3,
+                search_credits=2,
+            )
+            place = Place(name="Anonymous Result", slug="anonymous-result", town="Browse Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+            user_id = user.id
+            start_total = SearchEvent.query.count()
+
+        response = self.client.get("/search?q=Anonymous&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, user_id)
+            end_total = SearchEvent.query.count()
+        self.assertEqual(end_total, start_total)
+        self.assertEqual(refreshed.search_credits, 2)
+
     def test_search_pagination_does_not_duplicate_usage_or_preserve_submitted_flag(self):
         with app.app_context():
             user = User(email="page-usage@example.com", name="Page Usage", picture="", role="member", plan="free")
@@ -1217,17 +1269,16 @@ class AppSmokeTests(unittest.TestCase):
             db.session.commit()
 
         self.login_session("account@example.com", "Account User")
-        response = self.client.get("/account")
+        response = self.client.get("/account", follow_redirects=True)
+        redirect_response = self.client.get("/account")
         settings_response = self.client.get("/account/settings")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(redirect_response.status_code, 302)
+        self.assertTrue(redirect_response.headers["Location"].endswith("/account/settings"))
         self.assertEqual(settings_response.status_code, 200)
-        self.assertIn(b"Current plan", response.data)
+        self.assertIn(b"Your account hub", response.data)
         self.assertIn(b"Free", response.data)
-        self.assertIn(b"12", response.data)
-        self.assertIn(b"4", response.data)
-        self.assertIn(b"22", response.data)
-        self.assertIn(b"Explorer", response.data)
         self.assertIn(b"2 of 12 searches used this month", response.data)
         self.assertIn(b"4 extra search credits remaining", response.data)
         self.assertIn(b"Extra credits", settings_response.data)
@@ -1358,6 +1409,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Front entrance", free_response.data)
         self.assertIn(b"Upgrade to add your own place photos.", free_response.data)
         self.assertNotIn(b"Upload photo", free_response.data)
+        self.assertIn(b"Sign in to save places, contribute, and access more features.", logged_out_response.data)
 
     def test_free_user_cannot_upload_place_image_or_see_upload_form(self):
         with app.app_context():
@@ -1405,7 +1457,7 @@ class AppSmokeTests(unittest.TestCase):
 
         login_response = self.client.get(response.headers["Location"], follow_redirects=True)
         self.assertEqual(login_response.status_code, 200)
-        self.assertIn(b"Your session expired. Please sign in again before continuing.", login_response.data)
+        self.assertIn(b"Please sign in to continue.", login_response.data)
         self.assertNotIn(b"Bad request", login_response.data)
 
     def test_expired_image_upload_redirects_to_login_with_safe_place_next(self):
@@ -1431,7 +1483,7 @@ class AppSmokeTests(unittest.TestCase):
 
         login_response = self.client.get(response.headers["Location"], follow_redirects=True)
         self.assertEqual(login_response.status_code, 200)
-        self.assertIn(b"Your session expired. Please sign in again before continuing.", login_response.data)
+        self.assertIn(b"Please sign in to continue.", login_response.data)
         self.assertNotIn(b"Bad request", login_response.data)
 
     def test_login_does_not_store_post_only_next_destinations(self):
@@ -1450,6 +1502,29 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(upload_response.status_code, 200)
         with self.client.session_transaction() as session:
             self.assertEqual(session["next_url"], "/place/safe-next-place")
+
+    def test_logged_out_account_settings_redirects_to_login_with_safe_next(self):
+        response = self.client.get("/account/settings", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/auth/login?next=/account/settings")
+
+    def test_logged_out_developer_api_key_creation_redirects_to_login_with_safe_next(self):
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        response = self.client.post(
+            "/developers/api-keys",
+            data={"csrf_token": "token123", "label": "Blocked", "scopes": "places:read"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/auth/login?next=/developers")
+
+        login_response = self.client.get(response.headers["Location"], follow_redirects=True)
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn(b"Please sign in to continue.", login_response.data)
 
     def test_contact_form_creates_message_and_emails_support(self):
         with self.client.session_transaction() as session:
@@ -1901,18 +1976,48 @@ class AppSmokeTests(unittest.TestCase):
             db.session.commit()
 
         self.login_session("nav-member@example.com", "Nav Member")
-        member_response = self.client.get("/account")
+        member_response = self.client.get("/account/settings")
         self.assertEqual(member_response.status_code, 200)
         self.assertIn(b"account-avatar", member_response.data)
         self.assertIn(b"NM", member_response.data)
-        self.assertNotIn(b"Staff workspace", member_response.data)
+        self.assertNotIn(b"Account overview", member_response.data)
+        self.assertIn(b"Account settings", member_response.data)
+        self.assertNotIn(b"Staff tools", member_response.data)
 
         self.login_session("nav-staff@example.com", "Nav Staff")
-        staff_response = self.client.get("/account")
+        staff_response = self.client.get("/account/settings")
         self.assertEqual(staff_response.status_code, 200)
         self.assertIn(b"account-avatar", staff_response.data)
         self.assertIn(b"NS", staff_response.data)
-        self.assertIn(b"Staff", staff_response.data)
+        self.assertIn(b"Staff tools", staff_response.data)
+        self.assertIn(b"Dashboard", staff_response.data)
+
+    def test_account_dropdown_and_mobile_nav_use_account_settings_label(self):
+        with app.app_context():
+            user = User(email="nav-labels@example.com", name="Nav Labels", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("nav-labels@example.com", "Nav Labels")
+        response = self.client.get("/account/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b">Account settings</a>", response.data)
+        self.assertIn(b"<span>Account settings</span>", response.data)
+        self.assertNotIn(b"Account overview", response.data)
+
+    def test_non_staff_account_menu_excludes_staff_tools(self):
+        with app.app_context():
+            user = User(email="nav-no-staff@example.com", name="Nav No Staff", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("nav-no-staff@example.com", "Nav No Staff")
+        response = self.client.get("/account/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"Staff tools", response.data)
+        self.assertNotIn(b"Dashboard", response.data)
 
     def test_logged_out_pages_still_render_without_account_avatar(self):
         response = self.client.get("/plans")
@@ -3130,11 +3235,14 @@ class AppSmokeTests(unittest.TestCase):
 
         self.login_session("ui-staff@example.com", "UI Staff")
 
-        account_response = self.client.get("/account")
+        account_redirect = self.client.get("/account")
+        account_response = self.client.get("/account", follow_redirects=True)
         settings_response = self.client.get("/account/settings")
         plans_response = self.client.get("/plans")
         venues_response = self.client.get("/admin/venues")
 
+        self.assertEqual(account_redirect.status_code, 302)
+        self.assertTrue(account_redirect.headers["Location"].endswith("/account/settings"))
         self.assertEqual(account_response.status_code, 200)
         self.assertIn(b"Free", account_response.data)
         self.assertIn(b"Staff", account_response.data)
@@ -3142,12 +3250,14 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(settings_response.status_code, 200)
         self.assertIn(b"Plan: Free", settings_response.data)
         self.assertIn(b"Access: Staff", settings_response.data)
+        self.assertIn(b"Staff tools", settings_response.data)
+        self.assertIn(b"Account settings", settings_response.data)
+        self.assertNotIn(b"Account overview", settings_response.data)
 
         self.assertEqual(plans_response.status_code, 200)
         self.assertIn(b"on the Free plan with Staff access", plans_response.data)
 
         self.assertEqual(venues_response.status_code, 200)
-        self.assertIn(b"planira-staff-dropdown-toggle planira-nav-link-active", venues_response.data)
         self.assertIn(b"Legacy data view", venues_response.data)
 
     def test_staff_user_can_access_admin_venues(self):

@@ -532,6 +532,9 @@ class NewsletterSubscriber(db.Model):
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
+# Data retention:
+# See the privacy policy for current retention windows.
+# These logs and operational records are intended to be rotated or cleaned up in future background jobs.
 class EmailEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event_key = db.Column(db.String(255), unique=True, nullable=False, index=True)
@@ -650,8 +653,8 @@ def robots_directive_for_request():
 
 def page_title_for_endpoint(endpoint):
     titles = {
-        "account": "Account",
-        "account_settings": "Settings",
+        "account": "Account settings",
+        "account_settings": "Account settings",
         "developers": "Developer API",
         "index": APP_NAME,
         "plans": "Plans",
@@ -1985,7 +1988,7 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("user"):
-            flash("Please sign in before continuing.", "info")
+            flash("Please sign in to continue.", "info")
             return redirect(url_for("login", next=safe_next_target_for_request()))
         if not current_user():
             session.clear()
@@ -3762,8 +3765,7 @@ def build_shell_navigation(user):
         nav.extend(
             [
                 {"label": "Search", "endpoint": "search", "icon": "search"},
-                {"label": "Account", "endpoint": "account", "icon": "user"},
-                {"label": "Settings", "endpoint": "account_settings", "icon": "settings"},
+                {"label": "Account settings", "endpoint": "account_settings", "icon": "settings"},
             ]
         )
     return nav
@@ -3885,6 +3887,17 @@ def build_user_summary(user):
         "verifications": verified_count,
         "saved_venues": saved_venues,
         "member_since": user.created_at.strftime("%d %b %Y") if user.created_at else "Recently",
+    }
+
+
+def build_guest_search_summary():
+    return {
+        "quota_copy": {
+            "allowance_copy": "Anonymous search is browse-only. Sign in when you want saved activity, contributions, or account-based access.",
+            "search_limit_copy": "Anonymous browsing enabled",
+            "search_usage_copy": "No account usage is tracked while you browse signed out",
+            "search_credits_copy": "Search credits and paid allowances apply after sign-in",
+        }
     }
 
 
@@ -5143,12 +5156,14 @@ def ensure_database_ready():
 def protect_forms():
     if request.method != "POST":
         return None
-    if request.endpoint in {"add_comment", "upload_place_image", "delete_place_image"} and (
-        not session.get("user") or not current_user()
-    ):
-        session.clear()
-        flash("Your session expired. Please sign in again before continuing.", "info")
-        return redirect(url_for("login", next=safe_next_target_for_request()))
+    if request.endpoint in {"add_comment", "upload_place_image", "delete_place_image"}:
+        if not session.get("user"):
+            flash("Please sign in to continue.", "info")
+            return redirect(url_for("login", next=safe_next_target_for_request()))
+        if not current_user():
+            session.clear()
+            flash("Your session expired. Please sign in again before continuing.", "info")
+            return redirect(url_for("login", next=safe_next_target_for_request()))
     if request.endpoint in CSRF_EXEMPT_ENDPOINTS:
         return None
     if request.path.startswith("/api/"):
@@ -5627,39 +5642,7 @@ def plans():
 @app.route("/account")
 @login_required
 def account():
-    user = current_user()
-    account_state = build_account_state(user)
-    developer_summary = build_developer_summary(user)
-    access_map = {
-        "Free": "This account uses the free plan with a tracked monthly search allowance.",
-        "Paid": "This account uses the paid plan with a larger monthly search allowance.",
-        "Business": "This account uses the business plan for developer and API workflows.",
-    }
-    current_access = {
-        "name": account_state["plan_label"],
-        "summary": access_map.get(account_state["plan_label"], access_map["Free"]),
-    }
-    summary = build_user_summary(user)
-    quick_actions = [
-        {"label": "Manage account", "href": url_for("account_settings"), "style": "primary"},
-        {"label": "Search venues", "href": url_for("search"), "style": "secondary"},
-        {"label": "Developer API", "href": url_for("developers"), "style": "secondary"},
-        {"label": "Upgrade plan", "href": url_for("plans"), "style": "secondary"},
-    ]
-    return render_template(
-        "account.html",
-        current_access=current_access,
-        account_state=account_state,
-        account_summary=summary,
-        developer_summary=developer_summary,
-        quick_actions=quick_actions,
-        seo=build_seo_payload(
-            title=f"Account | {APP_NAME}",
-            description="Manage your Planira account, plan, search usage, and developer access.",
-            canonical_url=build_absolute_url("account"),
-            robots="noindex, nofollow",
-        ),
-    )
+    return redirect(url_for("account_settings"))
 
 
 @app.route("/account/settings")
@@ -5672,8 +5655,8 @@ def account_settings():
         settings_sections=settings_sections,
         developer_summary=build_developer_summary(user),
         seo=build_seo_payload(
-            title=f"Settings | {APP_NAME}",
-            description="Update your Planira account settings and profile preferences.",
+            title=f"Account settings | {APP_NAME}",
+            description="Manage your Planira profile, usage, developer access, and account data settings.",
             canonical_url=build_absolute_url("account_settings"),
             robots="noindex, nofollow",
         ),
@@ -6263,15 +6246,10 @@ def api_update_place(place_id):
 
 @app.route("/search")
 def search():
-    if not session.get("user"):
-        flash("Search results are available after Google login.", "info")
-        return redirect(url_for("login", next=safe_next_target_for_request()))
-
-    user = current_user()
-    if not user:
+    user = current_user_for_optional_request()
+    if session.get("user") and not user:
         session.clear()
-        flash("Your session expired, so please sign in again.", "info")
-        return redirect(url_for("login", next=safe_next_target_for_request()))
+        user = None
 
     filters = build_search_filter_state(request.args)
     public_filter_options = build_public_search_filter_options()
@@ -6330,7 +6308,7 @@ def search():
             identifier=user_or_ip_identifier(user),
             description="You have submitted several searches recently. Please wait a little while and try again.",
         )
-    limit_context = search_limit_context(user)
+    limit_context = search_limit_context(user) if user else None
     filters_payload = build_search_filter_payload(filters)
     active_filter_chips = build_search_active_filters(filters)
     pagination_args = build_search_pagination_args(filters, submitted)
@@ -6340,12 +6318,12 @@ def search():
     results = []
     result_cards = []
     if should_search:
-        if is_counted_submission and has_filters and limit_context["limit_reached"]:
+        if user and is_counted_submission and has_filters and limit_context["limit_reached"]:
             limit_message = build_quota_copy(user, limit_context)["blocked_message"]
             flash(limit_message, "info")
             should_search = False
         if not should_search:
-            search_usage = build_user_summary(user)
+            search_usage = build_user_summary(user) if user else build_guest_search_summary()
             return render_template(
                 "search.html",
                 results=results,
@@ -6375,6 +6353,8 @@ def search():
                 venue_type_options=public_filter_options["venue_type_options"],
                 source_options=public_filter_options["source_options"],
                 search_usage=search_usage,
+                show_search_usage=bool(user),
+                anonymous_feature_hint=not user,
                 signal_examples=build_signal_examples(),
                 seo=build_seo_payload(
                     title=f"Search | {APP_NAME}",
@@ -6471,7 +6451,7 @@ def search():
         pagination = query.order_by(Place.name.asc()).paginate(page=page, per_page=per_page, error_out=False)
         results = pagination.items
         result_cards = [build_place_card(place) for place in results]
-        if is_counted_submission and has_filters:
+        if user and is_counted_submission and has_filters:
             consume_search_credit_if_needed(user, limit_context)
             track_search_event(
                 user,
@@ -6491,7 +6471,7 @@ def search():
                 },
             )
             db.session.commit()
-    search_usage = build_user_summary(user)
+    search_usage = build_user_summary(user) if user else build_guest_search_summary()
     return render_template(
         "search.html",
         results=results,
@@ -6521,6 +6501,8 @@ def search():
         venue_type_options=public_filter_options["venue_type_options"],
         source_options=public_filter_options["source_options"],
         search_usage=search_usage,
+        show_search_usage=bool(user),
+        anonymous_feature_hint=not user,
         signal_examples=build_signal_examples(),
         seo=build_seo_payload(
             title=f"Search | {APP_NAME}",
@@ -6593,6 +6575,7 @@ def place_detail(slug):
         can_upload_place_images=can_upload_place_images(user),
         get_place_image_url=get_place_image_url,
         signal=signal,
+        anonymous_feature_hint=not user,
         seo=build_seo_payload(
             title=f"{place.name} | {APP_NAME}",
             description=build_place_seo_description(place, profile, signal),

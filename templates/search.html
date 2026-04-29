@@ -15,6 +15,11 @@
 
 <section class="search-layout">
   <div class="content-stack">
+    {% if anonymous_feature_hint %}
+      <article class="planira-card planira-card-soft">
+        <p class="muted">Sign in to save places, contribute, and access more features.</p>
+      </article>
+    {% endif %}
     <article class="planira-card planira-card-primary search-control-panel">
       <div class="section-head">
         <div>
@@ -194,7 +199,11 @@
           {% endif %}
         </div>
         <div class="tag-row">
-          <span>{{ search_usage.quota_copy.search_usage_copy }}</span>
+          {% if show_search_usage %}
+            <span>{{ search_usage.quota_copy.search_usage_copy }}</span>
+          {% else %}
+            <span>Anonymous browsing is enabled</span>
+          {% endif %}
           {% if pagination %}
             <span>{{ pagination.per_page }} results per page</span>
           {% else %}
@@ -270,23 +279,43 @@
   </div>
 
     <article class="planira-card planira-card-soft">
-      <span class="eyebrow">Your plan</span>
-      <h2>Search usage at a glance</h2>
-      <p class="muted">{{ search_usage.quota_copy.allowance_copy }}</p>
-      <div class="stack-list">
-        <div class="stack-row">
-          <strong>{{ search_usage.quota_copy.search_limit_copy }}</strong>
-          <span>{{ search_usage.quota_copy.search_usage_copy }}.</span>
+      {% if show_search_usage %}
+        <span class="eyebrow">Your plan</span>
+        <h2>Search usage at a glance</h2>
+        <p class="muted">{{ search_usage.quota_copy.allowance_copy }}</p>
+        <div class="stack-list">
+          <div class="stack-row">
+            <strong>{{ search_usage.quota_copy.search_limit_copy }}</strong>
+            <span>{{ search_usage.quota_copy.search_usage_copy }}.</span>
+          </div>
+          <div class="stack-row">
+            <strong>{{ search_usage.quota_copy.search_credits_copy }}</strong>
+            <span>Extra credits only apply after the monthly allowance is used.</span>
+          </div>
         </div>
-        <div class="stack-row">
-          <strong>{{ search_usage.quota_copy.search_credits_copy }}</strong>
-          <span>Extra credits only apply after the monthly allowance is used.</span>
+        <div class="page-head-actions">
+          <a class="btn-secondary-planira" href="{{ url_for('plans') }}">Compare plans</a>
+          <a class="btn-secondary-planira" href="{{ url_for('account_settings') }}">Account settings</a>
         </div>
-      </div>
-      <div class="page-head-actions">
-        <a class="btn-secondary-planira" href="{{ url_for('plans') }}">Compare plans</a>
-        <a class="btn-secondary-planira" href="{{ url_for('account') }}">Open account</a>
-      </div>
+      {% else %}
+        <span class="eyebrow">Signed-out browsing</span>
+        <h2>Search freely, then sign in when you need more</h2>
+        <p class="muted">{{ search_usage.quota_copy.allowance_copy }}</p>
+        <div class="stack-list">
+          <div class="stack-row">
+            <strong>{{ search_usage.quota_copy.search_limit_copy }}</strong>
+            <span>{{ search_usage.quota_copy.search_usage_copy }}.</span>
+          </div>
+          <div class="stack-row">
+            <strong>{{ search_usage.quota_copy.search_credits_copy }}</strong>
+            <span>Protected actions still require sign-in.</span>
+          </div>
+        </div>
+        <div class="page-head-actions">
+          <a class="btn-secondary-planira" href="{{ url_for('plans') }}">Compare plans</a>
+          <a class="btn-secondary-planira" href="{{ url_for('login', next=request.full_path) }}">Sign in</a>
+        </div>
+      {% endif %}
     </article>
   </aside>
 </section>

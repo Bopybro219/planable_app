@@ -16,6 +16,11 @@
 
 <section class="search-layout">
   <div class="content-stack">
+    {% if anonymous_feature_hint %}
+      <article class="surface-panel">
+        <p class="muted">Sign in to save places, contribute, and access more features.</p>
+      </article>
+    {% endif %}
     <article class="surface-panel place-summary-panel">
       <div class="section-head">
         <div>
