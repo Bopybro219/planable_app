@@ -492,6 +492,26 @@ p {
   font-weight: 750;
 }
 
+.planira-account-menu-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(100, 116, 139, 0.16);
+}
+
+.planira-account-menu-label {
+  padding: 0 12px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.planira-account-menu-group {
+  display: grid;
+  gap: 6px;
+}
+
 .planira-user-menu {
   display: flex;
   align-items: center;
@@ -2655,25 +2675,35 @@ body.planira-theme-calm .planira-account-menu {
   backdrop-filter: blur(14px);
 }
 
+body.planira-theme-calm .planira-account-menu .planira-staff-menu-link,
 body.planira-theme-calm .planira-account-menu .planira-staff-dropdown-toggle {
   width: 100%;
-  justify-content: space-between;
-  background: #314346;
-  color: #ffffff !important;
+  justify-content: flex-start;
+  min-height: 42px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--color-text) !important;
   border: 1px solid transparent;
   box-shadow: none;
 }
 
-body.planira-theme-calm .planira-account-menu .planira-staff-dropdown-toggle:hover {
-  background: #3b4f52;
-  color: #ffffff !important;
-  border-color: transparent;
+body.planira-theme-calm .planira-account-menu-label {
+  color: var(--color-muted);
 }
 
-body.planira-theme-calm .planira-account-menu .planira-staff-dropdown-toggle.active {
-  background: var(--color-primary-soft);
+body.planira-theme-calm .planira-account-menu-section {
+  border-top-color: rgba(100, 116, 139, 0.16);
+}
+
+body.planira-theme-calm .planira-account-menu .planira-staff-menu-link:hover,
+body.planira-theme-calm .planira-account-menu .planira-staff-menu-link:focus-visible,
+body.planira-theme-calm .planira-account-menu .planira-staff-dropdown-toggle:hover,
+body.planira-theme-calm .planira-account-menu .planira-staff-dropdown-toggle:focus-visible {
+  background: rgba(37, 99, 235, 0.08);
   color: var(--color-primary) !important;
-  border-color: rgba(37, 99, 235, 0.16);
+  border-color: rgba(37, 99, 235, 0.12);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 body.planira-theme-calm .planira-staff-menu {

@@ -4,8 +4,8 @@ Planira currently exposes a small JSON API for place lookup and staff-managed ve
 
 ## Base behavior
 
-- All API requests use a Bearer token in the `Authorization` header.
-- API keys are account-scoped.
+- All API requests use a bearer token in the `Authorization` header.
+- API keys are account-scoped and scope-scoped.
 - Raw API keys are shown only once when created. The server stores only a hash.
 - Public/read access and write/edit access are intentionally separate.
 
@@ -19,7 +19,12 @@ Authorization: Bearer plnr_live_your_key_here
 
 ### Read access
 
-Users can use read endpoints when their account has API access:
+Read endpoints require both:
+
+- an API key with the required scope, usually `places:read`
+- an account that still has active API entitlement
+
+Accounts with API access include:
 
 - `paid`
 - `business`
@@ -32,14 +37,36 @@ Free/member accounts do not have API access.
 
 Write endpoints are stricter:
 
-- `staff` and `admin` API keys can create and update place data
-- paid/business API users are read-only
+- the API key must include `places:write`
+- the key owner must be `staff` or `admin`
+
+Paid/business API users are read-only even if they have API entitlement.
 
 This mirrors the staff dashboard permission model used in the web app.
 
-## Authentication errors
+## Authentication and authorization
 
-Common auth responses:
+Planira API requests authenticate with:
+
+```http
+Authorization: Bearer <API_KEY>
+```
+
+The API returns:
+
+- `401 Unauthorized` when the request is missing a key or the key cannot be verified
+- `403 Forbidden` when the key is valid but cannot be used for that request
+
+That `403` case includes:
+
+- revoked or inactive API keys
+- keys whose owner no longer has API entitlement
+- keys that do not have the required scope
+- write attempts by non-staff users
+
+Repeated invalid or missing auth attempts may be abuse-throttled and return `429` instead.
+
+## Authentication errors
 
 ### `401 Unauthorized`
 
@@ -49,6 +76,15 @@ Missing key:
 {
   "error": "missing_api_key",
   "message": "Send an API key using the Authorization Bearer header."
+}
+```
+
+Malformed key format:
+
+```json
+{
+  "error": "invalid_api_key",
+  "message": "The API key format is not valid for this environment."
 }
 ```
 
@@ -63,7 +99,7 @@ Invalid key:
 
 ### `403 Forbidden`
 
-No API entitlement:
+Owner does not currently have API entitlement:
 
 ```json
 {
@@ -72,7 +108,25 @@ No API entitlement:
 }
 ```
 
-Read key trying to write:
+If API-pack entitlement is temporarily disabled for the account, the same error key is used with this message:
+
+```json
+{
+  "error": "api_access_required",
+  "message": "API pack access is temporarily unavailable while lookup-credit accounting is being finished."
+}
+```
+
+Insufficient scope:
+
+```json
+{
+  "error": "invalid_api_key",
+  "message": "This API key does not have access to this endpoint."
+}
+```
+
+Read-only key trying to write:
 
 ```json
 {
@@ -90,15 +144,19 @@ Revoked key:
 }
 ```
 
-## Rate and usage behavior
+## Rate limits
 
-- Lookups are tracked per API key.
-- Read lookups update usage counters and create `APILookupEvent` records.
-- Staff and some business access can have unlimited lookup allowance.
-- Limited keys can consume extra lookup credits after the monthly allowance is used.
-- If a key has no remaining allowance, the API returns `429`.
+Planira uses two separate limiting concepts. Clients should handle them differently.
 
-Example:
+### Entitlement and quota limits
+
+These are product/account limits tied to the API key and the key owner's access.
+
+- monthly lookup allowance
+- extra lookup credits
+- purchased or provisioned API access
+
+When this limit is exhausted, the request is valid but the key has no remaining lookup allowance. The API returns `429 Too Many Requests` with:
 
 ```json
 {
@@ -107,11 +165,69 @@ Example:
 }
 ```
 
+This is separate from abuse protection. A quota hit means the key has run out of allowed usage, not that the caller is behaving suspiciously.
+
+### Abuse throttling
+
+These are short-term protective limits designed to slow scraping, bursts, and accidental retry loops.
+
+- repeated authentication failures are throttled
+- `/api/v1/places/search` has additional request-rate throttling
+- throttling is separate from monthly/API-pack usage accounting
+
+Abuse throttling returns `429 Too Many Requests` with a `rate_limited` error.
+
+### `Retry-After`
+
+`429` responses may include a `Retry-After` header telling the client how long to wait before retrying.
+
+- respect `Retry-After` when present
+- back off instead of retrying immediately
+- treat abuse throttling and quota exhaustion as different remediation paths
+
+Search throttling example:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: application/json
+
+{
+  "error": "rate_limited",
+  "message": "Too many API search requests. Please wait and try again."
+}
+```
+
+Repeated auth-failure throttling example:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 600
+Content-Type: application/json
+
+{
+  "error": "rate_limited",
+  "message": "Too many requests. Please wait a moment and try again."
+}
+```
+
+## Usage accounting
+
+- Lookups are tracked per API key.
+- Read lookups update usage counters and create `APILookupEvent` records.
+- Staff and some business access can have unlimited lookup allowance.
+- Limited keys can consume extra lookup credits after the monthly allowance is used.
+- Abuse throttling for `/api/v1/places/search` is separate from monthly/API-pack usage accounting.
+
 ## Endpoints
 
 ## `GET /api/v1/places/search`
 
 Searches for matching places and returns public place/accessibility fields.
+
+### Required scope
+
+- `places:read`
 
 ### Query parameters
 
@@ -120,6 +236,12 @@ At least one of these is required:
 - `q`
 - `town`
 - `postcode`
+
+Notes:
+
+- you can combine parameters
+- results are limited to 25 places
+- `q` matches against place name, address line 1, and postcode
 
 ### Example request
 
@@ -138,30 +260,17 @@ curl \
     {
       "id": 12,
       "name": "Example Arms",
-      "slug": "example-arms",
-      "address1": "1 High Street",
       "town": "Northampton",
-      "county": "Northamptonshire",
       "postcode": "NN1 1AA",
-      "phone": "01604 000000",
-      "website": "https://example.com",
-      "status": "verified",
-      "venue_type": "pub",
-      "latitude": 52.24,
-      "longitude": -0.89,
+      "accessibility_summary": {
+        "label": "Accessible toilet confirmed",
+        "summary": "Step-free entrance and accessible toilet confirmed.",
+        "tone": "positive"
+      },
+      "toilets_available": "unknown",
       "accessible_toilet": "yes",
       "step_free_entrance": "yes",
-      "toilets_available": "yes",
       "stairs_inside": "no",
-      "baby_changing": "unknown",
-      "lift_available": "unknown",
-      "disabled_parking": "unknown",
-      "toilet_location": null,
-      "toilet_distance_from_bar": null,
-      "toilet_distance_from_bar_m": null,
-      "public_comments": null,
-      "sensory_notes": null,
-      "source": "phone_verified",
       "confidence_score": 82,
       "verified": true,
       "verification_status": "Verified",
@@ -178,7 +287,6 @@ curl \
 
 ### Notes
 
-- Results are limited to 25 places.
 - The response intentionally excludes staff-only verification details like `verified_by_user_id` and `last_verified_by`.
 
 ### Error responses
@@ -200,6 +308,80 @@ No results:
   "message": "No places matched that lookup."
 }
 ```
+
+Missing or invalid API key:
+
+```json
+{
+  "error": "missing_api_key",
+  "message": "Send an API key using the Authorization Bearer header."
+}
+```
+
+```json
+{
+  "error": "invalid_api_key",
+  "message": "The API key could not be verified."
+}
+```
+
+Insufficient scope:
+
+```json
+{
+  "error": "invalid_api_key",
+  "message": "This API key does not have access to this endpoint."
+}
+```
+
+Entitlement blocked or unavailable:
+
+```json
+{
+  "error": "api_access_required",
+  "message": "API access requires an active Planira API or Early Access plan."
+}
+```
+
+```json
+{
+  "error": "api_access_required",
+  "message": "API pack access is temporarily unavailable while lookup-credit accounting is being finished."
+}
+```
+
+Abuse throttled:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: application/json
+
+{
+  "error": "rate_limited",
+  "message": "Too many API search requests. Please wait and try again."
+}
+```
+
+Lookup quota exhausted:
+
+```json
+{
+  "error": "limit_reached",
+  "message": "This API key has used its available lookup allowance."
+}
+```
+
+The `rate_limited` response is abuse throttling. The `limit_reached` response is usage/quota exhaustion.
+
+## Client best practices
+
+- Cache repeat lookups where possible.
+- Debounce user-driven search before calling `/api/v1/places/search`.
+- Respect `Retry-After` and back off instead of retrying immediately.
+- Avoid large parallel request bursts from the same key or IP.
+- Handle `401`, `403`, and `429` as distinct cases in client code.
+- Never expose API keys in frontend JavaScript, mobile bundles, or other public client code.
 
 ## `POST /api/v1/places`
 
@@ -496,4 +678,3 @@ Conflicting verification values:
 - Write endpoints: `api_create_place`, `api_update_place`
 - Auth helper: `authenticate_api_key`
 - Staff write guard: `authenticate_api_write_request`
-

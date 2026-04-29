@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
 {% import '_planira_macros.html' as ui %}
-{% block title %}Settings | Planira{% endblock %}
+{% block title %}Account settings | Planira{% endblock %}
 {% block content %}
 <section class="page-head">
   <div class="page-title-group">
-    <span class="eyebrow">Settings</span>
-    <h1>Account settings and preferences</h1>
-    <p class="page-subtitle">A clearer view of profile details, usage, and important account links without changing any backend behaviour.</p>
+    <span class="eyebrow">Account settings</span>
+    <h1>Your account hub</h1>
+    <p class="page-subtitle">Manage profile details, usage, developer access, and privacy links from one calm account workspace.</p>
   </div>
 </section>
 
@@ -92,7 +92,7 @@
             <span class="toggle-pill {% if settings_sections.preferences.avoid_stairs %}active{% endif %}">{{ 'On' if settings_sections.preferences.avoid_stairs else 'Off' }}</span>
           </div>
         </div>
-        <p class="helper-copy">These values summarise the defaults shown in the product today. They are not account-specific saved preferences yet.</p>
+        <p class="helper-copy">These values summarise the current product defaults shown in search today.</p>
       </article>
     </section>
 
