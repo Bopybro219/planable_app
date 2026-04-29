@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import app as app_module
 import venue_import
-from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, ContactMessage, EmailEvent, NewsletterDraft, NewsletterSubscriber, Place, PlaceImage, SearchEvent, User, app, db
+from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, ContactMessage, EmailEvent, NewsletterDraft, NewsletterSubscriber, Place, PlaceImage, SearchEvent, StripeEvent, User, app, db
 
 
 def rebind_sqlalchemy_for_current_config():
@@ -65,6 +65,14 @@ class AppSmokeTests(unittest.TestCase):
         self._original_adsense_slot_search_results = app.config.get("ADSENSE_SLOT_SEARCH_RESULTS")
         self._original_adsense_slot_place_detail = app.config.get("ADSENSE_SLOT_PLACE_DETAIL")
         self._original_adsense_slot_footer = app.config.get("ADSENSE_SLOT_FOOTER")
+        self._original_rate_limit_enabled = app.config.get("RATE_LIMIT_ENABLED")
+        self._original_rate_limit_fail_open = app.config.get("RATE_LIMIT_FAIL_OPEN")
+        self._original_redis_url = app.config.get("REDIS_URL")
+        self._original_api_rate_limit_burst = app.config.get("API_RATE_LIMIT_BURST")
+        self._original_api_rate_limit_burst_window = app.config.get("API_RATE_LIMIT_BURST_WINDOW_SECONDS")
+        self._original_api_rate_limit_daily = app.config.get("API_RATE_LIMIT_DAILY")
+        self._original_mail_timeout_seconds = app.config.get("MAIL_TIMEOUT_SECONDS")
+        self._original_redis_lib = app_module.redis_lib
         self._db_fd, self._db_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(self._db_fd)
         self._upload_dir = tempfile.mkdtemp(prefix="planira-profile-images-")
@@ -94,7 +102,15 @@ class AppSmokeTests(unittest.TestCase):
         app.config["ADSENSE_SLOT_SEARCH_RESULTS"] = "1111111111"
         app.config["ADSENSE_SLOT_PLACE_DETAIL"] = "2222222222"
         app.config["ADSENSE_SLOT_FOOTER"] = "3333333333"
+        app.config["RATE_LIMIT_ENABLED"] = False
+        app.config["RATE_LIMIT_FAIL_OPEN"] = True
+        app.config["REDIS_URL"] = ""
+        app.config["API_RATE_LIMIT_BURST"] = 60
+        app.config["API_RATE_LIMIT_BURST_WINDOW_SECONDS"] = 60
+        app.config["API_RATE_LIMIT_DAILY"] = 1000
+        app.config["MAIL_TIMEOUT_SECONDS"] = 5
         app.extensions["email_outbox"] = []
+        app_module.clear_rate_limit_state()
         self.client = app.test_client()
 
         with app.app_context():
@@ -132,7 +148,16 @@ class AppSmokeTests(unittest.TestCase):
         app.config["ADSENSE_SLOT_SEARCH_RESULTS"] = self._original_adsense_slot_search_results
         app.config["ADSENSE_SLOT_PLACE_DETAIL"] = self._original_adsense_slot_place_detail
         app.config["ADSENSE_SLOT_FOOTER"] = self._original_adsense_slot_footer
+        app.config["RATE_LIMIT_ENABLED"] = self._original_rate_limit_enabled
+        app.config["RATE_LIMIT_FAIL_OPEN"] = self._original_rate_limit_fail_open
+        app.config["REDIS_URL"] = self._original_redis_url
+        app.config["API_RATE_LIMIT_BURST"] = self._original_api_rate_limit_burst
+        app.config["API_RATE_LIMIT_BURST_WINDOW_SECONDS"] = self._original_api_rate_limit_burst_window
+        app.config["API_RATE_LIMIT_DAILY"] = self._original_api_rate_limit_daily
+        app.config["MAIL_TIMEOUT_SECONDS"] = self._original_mail_timeout_seconds
         app.extensions["email_outbox"] = []
+        app_module.redis_lib = self._original_redis_lib
+        app_module.clear_rate_limit_state()
 
         with app.app_context():
             rebind_sqlalchemy_for_current_config()
@@ -254,6 +279,13 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b'"@type": "WebSite"', response.data)
         self.assertNotIn(b"googletagmanager", response.data.lower())
         self.assertIn(b"window.track_event = trackEvent;", response.data)
+        self.assertIn(b"mapicon.svg", response.data)
+
+    def test_mapicon_static_asset_exists(self):
+        response = self.client.get("/static/mapicon.svg")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"<svg", response.data)
 
     def test_consent_banner_appears_without_saved_preferences(self):
         response = self.client.get("/")
@@ -479,6 +511,20 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn("SESSION_COOKIE_SECURE=true", missing)
         self.assertIn("TRUSTED_HOSTS", missing)
         self.assertIn("SERVER_NAME", missing)
+        self.assertIn("REDIS_URL", missing)
+
+    def test_env_example_documents_runtime_variables_without_legacy_api_key(self):
+        env_example_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env.example")
+        with open(env_example_path, "r", encoding="utf-8") as env_file:
+            env_example = env_file.read()
+
+        self.assertIn("APP_ENV=", env_example)
+        self.assertIn("REDIS_URL=", env_example)
+        self.assertIn("RATE_LIMIT_ENABLED=", env_example)
+        self.assertIn("RATE_LIMIT_FAIL_OPEN=", env_example)
+        self.assertIn("MAIL_TIMEOUT_SECONDS=", env_example)
+        self.assertIn("PLACE_IMAGE_MAX_MB=", env_example)
+        self.assertNotIn("PLANIRA_API_KEY", env_example)
 
     def test_v2_schema_models_create_cleanly(self):
         with app.app_context():
@@ -639,6 +685,106 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         fake_google.authorize_redirect.assert_called_once()
 
+    def test_login_rate_limit_records_hits_and_returns_429(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        fake_google = SimpleNamespace(authorize_redirect=unittest.mock.Mock(return_value=app.response_class(status=302)))
+
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        with patch.object(app_module, "google", fake_google), patch.dict(os.environ, {"GOOGLE_CLIENT_ID": "client-id"}):
+            for _ in range(10):
+                response = self.client.post("/auth/login", data={"csrf_token": "token123", "next": "/search"})
+                self.assertEqual(response.status_code, 302)
+
+            blocked_response = self.client.post("/auth/login", data={"csrf_token": "token123", "next": "/search"})
+
+        self.assertEqual(blocked_response.status_code, 429)
+        state = app_module.current_rate_limit("login", "ip:127.0.0.1", window_seconds=600)
+        self.assertEqual(state["count"], 11)
+
+    def test_contact_form_rate_limit_returns_429_after_limit(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        payload = {
+            "csrf_token": "token123",
+            "name": "Rate Limited",
+            "email": "contact-rate@example.com",
+            "subject": "Hello",
+            "message": "Testing contact limit",
+        }
+        for _ in range(5):
+            response = self.client.post("/contact", data=payload)
+            self.assertEqual(response.status_code, 302)
+
+        blocked_response = self.client.post("/contact", data=payload)
+        self.assertEqual(blocked_response.status_code, 429)
+
+    def test_api_search_rate_limit_blocks_after_burst_limit(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        app.config["API_RATE_LIMIT_BURST"] = 2
+        app.config["API_RATE_LIMIT_BURST_WINDOW_SECONDS"] = 60
+        app.config["API_RATE_LIMIT_DAILY"] = 10
+        with app.app_context():
+            user = User(email="api-burst@example.com", name="API Burst", picture="", role="member", plan="paid")
+            db.session.add_all(
+                [
+                    user,
+                    Place(name="Burst Venue", slug="burst-venue", town="Burst Town", address1="1 Burst Street", postcode="NN1 1AA"),
+                ]
+            )
+            db.session.flush()
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Burst key")
+            db.session.commit()
+
+        headers = {"Authorization": f"Bearer {raw_key}"}
+        first_response = self.client.get("/api/v1/places/search?q=Burst", headers=headers)
+        second_response = self.client.get("/api/v1/places/search?q=Burst", headers=headers)
+        blocked_response = self.client.get("/api/v1/places/search?q=Burst", headers=headers)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertEqual(blocked_response.json["error"], "rate_limited")
+        self.assertIn("Retry-After", blocked_response.headers)
+
+    def test_missing_api_key_failures_are_rate_limited(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        blocked_response = None
+        for _ in range(20):
+            response = self.client.get("/api/v1/places/search?q=Missing")
+            self.assertEqual(response.status_code, 401)
+        blocked_response = self.client.get("/api/v1/places/search?q=Missing")
+
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertEqual(blocked_response.json["error"], "rate_limited")
+
+    def test_rate_limit_falls_back_to_memory_when_redis_is_unavailable_in_testing(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        app.config["REDIS_URL"] = "redis://invalid"
+        app.config["ENVIRONMENT"] = "testing"
+        app_module.redis_lib = None
+        app_module.clear_rate_limit_state()
+
+        result = app_module.perform_rate_limit_hit("testing_scope", "ip:test", limit=2, window_seconds=60)
+
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["count"], 1)
+
+    def test_rate_limit_fails_closed_when_redis_is_required_and_unavailable(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        app.config["REDIS_URL"] = "redis://invalid"
+        app.config["RATE_LIMIT_FAIL_OPEN"] = False
+        app.config["ENVIRONMENT"] = "production"
+        app_module.redis_lib = None
+        app_module.clear_rate_limit_state()
+
+        response = self.client.get("/api/autocomplete?q=ca")
+
+        self.assertEqual(response.status_code, 429)
+
     def test_send_email_captures_in_dev_mode_without_real_smtp(self):
         with patch.object(app_module.smtplib, "SMTP") as smtp:
             result = app_module.send_email(
@@ -667,6 +813,27 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertEqual(len(self.email_outbox()), 0)
+
+    def test_send_email_passes_timeout_to_smtp_client(self):
+        app.config["EMAIL_ENABLED"] = True
+        app.config["EMAIL_DEV_MODE"] = False
+        app.config["TESTING"] = False
+        app.config["MAIL_SERVER"] = "smtp.example.com"
+        app.config["MAIL_PORT"] = 587
+        app.config["MAIL_DEFAULT_SENDER"] = "hello@planira.test"
+        app.config["MAIL_TIMEOUT_SECONDS"] = 9
+
+        mock_server = unittest.mock.MagicMock()
+        mock_context = unittest.mock.MagicMock()
+        mock_context.__enter__.return_value = mock_server
+        mock_context.__exit__.return_value = False
+
+        with patch.object(app_module.smtplib, "SMTP", return_value=mock_context) as smtp:
+            result = app_module.send_email("Hello", ["person@example.com"], "Plain body")
+
+        self.assertTrue(result)
+        smtp.assert_called_once_with("smtp.example.com", 587, timeout=9)
+        mock_server.send_message.assert_called_once()
 
     def test_turnstile_missing_in_production_blocks_protected_submission(self):
         with app.app_context():
@@ -1172,7 +1339,7 @@ class AppSmokeTests(unittest.TestCase):
             uploader = User(email="gallery-paid@example.com", name="Gallery Paid", picture="", role="member", plan="paid")
             db.session.add_all([free_user, place, uploader])
             db.session.flush()
-            image = PlaceImage(place=place, uploader=uploader, filename="gallery.png", caption="Front entrance")
+            image = PlaceImage(place=place, uploader=uploader, filename="gallery.png", caption="Front entrance", is_approved=True)
             db.session.add(image)
             db.session.commit()
 
@@ -1373,7 +1540,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(message.status, "new")
         self.assertIsNone(message.reply_sent_at)
 
-    def test_newsletter_opt_in_creates_subscriber_with_consent(self):
+    def test_newsletter_opt_in_creates_pending_subscriber_with_consent(self):
         with self.client.session_transaction() as session:
             session["_csrf_token"] = "token123"
 
@@ -1391,18 +1558,19 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             subscriber = NewsletterSubscriber.query.filter_by(email="newsletter@example.com").first()
         self.assertIsNotNone(subscriber)
-        self.assertEqual(subscriber.status, "subscribed")
+        self.assertEqual(subscriber.status, "pending")
+        self.assertIsNone(subscriber.subscribed_at)
         self.assertIn("occasional Planira email updates", subscriber.consent_text)
         self.assertEqual(len(self.email_outbox()), 1)
         self.assertEqual(self.email_outbox()[0]["category"], "newsletter")
+        self.assertIn("Confirm your Planira newsletter signup", self.email_outbox()[0]["subject"])
 
-    def test_duplicate_newsletter_opt_in_is_handled_cleanly(self):
+    def test_duplicate_newsletter_opt_in_resends_pending_confirmation_cleanly(self):
         with app.app_context():
             db.session.add(
                 NewsletterSubscriber(
                     email="duplicate-newsletter@example.com",
-                    status="subscribed",
-                    subscribed_at=app_module.datetime.now(app_module.timezone.utc),
+                    status="pending",
                     source="public_newsletter_form",
                     consent_text=app_module.NEWSLETTER_CONSENT_TEXT,
                 )
@@ -1423,9 +1591,53 @@ class AppSmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"already subscribed", response.data)
+        self.assertIn(b"confirm your newsletter signup", response.data.lower())
         with app.app_context():
             self.assertEqual(NewsletterSubscriber.query.filter_by(email="duplicate-newsletter@example.com").count(), 1)
+            subscriber = NewsletterSubscriber.query.filter_by(email="duplicate-newsletter@example.com").first()
+        self.assertEqual(subscriber.status, "pending")
+        self.assertEqual(len(self.email_outbox()), 1)
+
+    def test_newsletter_confirmation_marks_pending_subscriber_as_subscribed(self):
+        with app.app_context():
+            subscriber = NewsletterSubscriber(
+                email="confirm-newsletter@example.com",
+                status="pending",
+                source="public_newsletter_form",
+                consent_text=app_module.NEWSLETTER_CONSENT_TEXT,
+            )
+            db.session.add(subscriber)
+            db.session.commit()
+
+        token = app_module.build_newsletter_confirm_token("confirm-newsletter@example.com")
+        response = self.client.get(f"/newsletter/confirm/{token}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"signup is confirmed", response.data)
+        with app.app_context():
+            subscriber = NewsletterSubscriber.query.filter_by(email="confirm-newsletter@example.com").first()
+        self.assertEqual(subscriber.status, "subscribed")
+        self.assertIsNotNone(subscriber.subscribed_at)
+
+    def test_newsletter_signup_is_blocked_when_disabled(self):
+        app.config["NEWSLETTER_ENABLED"] = False
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        response = self.client.post(
+            "/newsletter",
+            data={
+                "csrf_token": "token123",
+                "email": "disabled-newsletter@example.com",
+                "newsletter_opt_in": "yes",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"not available right now", response.data)
+        with app.app_context():
+            self.assertIsNone(NewsletterSubscriber.query.filter_by(email="disabled-newsletter@example.com").first())
 
     def test_unsubscribe_works_without_login(self):
         with app.app_context():
@@ -1492,7 +1704,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(admin_response.status_code, 200)
         self.assertIn(b"Drafts and subscriber overview", admin_response.data)
 
-    def test_paid_user_can_upload_place_image_and_place_page_renders_it(self):
+    def test_paid_user_upload_creates_pending_place_image(self):
         with app.app_context():
             user = User(email="paid-photo@example.com", name="Paid Photo", picture="", role="member", plan="paid")
             place = Place(name="Paid Photo Place", slug="paid-photo-place", town="Photo Town")
@@ -1517,14 +1729,53 @@ class AppSmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(upload_response.status_code, 200)
-        self.assertIn(b"Place photo added.", upload_response.data)
-        self.assertIn(b"Side entrance", upload_response.data)
+        self.assertIn(b"sent for review", upload_response.data)
+        self.assertIn(b"Pending review", upload_response.data)
         with app.app_context():
             image = PlaceImage.query.one()
             saved_path = os.path.join(self._place_upload_dir, image.filename)
         self.assertTrue(image.filename.endswith(".png"))
         self.assertTrue(os.path.exists(saved_path))
-        self.assertIn(f"uploads/place_images/{image.filename}".encode(), upload_response.data)
+        self.assertFalse(image.is_approved)
+        self.assertNotIn(b"Place photo added.", upload_response.data)
+
+    def test_staff_can_approve_pending_place_image_from_moderation_queue(self):
+        with app.app_context():
+            staff = User(email="image-staff@example.com", name="Image Staff", picture="", role="staff", plan="free")
+            user = User(email="image-owner@example.com", name="Image Owner", picture="", role="member", plan="paid")
+            place = Place(name="Pending Photo Place", slug="pending-photo-place", town="Photo Town")
+            db.session.add_all([staff, user, place])
+            db.session.flush()
+            image = PlaceImage(place=place, uploader=user, filename="pending-photo.png", caption="Pending entrance", is_approved=False)
+            db.session.add(image)
+            db.session.commit()
+            image_id = image.id
+
+        with open(os.path.join(self._place_upload_dir, "pending-photo.png"), "wb") as file_obj:
+            file_obj.write(self.png_bytes())
+
+        self.login_session("image-staff@example.com", "Image Staff")
+        moderation_response = self.client.get("/admin/moderation")
+        self.assertEqual(moderation_response.status_code, 200)
+        self.assertIn(b"Pending image", moderation_response.data)
+        self.assertIn(b"Pending entrance", moderation_response.data)
+
+        approve_response = self.client.post(
+            f"/admin/place-images/{image_id}/moderate",
+            data={"csrf_token": "token123", "action": "approve"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(approve_response.status_code, 200)
+        self.assertIn(b"Place image approved.", approve_response.data)
+        with app.app_context():
+            image = db.session.get(PlaceImage, image_id)
+        self.assertTrue(image.is_approved)
+
+        public_response = self.client.get("/place/pending-photo-place")
+        self.assertEqual(public_response.status_code, 200)
+        self.assertIn(b"Pending entrance", public_response.data)
+        self.assertIn(b"uploads/place_images/pending-photo.png", public_response.data)
 
     def test_place_image_upload_rejects_invalid_types_and_svg(self):
         with app.app_context():
@@ -1567,7 +1818,7 @@ class AppSmokeTests(unittest.TestCase):
             place = Place(name="Delete Own Place", slug="delete-own-place", town="Delete Town")
             db.session.add_all([user, place])
             db.session.flush()
-            image = PlaceImage(place=place, uploader=user, filename="delete-own.png", caption="Own photo")
+            image = PlaceImage(place=place, uploader=user, filename="delete-own.png", caption="Own photo", is_approved=True)
             db.session.add(image)
             db.session.commit()
             image_id = image.id
@@ -1596,7 +1847,7 @@ class AppSmokeTests(unittest.TestCase):
             place = Place(name="Ownership Place", slug="ownership-place", town="Owner Town")
             db.session.add_all([owner, free_user, place])
             db.session.flush()
-            image = PlaceImage(place=place, uploader=owner, filename="ownership.png", caption="Owner photo")
+            image = PlaceImage(place=place, uploader=owner, filename="ownership.png", caption="Owner photo", is_approved=True)
             db.session.add(image)
             db.session.commit()
             image_id = image.id
@@ -1625,7 +1876,7 @@ class AppSmokeTests(unittest.TestCase):
             place = Place(name="Staff Delete Place", slug="staff-delete-place", town="Staff Town")
             db.session.add_all([owner, staff, place])
             db.session.flush()
-            image = PlaceImage(place=place, uploader=owner, filename="missing-file.png", caption="Staff delete")
+            image = PlaceImage(place=place, uploader=owner, filename="missing-file.png", caption="Staff delete", is_approved=True)
             db.session.add(image)
             db.session.commit()
             image_id = image.id
@@ -1807,6 +2058,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_test_email_once",
             "type": "checkout.session.completed",
             "data": {
                 "object": {
@@ -1833,6 +2085,7 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             user = db.session.get(User, user_id)
             self.assertEqual(EmailEvent.query.filter_by(event_key="payment_confirmation:cs_test_email_once").count(), 1)
+            self.assertEqual(StripeEvent.query.filter_by(stripe_event_id=fake_event["id"]).count(), 1)
         self.assertEqual(user.plan, "paid")
         self.assertEqual(len(self.email_outbox()), 1)
 
@@ -1844,6 +2097,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_api_webhook",
             "type": "checkout.session.completed",
             "data": {
                 "object": {
@@ -1878,6 +2132,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_sub_deleted_paid",
             "type": "customer.subscription.deleted",
             "data": {
                 "object": {
@@ -1922,6 +2177,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_sub_deleted_mismatch",
             "type": "customer.subscription.deleted",
             "data": {
                 "object": {
@@ -1954,6 +2210,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_invoice_failed",
             "type": "invoice.payment_failed",
             "data": {
                 "object": {
@@ -1985,6 +2242,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_subscription_updated",
             "type": "customer.subscription.updated",
             "data": {
                 "object": {
@@ -2019,6 +2277,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = staff.id
 
         fake_event = {
+            "id": "evt_staff_deleted",
             "type": "customer.subscription.deleted",
             "data": {
                 "object": {
@@ -2050,6 +2309,7 @@ class AppSmokeTests(unittest.TestCase):
             user_id = user.id
 
         fake_event = {
+            "id": "evt_free_deleted",
             "type": "customer.subscription.deleted",
             "data": {
                 "object": {
@@ -2563,7 +2823,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Dash Search", response.data)
         self.assertIn(b"Comment Approved", response.data)
 
-    def test_staff_user_can_access_dashboard_and_user_directory(self):
+    def test_staff_user_can_access_dashboard_but_not_user_directory(self):
         with app.app_context():
             staff = User(email="ops-staff@example.com", name="Ops Staff", picture="", role="staff", plan="free")
             member = User(email="member-one@example.com", name="Member One", picture="", role="member", plan="free")
@@ -2577,9 +2837,7 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertIn(b"Live preview usage", dashboard_response.data)
-        self.assertEqual(users_response.status_code, 200)
-        self.assertIn(b"Manage Planira users", users_response.data)
-        self.assertIn(b"Manual override", users_response.data)
+        self.assertEqual(users_response.status_code, 302)
 
     def test_admin_staff_demote_uses_member_role_name(self):
         admin_email = "admin-demote@example.com"
@@ -2847,7 +3105,7 @@ class AppSmokeTests(unittest.TestCase):
         edit_response = self.client.get(f"/admin/users/{user_id}/edit", follow_redirects=True)
 
         self.assertEqual(list_response.status_code, 200)
-        self.assertIn(b"Staff access required.", list_response.data)
+        self.assertIn(b"Admin access required.", list_response.data)
         self.assertEqual(edit_response.status_code, 200)
         self.assertIn(b"Admin access required.", edit_response.data)
 

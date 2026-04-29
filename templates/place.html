@@ -147,6 +147,27 @@
           </div>
         {% endfor %}
       </div>
+
+      {% if pending_place_images %}
+        <div class="empty-inline">
+          <strong>Pending review</strong>
+          <p class="muted">Your recent upload is saved and waiting for staff review before it appears publicly.</p>
+        </div>
+        <div class="place-image-gallery">
+          {% for image in pending_place_images %}
+            {% set image_url = get_place_image_url(image) %}
+            {% if image_url %}
+              <figure class="place-image-card">
+                <img src="{{ image_url }}" alt="{{ image.caption or (place.name ~ ' pending photo') }}">
+                <figcaption>
+                  <span>{{ image.caption or 'Pending place photo' }}</span>
+                  <span class="status-chip chip-warning">Pending review</span>
+                </figcaption>
+              </figure>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
     </article>
 
     <article class="surface-panel">

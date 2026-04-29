@@ -1,6 +1,6 @@
-# PlanAble
+# Planira
 
-PlanAble is a Flask app for:
+Planira is a Flask app for:
 
 - Google-login-gated venue search
 - accessibility profiles with verification metadata
@@ -21,11 +21,11 @@ cp .env.example .env
 Update `.env` with at least:
 
 ```env
+APP_ENV=development
 SECRET_KEY=replace-with-a-long-random-secret
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 ADMIN_EMAILS=your-google-email@example.com
-APP_ENV=development
 ```
 
 Database configuration:
@@ -151,6 +151,7 @@ SESSION_COOKIE_SECURE=true
 SERVER_NAME=your-domain.com
 TRUSTED_HOSTS=your-domain.com,www.your-domain.com
 PROXY_FIX_COUNT=1
+REDIS_URL=redis://127.0.0.1:6379/0
 LOG_LEVEL=INFO
 ```
 
@@ -191,6 +192,7 @@ The current API documentation lives in [docs/api.md](docs/api.md).
 - CSRF protection on app forms
 - safer post-login redirect handling
 - hardened session cookie defaults
+- Redis-backed rate limiting when configured
 - proxy-aware request handling via `PROXY_FIX_COUNT`
 - security headers on responses
 - upload/request size cap via `MAX_CONTENT_LENGTH`

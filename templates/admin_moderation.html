@@ -23,6 +23,9 @@
         <div>
           <strong>{{ item.venue_name }}</strong>
           <p class="muted">{{ item.submitted_changes }}</p>
+          {% if item.kind == 'image' and item.image_url %}
+            <p class="muted"><img src="{{ item.image_url }}" alt="Pending place image preview" style="max-width:140px;border-radius:12px;margin-top:8px;"></p>
+          {% endif %}
         </div>
         <div>
           <strong>{{ item.submitted_by }}</strong>
@@ -32,21 +35,21 @@
           <span class="status-badge status-moderate">{{ item.status }}</span>
         </div>
         <div class="row-actions">
-          <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
+          <form method="post" action="{% if item.kind == 'image' %}{{ url_for('moderate_place_image', image_id=item.id) }}{% else %}{{ url_for('moderate_comment', comment_id=item.id) }}{% endif %}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="approve">
             <label class="sr-only" for="approve-reason-{{ item.id }}">Optional reason for approval</label>
             <input id="approve-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
             <button type="submit" class="btn-primary-planira btn-small">Approve</button>
           </form>
-          <form method="post" action="{{ url_for('moderate_comment', comment_id=item.id) }}">
+          <form method="post" action="{% if item.kind == 'image' %}{{ url_for('moderate_place_image', image_id=item.id) }}{% else %}{{ url_for('moderate_comment', comment_id=item.id) }}{% endif %}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="reject">
             <label class="sr-only" for="reject-reason-{{ item.id }}">Optional reason for rejection</label>
             <input id="reject-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
             <button type="submit" class="btn-secondary-planira btn-small">Reject</button>
           </form>
-          <a class="btn-secondary-planira btn-small" href="{{ item.edit_url }}">Edit before approve</a>
+          <a class="btn-secondary-planira btn-small" href="{{ item.edit_url }}">{% if item.kind == 'image' %}Open place{% else %}Edit before approve{% endif %}</a>
         </div>
       </article>
     {% else %}

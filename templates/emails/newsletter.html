@@ -3,6 +3,9 @@
 <h1 style="margin-top:0;">{{ heading }}</h1>
 <p>{{ intro }}</p>
 {{ body_html|safe }}
+{% if confirm_url %}
+<p style="margin:16px 0 0;"><a href="{{ confirm_url }}">Confirm newsletter signup</a></p>
+{% endif %}
 {% endblock %}
 {% block email_footer %}
 {% if unsubscribe_url %}

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from functools import wraps
 from html import escape as html_escape
+from itertools import count
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -49,6 +50,11 @@ try:
     import stripe
 except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
     stripe = None
+
+try:
+    import redis as redis_lib
+except ImportError:  # pragma: no cover - handled at runtime if dependency is missing
+    redis_lib = None
 
 load_dotenv()
 
@@ -109,6 +115,7 @@ API_PACK_ACCESS_DISABLED_MESSAGE = (
 RATE_LIMIT_ERROR_MESSAGE = "Too many requests. Please wait a moment and try again."
 _RATE_LIMIT_STATE = defaultdict(deque)
 _RATE_LIMIT_LOCK = threading.Lock()
+_RATE_LIMIT_BACKEND_CACHE = {}
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 DEFAULT_OG_IMAGE_FILENAME = "logo.png"
 PRIVATE_PATH_PREFIXES = (
@@ -188,7 +195,7 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = build_engine_options(database_url)
 app.config["STRIPE_SECRET_KEY"] = os.getenv("STRIPE_SECRET_KEY", "").strip()
 app.config["STRIPE_PUBLISHABLE_KEY"] = os.getenv("STRIPE_PUBLISHABLE_KEY", "").strip()
 app.config["STRIPE_WEBHOOK_SECRET"] = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-app.config["ENVIRONMENT"] = os.getenv("FLASK_ENV", os.getenv("APP_ENV", "development")).strip().lower() or "development"
+app.config["ENVIRONMENT"] = os.getenv("APP_ENV", os.getenv("FLASK_ENV", "development")).strip().lower() or "development"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -196,6 +203,11 @@ app.config["PERMANENT_SESSION_LIFETIME"] = int(os.getenv("SESSION_LIFETIME_SECON
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
 app.config["PREFERRED_URL_SCHEME"] = "https" if app.config["SESSION_COOKIE_SECURE"] else "http"
 app.config["RATE_LIMIT_ENABLED"] = env_flag("RATE_LIMIT_ENABLED", default=app.config["ENVIRONMENT"] == "production")
+app.config["RATE_LIMIT_FAIL_OPEN"] = env_flag("RATE_LIMIT_FAIL_OPEN", default=app.config["ENVIRONMENT"] != "production")
+app.config["REDIS_URL"] = os.getenv("REDIS_URL", "").strip()
+app.config["API_RATE_LIMIT_BURST"] = int(os.getenv("API_RATE_LIMIT_BURST", "60"))
+app.config["API_RATE_LIMIT_BURST_WINDOW_SECONDS"] = int(os.getenv("API_RATE_LIMIT_BURST_WINDOW_SECONDS", "60"))
+app.config["API_RATE_LIMIT_DAILY"] = int(os.getenv("API_RATE_LIMIT_DAILY", "1000"))
 app.config["PROFILE_IMAGE_MAX_BYTES"] = int(os.getenv("PROFILE_IMAGE_MAX_BYTES", str(2 * 1024 * 1024)))
 app.config["PLACE_IMAGE_MAX_BYTES"] = int(os.getenv("PLACE_IMAGE_MAX_MB", "2")) * 1024 * 1024
 app.config["PROFILE_IMAGE_UPLOAD_DIR"] = os.getenv(
@@ -215,6 +227,7 @@ app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD", "")
 app.config["MAIL_DEFAULT_SENDER"] = os.getenv("MAIL_DEFAULT_SENDER", "").strip()
 app.config["MAIL_USE_TLS"] = env_flag("MAIL_USE_TLS", default=True)
 app.config["MAIL_USE_SSL"] = env_flag("MAIL_USE_SSL", default=False)
+app.config["MAIL_TIMEOUT_SECONDS"] = int(os.getenv("MAIL_TIMEOUT_SECONDS", "5"))
 app.config["SUPPORT_EMAIL"] = os.getenv("SUPPORT_EMAIL", "").strip()
 app.config["EMAIL_ENABLED"] = env_flag("EMAIL_ENABLED", default=False)
 app.config["EMAIL_DEV_MODE"] = env_flag(
@@ -258,7 +271,7 @@ PLACE_IMAGE_ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "imag
 PLACE_IMAGE_STATIC_PREFIX = "uploads/place_images"
 MANUAL_ENTITLEMENT_ALLOWED_PLANS = {"paid_consumer", "api_20", "api_50", "api_100", "business"}
 CONTACT_MESSAGE_STATUS_VALUES = {"new", "open", "replied", "closed"}
-NEWSLETTER_STATUS_VALUES = {"subscribed", "unsubscribed"}
+NEWSLETTER_STATUS_VALUES = {"pending", "subscribed", "unsubscribed"}
 NEWSLETTER_CONSENT_TEXT = "I want to receive occasional Planira email updates and can unsubscribe at any time."
 
 proxy_fix_count = int(os.getenv("PROXY_FIX_COUNT", "0"))
@@ -378,7 +391,7 @@ class PlaceImage(db.Model):
     original_filename = db.Column(db.String(255))
     caption = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
-    is_approved = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    is_approved = db.Column(db.Boolean, default=False, nullable=False, index=True)
     place = db.relationship("Place", backref=db.backref("images", lazy="dynamic", order_by="desc(PlaceImage.created_at)"))
     uploader = db.relationship("User", backref=db.backref("uploaded_place_images", lazy="dynamic"))
 
@@ -512,7 +525,7 @@ class NewsletterSubscriber(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     subscribed_at = db.Column(db.DateTime)
     unsubscribed_at = db.Column(db.DateTime)
-    status = db.Column(db.String(30), default="subscribed", nullable=False, index=True)
+    status = db.Column(db.String(30), default="pending", nullable=False, index=True)
     source = db.Column(db.String(120))
     consent_text = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
@@ -540,6 +553,15 @@ class NewsletterDraft(db.Model):
     created_by_user = db.relationship("User", foreign_keys=[created_by_user_id])
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class StripeEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    stripe_event_id = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    event_type = db.Column(db.String(120), nullable=False, index=True)
+    processed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    processing_error = db.Column(db.Text)
 
 
 def is_production():
@@ -578,6 +600,10 @@ def missing_config_keys():
             missing.append("PROXY_FIX_COUNT")
         if env_flag("FLASK_DEBUG", default=False):
             missing.append("FLASK_DEBUG must be disabled")
+        if not app.config.get("RATE_LIMIT_ENABLED"):
+            missing.append("RATE_LIMIT_ENABLED=true")
+        if not app.config.get("REDIS_URL"):
+            missing.append("REDIS_URL")
         if not app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY"):
             missing.append("CLOUDFLARE_TURNSTILE_SITE_KEY")
         if not app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"):
@@ -825,12 +851,20 @@ def send_email(subject, recipients, text_body, html_body=None, reply_to=None, ca
 
     try:
         if app.config.get("MAIL_USE_SSL"):
-            with smtplib.SMTP_SSL(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as server:
+            with smtplib.SMTP_SSL(
+                app.config["MAIL_SERVER"],
+                app.config["MAIL_PORT"],
+                timeout=app.config.get("MAIL_TIMEOUT_SECONDS", 5),
+            ) as server:
                 if app.config.get("MAIL_USERNAME"):
                     server.login(app.config["MAIL_USERNAME"], app.config.get("MAIL_PASSWORD", ""))
                 server.send_message(message)
         else:
-            with smtplib.SMTP(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as server:
+            with smtplib.SMTP(
+                app.config["MAIL_SERVER"],
+                app.config["MAIL_PORT"],
+                timeout=app.config.get("MAIL_TIMEOUT_SECONDS", 5),
+            ) as server:
                 if app.config.get("MAIL_USE_TLS"):
                     server.starttls()
                 if app.config.get("MAIL_USERNAME"):
@@ -886,17 +920,33 @@ def basic_html_from_text(value):
     return "".join(paragraphs) or "<p></p>"
 
 
-def newsletter_serializer():
+def newsletter_unsubscribe_serializer():
     return URLSafeSerializer(app.config["SECRET_KEY"], salt="planira-newsletter-unsubscribe")
 
 
+def newsletter_confirm_serializer():
+    return URLSafeSerializer(app.config["SECRET_KEY"], salt="planira-newsletter-confirm")
+
+
 def build_unsubscribe_token(email):
-    return newsletter_serializer().dumps({"email": normalized_email_address(email)})
+    return newsletter_unsubscribe_serializer().dumps({"email": normalized_email_address(email)})
+
+
+def build_newsletter_confirm_token(email):
+    return newsletter_confirm_serializer().dumps({"email": normalized_email_address(email)})
 
 
 def decode_unsubscribe_token(token):
     try:
-        payload = newsletter_serializer().loads(token)
+        payload = newsletter_unsubscribe_serializer().loads(token)
+    except BadSignature:
+        return None
+    return normalized_email_address(payload.get("email"))
+
+
+def decode_newsletter_confirm_token(token):
+    try:
+        payload = newsletter_confirm_serializer().loads(token)
     except BadSignature:
         return None
     return normalized_email_address(payload.get("email"))
@@ -959,6 +1009,8 @@ def newsletter_status_for_email(email):
             "label": "Not subscribed",
             "subscriber": None,
         }
+    if subscriber.status == "pending":
+        return {"status": "pending", "label": "Pending confirmation", "subscriber": subscriber}
     if subscriber.status == "subscribed":
         return {"status": "subscribed", "label": "Subscribed", "subscriber": subscriber}
     return {"status": "unsubscribed", "label": "Unsubscribed", "subscriber": subscriber}
@@ -968,6 +1020,8 @@ def subscribe_newsletter(email, *, source, consent_text):
     normalized = normalized_email_address(email)
     if not normalized:
         raise ValueError("Enter a valid email address.")
+    if not app.config.get("NEWSLETTER_ENABLED"):
+        raise ValueError("Newsletter signups are not available right now.")
 
     now = datetime.now(timezone.utc)
     subscriber = NewsletterSubscriber.query.filter_by(email=normalized).first()
@@ -978,11 +1032,25 @@ def subscribe_newsletter(email, *, source, consent_text):
         subscriber = NewsletterSubscriber(email=normalized, created_at=now)
         db.session.add(subscriber)
 
-    subscriber.status = "subscribed"
-    subscriber.subscribed_at = now
+    previous_status = subscriber.status
+    subscriber.status = "pending"
+    subscriber.subscribed_at = None
     subscriber.unsubscribed_at = None
     subscriber.source = source
     subscriber.consent_text = consent_text
+    db.session.commit()
+    return subscriber, "pending_updated" if previous_status == "pending" else "pending_created"
+
+
+def confirm_newsletter_subscription(email):
+    subscriber = current_newsletter_subscriber(email)
+    if not subscriber:
+        return None, "missing"
+    if subscriber.status == "subscribed":
+        return subscriber, "already_subscribed"
+    subscriber.status = "subscribed"
+    subscriber.subscribed_at = datetime.now(timezone.utc)
+    subscriber.unsubscribed_at = None
     db.session.commit()
     return subscriber, "subscribed"
 
@@ -1002,18 +1070,20 @@ def unsubscribe_newsletter(email):
 def send_newsletter_confirmation_email(subscriber):
     if not subscriber or not app.config.get("NEWSLETTER_ENABLED"):
         return False
+    confirm_url = url_for("newsletter_confirm", token=build_newsletter_confirm_token(subscriber.email), _external=True)
     unsubscribe_url = url_for("newsletter_unsubscribe", token=build_unsubscribe_token(subscriber.email), _external=True)
     return send_templated_email(
-        "You’re on the Planira newsletter list",
+        "Confirm your Planira newsletter signup",
         [subscriber.email],
         "newsletter",
         category="newsletter",
-        heading="You’re on the list",
-        intro="Thanks for opting in to occasional Planira updates.",
+        heading="Confirm your signup",
+        intro="Please confirm that you want occasional Planira email updates.",
         body_html=basic_html_from_text(
-            "We’ll only send occasional product and launch updates.\n\nYou can unsubscribe at any time using the link below."
+            "Use the confirmation link below to activate newsletter emails.\n\nIf you did not request this, you can ignore this email."
         ),
-        body_text="We’ll only send occasional product and launch updates.\n\nYou can unsubscribe at any time using the link below.",
+        body_text="Use the confirmation link below to activate newsletter emails.\n\nIf you did not request this, you can ignore this email.",
+        confirm_url=confirm_url,
         unsubscribe_url=unsubscribe_url,
     )
 
@@ -1153,6 +1223,7 @@ def protect_with_turnstile(action, failure_category="error"):
 
 
 def refresh_session_user(user):
+    session.permanent = True
     session["user"] = {"email": user.email, "name": user.name, "picture": user.picture}
 
 
@@ -1281,41 +1352,180 @@ def request_client_identifier():
     return request.remote_addr or "unknown"
 
 
+def user_or_ip_identifier(user=None):
+    user = user or current_user_for_optional_request()
+    if user and user.id:
+        return f"user:{user.id}"
+    return f"ip:{request_client_identifier()}"
+
+
+def ip_email_identifier(raw_email):
+    normalized_email = normalized_email_address(raw_email)
+    email_part = normalized_email or (str(raw_email or "").strip().lower() or "unknown")
+    return f"ip:{request_client_identifier()}:email:{email_part[:255]}"
+
+
+class RateLimitBackendUnavailable(RuntimeError):
+    pass
+
+
+class MemoryRateLimitBackend:
+    name = "memory"
+
+    def hit(self, scope, identifier, *, limit, window_seconds):
+        cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
+        state_key = rate_limit_state_key(scope, identifier)
+        with _RATE_LIMIT_LOCK:
+            bucket = _RATE_LIMIT_STATE[state_key]
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            bucket.append(datetime.now(timezone.utc).timestamp())
+            count_value = len(bucket)
+            retry_after = max(int(bucket[0] + window_seconds - datetime.now(timezone.utc).timestamp()), 1) if count_value > limit else None
+        return {"allowed": count_value <= limit, "count": count_value, "retry_after": retry_after}
+
+    def current(self, scope, identifier, *, window_seconds):
+        cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
+        state_key = rate_limit_state_key(scope, identifier)
+        with _RATE_LIMIT_LOCK:
+            bucket = _RATE_LIMIT_STATE[state_key]
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            count_value = len(bucket)
+            retry_after = max(int(bucket[0] + window_seconds - datetime.now(timezone.utc).timestamp()), 1) if count_value else None
+        return {"count": count_value, "retry_after": retry_after}
+
+
+class RedisRateLimitBackend:
+    name = "redis"
+
+    def __init__(self, client):
+        self.client = client
+
+    def hit(self, scope, identifier, *, limit, window_seconds):
+        state_key = f"planira:rate-limit:{rate_limit_state_key(scope, identifier)}"
+        try:
+            count_value = self.client.incr(state_key)
+            if count_value == 1:
+                self.client.expire(state_key, window_seconds)
+            ttl_value = self.client.ttl(state_key)
+        except Exception as exc:  # pragma: no cover - exercised via mocked backend failures
+            raise RateLimitBackendUnavailable(str(exc)) from exc
+        retry_after = max(int(ttl_value), 1) if count_value > limit and ttl_value and ttl_value > 0 else None
+        return {"allowed": count_value <= limit, "count": int(count_value), "retry_after": retry_after}
+
+    def current(self, scope, identifier, *, window_seconds):
+        state_key = f"planira:rate-limit:{rate_limit_state_key(scope, identifier)}"
+        try:
+            count_value = int(self.client.get(state_key) or 0)
+            ttl_value = self.client.ttl(state_key)
+        except Exception as exc:  # pragma: no cover - exercised via mocked backend failures
+            raise RateLimitBackendUnavailable(str(exc)) from exc
+        retry_after = max(int(ttl_value), 1) if count_value and ttl_value and ttl_value > 0 else None
+        return {"count": count_value, "retry_after": retry_after}
+
+
 def rate_limit_enabled():
-    return bool(app.config.get("RATE_LIMIT_ENABLED")) and not app.config.get("TESTING", False)
+    return bool(app.config.get("RATE_LIMIT_ENABLED"))
 
 
 def rate_limit_state_key(scope, identifier):
     return f"{scope}:{identifier}"
 
 
+def clear_rate_limit_state():
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_STATE.clear()
+    _RATE_LIMIT_BACKEND_CACHE.clear()
+
+
+def preferred_rate_limit_backend():
+    redis_url = app.config.get("REDIS_URL", "")
+    cache_key = (redis_url, bool(app.config.get("TESTING")), app.config.get("ENVIRONMENT"))
+    cached_backend = _RATE_LIMIT_BACKEND_CACHE.get(cache_key)
+    if cached_backend is not None:
+        return cached_backend
+
+    if redis_url:
+        if redis_lib is None:
+            backend = "redis-unavailable"
+        else:
+            client = redis_lib.Redis.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+            backend = RedisRateLimitBackend(client)
+    else:
+        backend = MemoryRateLimitBackend()
+    _RATE_LIMIT_BACKEND_CACHE[cache_key] = backend
+    return backend
+
+
+def rate_limit_fail_closed():
+    return (
+        bool(app.config.get("REDIS_URL"))
+        and is_production()
+        and not app.config.get("RATE_LIMIT_FAIL_OPEN")
+    )
+
+
+def perform_rate_limit_hit(scope, identifier, *, limit, window_seconds):
+    backend = preferred_rate_limit_backend()
+    if backend == "redis-unavailable":
+        if rate_limit_fail_closed():
+            return {"allowed": False, "count": None, "retry_after": max(window_seconds, 1), "backend_error": True}
+        fallback_backend = MemoryRateLimitBackend()
+        return fallback_backend.hit(scope, identifier, limit=limit, window_seconds=window_seconds)
+    try:
+        return backend.hit(scope, identifier, limit=limit, window_seconds=window_seconds)
+    except RateLimitBackendUnavailable:
+        if rate_limit_fail_closed():
+            return {"allowed": False, "count": None, "retry_after": max(window_seconds, 1), "backend_error": True}
+        fallback_backend = MemoryRateLimitBackend()
+        return fallback_backend.hit(scope, identifier, limit=limit, window_seconds=window_seconds)
+
+
+def current_rate_limit(scope, identifier, *, window_seconds):
+    backend = preferred_rate_limit_backend()
+    if backend == "redis-unavailable":
+        if rate_limit_fail_closed():
+            return {"count": None, "retry_after": max(window_seconds, 1), "backend_error": True}
+        fallback_backend = MemoryRateLimitBackend()
+        return fallback_backend.current(scope, identifier, window_seconds=window_seconds)
+    try:
+        return backend.current(scope, identifier, window_seconds=window_seconds)
+    except RateLimitBackendUnavailable:
+        if rate_limit_fail_closed():
+            return {"count": None, "retry_after": max(window_seconds, 1), "backend_error": True}
+        fallback_backend = MemoryRateLimitBackend()
+        return fallback_backend.current(scope, identifier, window_seconds=window_seconds)
+
+
 def is_rate_limited(scope, identifier, *, limit, window_seconds):
     if not rate_limit_enabled():
         return False
-
-    cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
-    state_key = rate_limit_state_key(scope, identifier)
-    with _RATE_LIMIT_LOCK:
-        bucket = _RATE_LIMIT_STATE[state_key]
-        while bucket and bucket[0] <= cutoff:
-            bucket.popleft()
-        return len(bucket) >= limit
+    state = current_rate_limit(scope, identifier, window_seconds=window_seconds)
+    if state.get("backend_error"):
+        return True
+    return (state.get("count") or 0) >= limit
 
 
-def register_rate_limit_hit(scope, identifier):
+def register_rate_limit_hit(scope, identifier, *, limit=1, window_seconds=60):
     if not rate_limit_enabled():
-        return
-
-    state_key = rate_limit_state_key(scope, identifier)
-    now_ts = datetime.now(timezone.utc).timestamp()
-    with _RATE_LIMIT_LOCK:
-        _RATE_LIMIT_STATE[state_key].append(now_ts)
+        return {"allowed": True, "count": 0, "retry_after": None}
+    return perform_rate_limit_hit(scope, identifier, limit=limit, window_seconds=window_seconds)
 
 
 def enforce_rate_limit(scope, *, limit, window_seconds, identifier=None, description=RATE_LIMIT_ERROR_MESSAGE):
     identifier = identifier or request_client_identifier()
-    if is_rate_limited(scope, identifier, limit=limit, window_seconds=window_seconds):
-        abort(429, description=description)
+    if not rate_limit_enabled():
+        return None
+    result = perform_rate_limit_hit(scope, identifier, limit=limit, window_seconds=window_seconds)
+    if result.get("allowed"):
+        return result
+    abort(429, description=description)
 
 
 def oauth_email_is_verified(value):
@@ -2435,6 +2645,45 @@ def is_staff_user(user):
     return user.role in {"admin", "staff"} or user.plan == "admin" or is_admin_email(user.email)
 
 
+def can_access_support_inbox(user):
+    return is_staff_user(user)
+
+
+def can_access_user_directory(user):
+    return get_access_label(user) == "Admin"
+
+
+def can_manage_users(user):
+    return get_access_label(user) == "Admin"
+
+
+def can_manage_newsletter(user):
+    return get_access_label(user) == "Admin"
+
+
+def can_moderate_content(user):
+    return is_staff_user(user)
+
+
+def can_manage_api_keys(user):
+    return get_access_label(user) == "Admin"
+
+
+def permission_required(permission_check, message):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            user = current_user()
+            if not user or not permission_check(user):
+                flash(message, "error")
+                return redirect(url_for("index"))
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def current_role_key(user):
     if not user:
         return "free_visitor"
@@ -2813,30 +3062,35 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
     client_identifier = request_context.access_route[0] if request_context and request_context.access_route else (
         request_context.remote_addr if request_context else "unknown"
     )
-    if is_rate_limited("api_auth_fail", client_identifier, limit=20, window_seconds=300):
-        return {"ok": False, "error": "rate_limited", "status_code": 429}
+    fail_scope = "api_auth_fail"
+    fail_limit = 20
+    fail_window = 600
+    fail_state = current_rate_limit(fail_scope, client_identifier, window_seconds=fail_window) if rate_limit_enabled() else {"count": 0}
+    if fail_state.get("backend_error") or (fail_state.get("count") or 0) >= fail_limit:
+        return {"ok": False, "error": "rate_limited", "status_code": 429, "retry_after": fail_state.get("retry_after")}
 
     candidate = resolve_api_key_candidate(raw_key=raw_key, authorization_header=authorization_header, request_obj=request_obj)
     if not candidate:
-        return {"ok": False, "error": "missing_api_key", "status_code": 401}
+        hit_state = register_rate_limit_hit(fail_scope, client_identifier, limit=fail_limit, window_seconds=fail_window)
+        return {"ok": False, "error": "rate_limited" if not hit_state.get("allowed", True) else "missing_api_key", "status_code": 429 if not hit_state.get("allowed", True) else 401, "retry_after": hit_state.get("retry_after")}
     if is_malformed_api_key(candidate):
-        register_rate_limit_hit("api_auth_fail", client_identifier)
-        return {"ok": False, "error": "malformed_api_key", "status_code": 401}
+        hit_state = register_rate_limit_hit(fail_scope, client_identifier, limit=fail_limit, window_seconds=fail_window)
+        return {"ok": False, "error": "rate_limited" if not hit_state.get("allowed", True) else "malformed_api_key", "status_code": 429 if not hit_state.get("allowed", True) else 401, "retry_after": hit_state.get("retry_after")}
 
     candidate_hash = hash_api_key_value(candidate)
     matched_key = APIKey.query.filter_by(key_hash=candidate_hash).first()
     if matched_key and not matched_key.is_active:
-        register_rate_limit_hit("api_auth_fail", client_identifier)
-        return {"ok": False, "error": "inactive_api_key", "status_code": 403}
+        hit_state = register_rate_limit_hit(fail_scope, client_identifier, limit=fail_limit, window_seconds=fail_window)
+        return {"ok": False, "error": "rate_limited" if not hit_state.get("allowed", True) else "inactive_api_key", "status_code": 429 if not hit_state.get("allowed", True) else 403, "retry_after": hit_state.get("retry_after")}
     if not matched_key:
-        register_rate_limit_hit("api_auth_fail", client_identifier)
-        return {"ok": False, "error": "invalid_api_key", "status_code": 401}
+        hit_state = register_rate_limit_hit(fail_scope, client_identifier, limit=fail_limit, window_seconds=fail_window)
+        return {"ok": False, "error": "rate_limited" if not hit_state.get("allowed", True) else "invalid_api_key", "status_code": 429 if not hit_state.get("allowed", True) else 401, "retry_after": hit_state.get("retry_after")}
     access_allowed, access_message = api_access_status(matched_key.user)
     if not access_allowed:
         return {"ok": False, "error": "api_access_required", "status_code": 403, "message": access_message}
     if not api_key_has_required_scopes(matched_key, required_scopes=required_scopes):
-        register_rate_limit_hit("api_auth_fail", client_identifier)
-        return {"ok": False, "error": "insufficient_scope", "status_code": 403}
+        hit_state = register_rate_limit_hit(fail_scope, client_identifier, limit=fail_limit, window_seconds=fail_window)
+        return {"ok": False, "error": "rate_limited" if not hit_state.get("allowed", True) else "insufficient_scope", "status_code": 429 if not hit_state.get("allowed", True) else 403, "retry_after": hit_state.get("retry_after")}
 
     limit_context = api_key_limit_context(matched_key)
     if limit_context["limit_reached"]:
@@ -2907,13 +3161,17 @@ def format_search_credits_copy(credits_remaining, bypass=False):
     return f"{credits_remaining} extra search credits remaining"
 
 
-def api_error_response(error, message, status_code, **extra):
+def api_error_response(error, message, status_code, headers=None, **extra):
     payload = {
         "error": error,
         "message": message,
     }
     payload.update(extra)
-    return jsonify(payload), status_code
+    response = jsonify(payload)
+    response.status_code = status_code
+    for header_name, header_value in (headers or {}).items():
+        response.headers[header_name] = str(header_value)
+    return response
 
 
 def api_auth_error_response(auth_result, *, write=False):
@@ -2933,7 +3191,34 @@ def api_auth_error_response(auth_result, *, write=False):
     )
     if write and auth_result["error"] == "insufficient_scope":
         error_key, message, status_code = ("invalid_api_key", "This API key does not have access to this write endpoint.", 403)
-    return api_error_response(error_key, message, status_code)
+    headers = {}
+    if auth_result.get("retry_after"):
+        headers["Retry-After"] = auth_result["retry_after"]
+    return api_error_response(error_key, message, status_code, headers=headers)
+
+
+def enforce_api_search_rate_limits(api_key, client_identifier):
+    if not rate_limit_enabled():
+        return None
+    burst_limit = max(int(app.config.get("API_RATE_LIMIT_BURST", 60)), 1)
+    burst_window = max(int(app.config.get("API_RATE_LIMIT_BURST_WINDOW_SECONDS", 60)), 1)
+    daily_limit = max(int(app.config.get("API_RATE_LIMIT_DAILY", 1000)), 1)
+    rules = [
+        ("api_search_key_burst", f"key:{api_key.id}", burst_limit, burst_window),
+        ("api_search_ip_burst", f"ip:{client_identifier}", burst_limit, burst_window),
+        ("api_search_key_daily", f"key:{api_key.id}", daily_limit, 86400),
+        ("api_search_ip_daily", f"ip:{client_identifier}", daily_limit, 86400),
+    ]
+    for scope, identifier, limit_value, window_seconds in rules:
+        state = perform_rate_limit_hit(scope, identifier, limit=limit_value, window_seconds=window_seconds)
+        if not state.get("allowed", True):
+            return api_error_response(
+                "rate_limited",
+                "Too many API search requests. Please wait and try again.",
+                429,
+                headers={"Retry-After": state.get("retry_after") or window_seconds},
+            )
+    return None
 
 
 def parse_json_api_payload():
@@ -3487,17 +3772,20 @@ def build_shell_navigation(user):
 def build_staff_navigation(user):
     if not user or not is_staff_user(user):
         return []
-    navigation = [
-        {"label": "Dashboard", "endpoint": "dashboard"},
-        {"label": "Streaming", "endpoint": "staff_streaming_control_room"},
-        {"label": "Venues", "endpoint": "admin_venues"},
-        {"label": "Moderation", "endpoint": "admin_moderation"},
-        {"label": "Support", "endpoint": "admin_support"},
-        {"label": "Users", "endpoint": "admin_users"},
-        {"label": "Legacy data view", "endpoint": "admin_data"},
-        {"label": "Add venue", "endpoint": "new_place"},
-    ]
-    if get_access_label(user) == "Admin":
+    navigation = [{"label": "Dashboard", "endpoint": "dashboard"}, {"label": "Streaming", "endpoint": "staff_streaming_control_room"}, {"label": "Venues", "endpoint": "admin_venues"}]
+    if can_moderate_content(user):
+        navigation.append({"label": "Moderation", "endpoint": "admin_moderation"})
+    if can_access_support_inbox(user):
+        navigation.append({"label": "Support", "endpoint": "admin_support"})
+    if can_access_user_directory(user):
+        navigation.append({"label": "Users", "endpoint": "admin_users"})
+    navigation.extend(
+        [
+            {"label": "Legacy data view", "endpoint": "admin_data"},
+            {"label": "Add venue", "endpoint": "new_place"},
+        ]
+    )
+    if can_manage_newsletter(user):
         navigation.append({"label": "Newsletter", "endpoint": "admin_newsletter"})
     return navigation
 
@@ -3749,10 +4037,17 @@ def build_api_operations_summary(limit=6):
 
 def build_moderation_items(limit=8):
     comments = Comment.query.filter_by(status="pending").order_by(Comment.created_at.desc()).limit(limit).all()
+    pending_images = (
+        PlaceImage.query.filter_by(is_approved=False)
+        .order_by(PlaceImage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
     items = []
     for comment in comments:
         items.append(
             {
+                "kind": "comment",
                 "id": comment.id,
                 "venue_name": comment.place.name if comment.place else "Unknown venue",
                 "submitted_changes": comment.body,
@@ -3760,9 +4055,26 @@ def build_moderation_items(limit=8):
                 "submitted_at": comment.created_at.strftime("%d %b %Y %H:%M") if comment.created_at else "Recently",
                 "status": (comment.status or "pending").replace("_", " ").title(),
                 "edit_url": url_for("place_detail", slug=comment.place.slug) if comment.place else url_for("dashboard"),
+                "created_at": comment.created_at or datetime.min.replace(tzinfo=timezone.utc),
             }
         )
-    return items
+    for image in pending_images:
+        items.append(
+            {
+                "kind": "image",
+                "id": image.id,
+                "venue_name": image.place.name if image.place else "Unknown venue",
+                "submitted_changes": image.caption or image.original_filename or image.filename,
+                "submitted_by": image.uploader.email if image.uploader and image.uploader.email else "Member upload",
+                "submitted_at": image.created_at.strftime("%d %b %Y %H:%M") if image.created_at else "Recently",
+                "status": "Pending image",
+                "edit_url": url_for("place_detail", slug=image.place.slug) if image.place else url_for("dashboard"),
+                "created_at": image.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                "image_url": get_place_image_url(image),
+            }
+        )
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    return items[: limit * 2]
 
 
 def build_support_rows(messages):
@@ -5074,7 +5386,12 @@ def contact():
         "message": (request.form.get("message") or "").strip(),
     }
     if request.method == "POST":
-        enforce_rate_limit("contact_form", limit=5, window_seconds=3600)
+        enforce_rate_limit(
+            "contact_form",
+            limit=5,
+            window_seconds=3600,
+            identifier=ip_email_identifier(form_values["email"]),
+        )
         if not protect_with_turnstile("contact_submission"):
             return redirect(url_for("contact"))
 
@@ -5143,7 +5460,15 @@ def contact():
 def newsletter():
     form_values = {"email": (request.form.get("email") or "").strip()}
     if request.method == "POST":
-        enforce_rate_limit("newsletter_signup", limit=5, window_seconds=3600)
+        if not app.config.get("NEWSLETTER_ENABLED"):
+            flash("Newsletter signups are not available right now.", "info")
+            return redirect(url_for("newsletter"))
+        enforce_rate_limit(
+            "newsletter_signup",
+            limit=5,
+            window_seconds=3600,
+            identifier=ip_email_identifier(form_values["email"]),
+        )
         if not protect_with_turnstile("newsletter_signup"):
             return redirect(url_for("newsletter"))
         if request.form.get("newsletter_opt_in") != "yes":
@@ -5167,17 +5492,18 @@ def newsletter():
 
         confirmation_sent = send_newsletter_confirmation_email(subscriber)
         if confirmation_sent:
-            flash("You’re subscribed. A confirmation email is on the way.", "success")
+            flash("Check your inbox to confirm your newsletter signup.", "success")
         else:
-            flash("You’re subscribed. We may not be able to send confirmation email right away, but your preference has been saved.", "success")
+            flash("Your signup is pending confirmation. We may not be able to send the confirmation email right away.", "info")
         return redirect(url_for("newsletter"))
 
     return render_template(
         "newsletter.html",
         consent_text=NEWSLETTER_CONSENT_TEXT,
         form_values=form_values,
+        newsletter_enabled=bool(app.config.get("NEWSLETTER_ENABLED")),
         turnstile_newsletter=build_turnstile_context("newsletter_signup"),
-        enable_turnstile=True,
+        enable_turnstile=bool(app.config.get("NEWSLETTER_ENABLED")),
         seo=build_seo_payload(
             title=f"Newsletter | {APP_NAME}",
             description="Opt in to occasional Planira email updates with a one-click unsubscribe link.",
@@ -5186,8 +5512,34 @@ def newsletter():
     )
 
 
+@app.route("/newsletter/confirm/<token>")
+def newsletter_confirm(token):
+    email = decode_newsletter_confirm_token(token)
+    state = "invalid"
+    if email:
+        _, result = confirm_newsletter_subscription(email)
+        if result in {"subscribed", "already_subscribed"}:
+            state = result
+    return render_template(
+        "newsletter_confirmed.html",
+        state=state,
+        seo=build_seo_payload(
+            title=f"Newsletter confirmation | {APP_NAME}",
+            description="Confirm your Planira newsletter subscription.",
+            canonical_url=build_absolute_url("newsletter_confirm", token=token),
+            robots="noindex, nofollow",
+        ),
+    )
+
+
 @app.route("/newsletter/unsubscribe/<token>")
 def newsletter_unsubscribe(token):
+    enforce_rate_limit(
+        "newsletter_unsubscribe",
+        limit=20,
+        window_seconds=3600,
+        identifier=f"ip:{request_client_identifier()}",
+    )
     email = decode_unsubscribe_token(token)
     state = "invalid"
     if email:
@@ -5379,19 +5731,22 @@ def update_account_newsletter():
 
     action = (request.form.get("action") or "").strip().lower()
     if action == "subscribe":
-        subscriber, result = subscribe_newsletter(
-            user.email,
-            source="account_settings",
-            consent_text=NEWSLETTER_CONSENT_TEXT,
-        )
-        if result == "already_subscribed":
-            flash("This account is already subscribed to newsletter updates.", "info")
+        if not app.config.get("NEWSLETTER_ENABLED"):
+            flash("Newsletter signups are not available right now.", "info")
         else:
-            confirmation_sent = send_newsletter_confirmation_email(subscriber)
-            if confirmation_sent:
-                flash("Newsletter subscription saved and confirmation email sent.", "success")
+            subscriber, result = subscribe_newsletter(
+                user.email,
+                source="account_settings",
+                consent_text=NEWSLETTER_CONSENT_TEXT,
+            )
+            if result == "already_subscribed":
+                flash("This account is already subscribed to newsletter updates.", "info")
             else:
-                flash("Newsletter subscription saved.", "success")
+                confirmation_sent = send_newsletter_confirmation_email(subscriber)
+                if confirmation_sent:
+                    flash("Check your inbox to confirm newsletter signup.", "success")
+                else:
+                    flash("Your newsletter signup is pending confirmation.", "info")
     elif action == "unsubscribe":
         _, result = unsubscribe_newsletter(user.email)
         if result == "missing":
@@ -5420,6 +5775,13 @@ def create_account_api_key():
     has_api_access, message = api_access_status(user)
     if not has_api_access:
         return jsonify({"error": "api_access_required", "message": message}), 403
+    enforce_rate_limit(
+        "api_key_create",
+        limit=10,
+        window_seconds=86400,
+        identifier=f"user:{user.id}",
+        description="You have created several API keys recently. Please wait before creating another key.",
+    )
     label = request.form.get("label", "").strip() or "Primary key"
     scopes = request.form.get("scopes", "").strip() or None
     try:
@@ -5478,6 +5840,13 @@ def create_developer_api_key():
     if not has_api_access:
         flash(message, "info")
         return redirect(url_for("developers"))
+    enforce_rate_limit(
+        "api_key_create",
+        limit=10,
+        window_seconds=86400,
+        identifier=f"user:{user.id}",
+        description="You have created several API keys recently. Please wait before creating another key.",
+    )
     if not protect_with_turnstile("create_api_key"):
         return redirect(url_for("developers"))
     label = request.form.get("label", "").strip() or "Primary key"
@@ -5652,6 +6021,21 @@ def stripe_webhook():
     except Exception:
         return "Invalid webhook signature", 400
 
+    stripe_event_id = str(event.get("id") or "").strip()
+    if not stripe_event_id:
+        return "Missing Stripe event id", 400
+
+    stripe_event = StripeEvent(
+        stripe_event_id=stripe_event_id,
+        event_type=event.get("type", "unknown"),
+    )
+    db.session.add(stripe_event)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"received": True, "duplicate": True})
+
     event_type = event["type"]
     event_object = event["data"]["object"]
     metadata = stripe_metadata_from_object(event_object)
@@ -5659,56 +6043,67 @@ def stripe_webhook():
     target_role = metadata.get("target_role") or infer_entitlement_role(user)
     stripe_fields_changed = False
     entitlement_changed = False
+    try:
+        if user:
+            stripe_fields_changed = update_user_stripe_billing_fields(user, event_object)
 
-    if user:
-        stripe_fields_changed = update_user_stripe_billing_fields(user, event_object)
-
-    if event_type == "checkout.session.completed":
-        if metadata.get("plan_key") in DISABLED_API_PACK_PLAN_KEYS or target_role == "api_buyer":
-            app.logger.warning("Ignoring disabled API pack webhook fulfilment for user=%s", getattr(user, "id", None))
-        else:
-            entitlement_changed = sync_user_entitlement(
+        if event_type == "checkout.session.completed":
+            if metadata.get("plan_key") in DISABLED_API_PACK_PLAN_KEYS or target_role == "api_buyer":
+                app.logger.warning("Ignoring disabled API pack webhook fulfilment for user=%s", getattr(user, "id", None))
+            else:
+                entitlement_changed = sync_user_entitlement(
+                    user,
+                    target_role=target_role,
+                    reason=f"Stripe webhook {event_type}.",
+                )
+        elif event_type == "customer.subscription.deleted":
+            entitlement_changed = revoke_user_entitlement(
                 user,
                 target_role=target_role,
                 reason=f"Stripe webhook {event_type}.",
             )
-    elif event_type == "customer.subscription.deleted":
-        entitlement_changed = revoke_user_entitlement(
-            user,
-            target_role=target_role,
-            reason=f"Stripe webhook {event_type}.",
-        )
-    elif event_type == "customer.subscription.updated":
-        subscription_status = stripe_object_value(event_object, "status", "") or ""
-        if subscription_status in {"canceled", "unpaid", "incomplete_expired"}:
+        elif event_type == "customer.subscription.updated":
+            subscription_status = stripe_object_value(event_object, "status", "") or ""
+            if subscription_status in {"canceled", "unpaid", "incomplete_expired"}:
+                entitlement_changed = revoke_user_entitlement(
+                    user,
+                    target_role=target_role,
+                    reason=f"Stripe webhook {event_type} with status {subscription_status}.",
+                )
+        elif event_type == "invoice.payment_failed":
             entitlement_changed = revoke_user_entitlement(
                 user,
                 target_role=target_role,
-                reason=f"Stripe webhook {event_type} with status {subscription_status}.",
+                reason=f"Stripe webhook {event_type}.",
             )
-    elif event_type == "invoice.payment_failed":
-        entitlement_changed = revoke_user_entitlement(
-            user,
-            target_role=target_role,
-            reason=f"Stripe webhook {event_type}.",
-        )
 
-    if stripe_fields_changed and not entitlement_changed:
+        if stripe_fields_changed and not entitlement_changed:
+            db.session.commit()
+
+        event_object_id = stripe_object_value(event_object, "id", "") or metadata.get("checkout_session_id") or metadata.get("session_id")
+        if event_type == "checkout.session.completed" and user and metadata.get("plan_key") and metadata.get("plan_key") not in DISABLED_API_PACK_PLAN_KEYS and target_role != "api_buyer":
+            plan = get_plan(metadata.get("plan_key"))
+            if plan:
+                send_payment_confirmation_email(
+                    user,
+                    plan_name=plan["name"],
+                    event_key=event_object_id,
+                )
+        elif event_type == "invoice.payment_failed" and user:
+            send_payment_failure_email(user, event_key=event_object_id or event_type)
+
+        stripe_event.processed_at = datetime.now(timezone.utc)
+        stripe_event.processing_error = None
         db.session.commit()
-
-    event_object_id = stripe_object_value(event_object, "id", "") or metadata.get("checkout_session_id") or metadata.get("session_id")
-    if event_type == "checkout.session.completed" and user and metadata.get("plan_key") and metadata.get("plan_key") not in DISABLED_API_PACK_PLAN_KEYS and target_role != "api_buyer":
-        plan = get_plan(metadata.get("plan_key"))
-        if plan:
-            send_payment_confirmation_email(
-                user,
-                plan_name=plan["name"],
-                event_key=event_object_id,
-            )
-    elif event_type == "invoice.payment_failed" and user:
-        send_payment_failure_email(user, event_key=event_object_id or event_type)
-
-    return jsonify({"received": True})
+        return jsonify({"received": True})
+    except Exception as exc:
+        db.session.rollback()
+        failed_event = StripeEvent.query.filter_by(stripe_event_id=stripe_event_id).first()
+        if failed_event:
+            failed_event.processing_error = str(exc)[:1000]
+            db.session.commit()
+        app.logger.exception("Stripe webhook processing failed for event=%s", stripe_event_id)
+        return jsonify({"received": False}), 500
 
 
 @app.route("/api/v1/places/search")
@@ -5732,6 +6127,13 @@ def api_places_search():
     if not auth_result["ok"]:
         return api_auth_error_response(auth_result)
 
+    api_rate_limit_response = enforce_api_search_rate_limits(
+        auth_result["api_key"],
+        request_client_identifier(),
+    )
+    if api_rate_limit_response is not None:
+        return api_rate_limit_response
+
     query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
     if q:
         like = f"%{q}%"
@@ -5751,7 +6153,6 @@ def api_places_search():
     if not places:
         return api_error_response("no_results", "No places matched that lookup.", 404)
 
-    # TODO: Add rate limiting before wider external release.
     limit_context = finalize_api_lookup_success(
         auth_result["api_key"],
         endpoint="/api/v1/places/search",
@@ -5922,7 +6323,13 @@ def search():
     )
     should_search = has_filters
     if is_counted_submission and has_filters:
-        enforce_rate_limit("search_submit", limit=20, window_seconds=300)
+        enforce_rate_limit(
+            "search_submit",
+            limit=30,
+            window_seconds=3600,
+            identifier=user_or_ip_identifier(user),
+            description="You have submitted several searches recently. Please wait a little while and try again.",
+        )
     limit_context = search_limit_context(user)
     filters_payload = build_search_filter_payload(filters)
     active_filter_chips = build_search_active_filters(filters)
@@ -6126,7 +6533,7 @@ def search():
 
 @app.route("/api/autocomplete")
 def autocomplete_places():
-    enforce_rate_limit("autocomplete", limit=60, window_seconds=60)
+    enforce_rate_limit("autocomplete", limit=60, window_seconds=60, identifier=f"ip:{request_client_identifier()}")
     query_text = (request.args.get("q") or "").strip()
     town_context = (request.args.get("town") or "").strip()
     if len(query_text) < 2:
@@ -6154,6 +6561,13 @@ def place_detail(slug):
         .order_by(PlaceImage.created_at.desc())
         .all()
     )
+    pending_place_images = []
+    if user:
+        pending_query = PlaceImage.query.filter_by(place_id=place.id, is_approved=False).order_by(PlaceImage.created_at.desc())
+        if is_staff_user(user):
+            pending_place_images = pending_query.all()
+        else:
+            pending_place_images = pending_query.filter_by(user_id=user.id).all()
     comment_rows = [
         {
             "public_label": build_public_author_label(comment.user_email),
@@ -6175,6 +6589,7 @@ def place_detail(slug):
         profile=profile,
         comments=comment_rows,
         place_images=place_images,
+        pending_place_images=pending_place_images,
         can_upload_place_images=can_upload_place_images(user),
         get_place_image_url=get_place_image_url,
         signal=signal,
@@ -6198,6 +6613,13 @@ def upload_place_image(place_id):
         abort(404)
 
     user = current_user()
+    enforce_rate_limit(
+        "image_upload",
+        limit=10,
+        window_seconds=3600,
+        identifier=user_or_ip_identifier(user),
+        description="You have uploaded several images recently. Please wait before uploading more.",
+    )
     if not can_upload_place_images(user):
         flash("Upgrade to a paid Planira plan to add place photos.", "info")
         return redirect(url_for("place_detail", slug=place.slug))
@@ -6222,7 +6644,7 @@ def upload_place_image(place_id):
         filename=filename,
         original_filename=original_filename,
         caption=caption or None,
-        is_approved=True,
+        is_approved=False,
     )
     db.session.add(place_image)
     try:
@@ -6232,7 +6654,7 @@ def upload_place_image(place_id):
         delete_place_image_file(filename)
         raise
 
-    flash("Place photo added.", "success")
+    flash("Place photo uploaded and sent for review.", "success")
     return redirect(url_for("place_detail", slug=place.slug))
 
 
@@ -6261,13 +6683,13 @@ def delete_place_image(image_id):
 @login_required
 def add_comment(slug):
     comment_actor = current_user()
-    comment_identifier = f"user:{comment_actor.id}" if comment_actor else request_client_identifier()
+    comment_identifier = user_or_ip_identifier(comment_actor)
     enforce_rate_limit(
         "comment_submit",
-        limit=5,
-        window_seconds=600,
+        limit=10,
+        window_seconds=3600,
         identifier=comment_identifier,
-        description="You have submitted several comments recently. Please wait a few minutes and try again.",
+        description="You have submitted several comments recently. Please wait a little while and try again.",
     )
     place = Place.query.filter_by(slug=slug).first_or_404()
     if not protect_with_turnstile("comment_submission"):
@@ -6291,6 +6713,7 @@ def add_comment(slug):
 @login_required
 @staff_required
 def dashboard():
+    user = current_user()
     mission_page = parse_int_field(request.args.get("mission_page"), "Mission page", minimum=1, default=1)
     mission_per_page = 12
     quality_queues = build_dashboard_quality_queues(limit=4)
@@ -6326,13 +6749,13 @@ def dashboard():
         "free_users": User.query.filter(User.plan == "free").count(),
         "staff_users": User.query.filter(User.role.in_(["admin", "staff"])).count(),
     }
-    pending_comment_count = Comment.query.filter_by(status="pending").count()
+    pending_submission_count = Comment.query.filter_by(status="pending").count() + PlaceImage.query.filter_by(is_approved=False).count()
     monetisation_stats = {
         "premium_ready": premium_ready,
         "api_ready": api_ready,
         "community_candidates": stats["verified"],
         "mission_queue": mission_pagination.total,
-        "pending_comments": pending_comment_count,
+        "pending_comments": pending_submission_count,
     }
     plan_highlights = [
         "Logged-in free users can become a metered search tier here.",
@@ -6354,10 +6777,13 @@ def dashboard():
         {"label": "Venue workspace", "href": url_for("admin_venues")},
         {"label": "Streaming control room", "href": url_for("staff_streaming_control_room")},
         {"label": "Add venue", "href": url_for("new_place")},
-        {"label": "Open moderation", "href": url_for("admin_moderation")},
-        {"label": "Support inbox", "href": url_for("admin_support")},
-        {"label": "Manage users", "href": url_for("admin_users")},
     ]
+    if can_moderate_content(user):
+        quick_actions.append({"label": "Open moderation", "href": url_for("admin_moderation")})
+    if can_access_support_inbox(user):
+        quick_actions.append({"label": "Support inbox", "href": url_for("admin_support")})
+    if can_access_user_directory(user):
+        quick_actions.append({"label": "Manage users", "href": url_for("admin_users")})
     return render_template(
         "dashboard.html",
         stats=stats,
@@ -6379,7 +6805,7 @@ def dashboard():
 
 @app.route("/admin/support")
 @login_required
-@staff_required
+@permission_required(can_access_support_inbox, "Support inbox access required.")
 def admin_support():
     status_filter = (request.args.get("status") or "all").strip().lower() or "all"
     query = ContactMessage.query
@@ -6396,7 +6822,7 @@ def admin_support():
 
 @app.route("/admin/support/<int:message_id>")
 @login_required
-@staff_required
+@permission_required(can_access_support_inbox, "Support inbox access required.")
 def admin_support_detail(message_id):
     message = db.session.get(ContactMessage, message_id)
     if not message:
@@ -6410,7 +6836,7 @@ def admin_support_detail(message_id):
 
 @app.route("/admin/support/<int:message_id>/reply", methods=["POST"])
 @login_required
-@staff_required
+@permission_required(can_access_support_inbox, "Support inbox access required.")
 def admin_support_reply(message_id):
     message = db.session.get(ContactMessage, message_id)
     if not message:
@@ -6469,7 +6895,7 @@ def admin_support_reply(message_id):
 
 @app.route("/admin/support/<int:message_id>/status", methods=["POST"])
 @login_required
-@staff_required
+@permission_required(can_access_support_inbox, "Support inbox access required.")
 def admin_support_status(message_id):
     message = db.session.get(ContactMessage, message_id)
     if not message:
@@ -6509,7 +6935,7 @@ def admin_support_status(message_id):
 
 @app.route("/admin/newsletter")
 @login_required
-@admin_required
+@permission_required(can_manage_newsletter, "Admin access required.")
 def admin_newsletter():
     subscriber_count = NewsletterSubscriber.query.filter_by(status="subscribed").count()
     subscribers = (
@@ -6529,7 +6955,7 @@ def admin_newsletter():
 
 @app.route("/admin/newsletter/drafts", methods=["POST"])
 @login_required
-@admin_required
+@permission_required(can_manage_newsletter, "Admin access required.")
 def create_newsletter_draft():
     subject = (request.form.get("subject") or "").strip()[:255]
     body_text = (request.form.get("body_text") or "").strip()
@@ -6550,7 +6976,7 @@ def create_newsletter_draft():
 
 @app.route("/admin/newsletter/drafts/<int:draft_id>/test", methods=["POST"])
 @login_required
-@admin_required
+@permission_required(can_manage_newsletter, "Admin access required.")
 def send_newsletter_test(draft_id):
     draft = db.session.get(NewsletterDraft, draft_id)
     if not draft:
@@ -6602,7 +7028,7 @@ def staff_streaming_control_room():
 
 @app.route("/admin/moderation")
 @login_required
-@staff_required
+@permission_required(can_moderate_content, "Moderation access required.")
 def admin_moderation():
     moderation_items = build_moderation_items()
     return render_template(
@@ -6613,7 +7039,7 @@ def admin_moderation():
 
 @app.route("/admin/moderation/<int:comment_id>", methods=["POST"])
 @login_required
-@staff_required
+@permission_required(can_moderate_content, "Moderation access required.")
 def moderate_comment(comment_id):
     comment = db.session.get(Comment, comment_id)
     if not comment:
@@ -6660,9 +7086,59 @@ def moderate_comment(comment_id):
     return redirect(url_for("admin_moderation"))
 
 
+@app.route("/admin/place-images/<int:image_id>/moderate", methods=["POST"])
+@login_required
+@permission_required(can_moderate_content, "Moderation access required.")
+def moderate_place_image(image_id):
+    place_image = db.session.get(PlaceImage, image_id)
+    if not place_image:
+        abort(404)
+
+    action = request.form.get("action", "").strip().lower()
+    if action not in {"approve", "reject"}:
+        flash("Please choose approve or reject.", "error")
+        return redirect(url_for("admin_moderation"))
+
+    actor = current_user()
+    before_state = {
+        "is_approved": place_image.is_approved,
+        "filename": place_image.filename,
+        "caption": place_image.caption,
+    }
+    if action == "approve":
+        place_image.is_approved = True
+        log_audit(
+            actor_user_id=actor.id if actor else None,
+            action="place_image.approved",
+            entity_type="place_image",
+            entity_id=place_image.id,
+            before=before_state,
+            after={"is_approved": True, "filename": place_image.filename, "caption": place_image.caption},
+            reason=(request.form.get("moderation_reason") or "").strip() or None,
+        )
+        db.session.commit()
+        flash("Place image approved.", "success")
+    else:
+        filename = place_image.filename
+        log_audit(
+            actor_user_id=actor.id if actor else None,
+            action="place_image.rejected",
+            entity_type="place_image",
+            entity_id=place_image.id,
+            before=before_state,
+            after={"deleted": True},
+            reason=(request.form.get("moderation_reason") or "").strip() or None,
+        )
+        db.session.delete(place_image)
+        db.session.commit()
+        delete_place_image_file(filename)
+        flash("Place image rejected.", "success")
+    return redirect(url_for("admin_moderation"))
+
+
 @app.route("/admin/users")
 @login_required
-@staff_required
+@permission_required(can_access_user_directory, "Admin access required.")
 def admin_users():
     query_text = request.args.get("q", "").strip()
     role_filter = request.args.get("role", "all").strip().lower() or "all"
@@ -7287,8 +7763,14 @@ def obs_health():
 
 @app.route("/auth/login", methods=["GET", "POST"])
 def login():
-    enforce_rate_limit("login", limit=20, window_seconds=300)
     if request.method == "POST":
+        enforce_rate_limit(
+            "login",
+            limit=10,
+            window_seconds=600,
+            identifier=f"ip:{request_client_identifier()}",
+            description="Too many login attempts. Please wait a few minutes and try again.",
+        )
         if not os.getenv("GOOGLE_CLIENT_ID"):
             flash("Google OAuth is not configured yet. Add your keys to .env.", "error")
             return redirect(url_for("index"))

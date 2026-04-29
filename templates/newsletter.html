@@ -12,21 +12,28 @@
 
 <section class="content-stack legal-grid">
   <article class="surface-panel">
-    <form method="post" action="{{ url_for('newsletter') }}" class="comment-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="field-group">
-        <label for="newsletter-email">Email</label>
-        <input id="newsletter-email" name="email" type="email" maxlength="255" value="{{ form_values.email }}" required>
+    {% if newsletter_enabled %}
+      <form method="post" action="{{ url_for('newsletter') }}" class="comment-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field-group">
+          <label for="newsletter-email">Email</label>
+          <input id="newsletter-email" name="email" type="email" maxlength="255" value="{{ form_values.email }}" required>
+        </div>
+        <div class="field-group">
+          <label class="checkbox-label" for="newsletter-opt-in">
+            <input id="newsletter-opt-in" type="checkbox" name="newsletter_opt_in" value="yes" required>
+            <span>{{ consent_text }}</span>
+          </label>
+        </div>
+        {{ turnstile.widget(turnstile_newsletter, 'Newsletter anti-abuse check') }}
+        <button class="btn-primary-planira" type="submit">Subscribe</button>
+      </form>
+    {% else %}
+      <div class="empty-inline">
+        <strong>Newsletter signups are paused.</strong>
+        <p class="muted">Planira is not accepting new newsletter subscriptions right now.</p>
       </div>
-      <div class="field-group">
-        <label class="checkbox-label" for="newsletter-opt-in">
-          <input id="newsletter-opt-in" type="checkbox" name="newsletter_opt_in" value="yes" required>
-          <span>{{ consent_text }}</span>
-        </label>
-      </div>
-      {{ turnstile.widget(turnstile_newsletter, 'Newsletter anti-abuse check') }}
-      <button class="btn-primary-planira" type="submit">Subscribe</button>
-    </form>
+    {% endif %}
   </article>
 </section>
 {% endblock %}

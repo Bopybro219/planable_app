@@ -25,6 +25,7 @@ Pygments==2.20.0
 pytest==9.0.3
 python-dotenv==1.0.1
 requests==2.33.1
+redis==6.4.0
 SQLAlchemy==2.0.49
 stripe==12.1.0
 typing_extensions==4.15.0

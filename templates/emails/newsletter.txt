@@ -5,6 +5,10 @@
 {{ intro }}
 
 {{ body_text }}
+{% if confirm_url %}
+
+Confirm signup: {{ confirm_url }}
+{% endif %}
 {% endblock %}
 {% block email_footer %}
 {% if unsubscribe_url %}

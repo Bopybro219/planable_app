@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Planira map icon</title>
+  <defs>
+    <linearGradient id="pin" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#6f9f97"/>
+      <stop offset="100%" stop-color="#34504e"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#pin)" d="M32 4c-11.6 0-21 9.4-21 21 0 15.1 18.2 33.2 19 34 .5.5 1.1.8 1.8.8s1.3-.3 1.8-.8c.8-.8 19-18.9 19-34C53 13.4 43.6 4 32 4z"/>
+  <circle cx="32" cy="25" r="9" fill="#f7f3eb"/>
+</svg>

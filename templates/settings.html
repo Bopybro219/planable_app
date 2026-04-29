@@ -187,16 +187,23 @@
           <h3>Email update preference</h3>
           <p class="muted">Current status: {{ settings_sections.newsletter.label }}.</p>
           <p class="helper-copy">{{ settings_sections.newsletter.consent_text }}</p>
-          <form method="post" action="{{ url_for('update_account_newsletter') }}" class="page-head-actions">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            {% if settings_sections.newsletter.status == 'subscribed' %}
-              <input type="hidden" name="action" value="unsubscribe">
-              <button type="submit" class="btn-secondary-planira">Unsubscribe</button>
-            {% else %}
-              <input type="hidden" name="action" value="subscribe">
-              <button type="submit" class="btn-primary-planira">Opt in</button>
-            {% endif %}
-          </form>
+          {% if settings_sections.newsletter.enabled %}
+            <form method="post" action="{{ url_for('update_account_newsletter') }}" class="page-head-actions">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if settings_sections.newsletter.status == 'subscribed' %}
+                <input type="hidden" name="action" value="unsubscribe">
+                <button type="submit" class="btn-secondary-planira">Unsubscribe</button>
+              {% elif settings_sections.newsletter.status == 'pending' %}
+                <input type="hidden" name="action" value="subscribe">
+                <button type="submit" class="btn-secondary-planira">Resend confirmation</button>
+              {% else %}
+                <input type="hidden" name="action" value="subscribe">
+                <button type="submit" class="btn-primary-planira">Opt in</button>
+              {% endif %}
+            </form>
+          {% else %}
+            <p class="helper-copy">Newsletter signups are currently paused.</p>
+          {% endif %}
         </div>
         <div class="action-list">
           <a class="action-card action-card-warning" href="{{ url_for('data_rights') }}">

@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}Newsletter confirmation | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Newsletter</span>
+    <h1>Confirmation updated</h1>
+    {% if state == 'subscribed' %}
+      <p class="page-subtitle">Your Planira newsletter signup is confirmed.</p>
+    {% elif state == 'already_subscribed' %}
+      <p class="page-subtitle">This email address is already confirmed for Planira newsletter updates.</p>
+    {% else %}
+      <p class="page-subtitle">That confirmation link is not valid any more.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
