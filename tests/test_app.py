@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 import sys
@@ -11,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import app as app_module
 import venue_import
-from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, Place, PlaceImage, SearchEvent, User, app, db
+from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, ContactMessage, EmailEvent, NewsletterDraft, NewsletterSubscriber, Place, PlaceImage, SearchEvent, User, app, db
 
 
 def rebind_sqlalchemy_for_current_config():
@@ -51,6 +52,13 @@ class AppSmokeTests(unittest.TestCase):
         self._original_place_image_max_bytes = app.config.get("PLACE_IMAGE_MAX_BYTES")
         self._original_turnstile_site_key = app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY")
         self._original_turnstile_secret_key = app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY")
+        self._original_email_enabled = app.config.get("EMAIL_ENABLED")
+        self._original_email_dev_mode = app.config.get("EMAIL_DEV_MODE")
+        self._original_newsletter_enabled = app.config.get("NEWSLETTER_ENABLED")
+        self._original_support_email = app.config.get("SUPPORT_EMAIL")
+        self._original_mail_default_sender = app.config.get("MAIL_DEFAULT_SENDER")
+        self._original_ga_measurement_id = app.config.get("GA_MEASUREMENT_ID")
+        self._original_enable_analytics_in_dev = app.config.get("ENABLE_ANALYTICS_IN_DEV")
         self._db_fd, self._db_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(self._db_fd)
         self._upload_dir = tempfile.mkdtemp(prefix="planira-profile-images-")
@@ -67,6 +75,14 @@ class AppSmokeTests(unittest.TestCase):
         app.config["PLACE_IMAGE_MAX_BYTES"] = 2 * 1024 * 1024
         app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = ""
         app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = ""
+        app.config["EMAIL_ENABLED"] = False
+        app.config["EMAIL_DEV_MODE"] = True
+        app.config["NEWSLETTER_ENABLED"] = True
+        app.config["SUPPORT_EMAIL"] = "support@example.com"
+        app.config["MAIL_DEFAULT_SENDER"] = "hello@planira.test"
+        app.config["GA_MEASUREMENT_ID"] = "G-TEST1234"
+        app.config["ENABLE_ANALYTICS_IN_DEV"] = True
+        app.extensions["email_outbox"] = []
         self.client = app.test_client()
 
         with app.app_context():
@@ -91,6 +107,14 @@ class AppSmokeTests(unittest.TestCase):
         app.config["PLACE_IMAGE_MAX_BYTES"] = self._original_place_image_max_bytes
         app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = self._original_turnstile_site_key
         app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = self._original_turnstile_secret_key
+        app.config["EMAIL_ENABLED"] = self._original_email_enabled
+        app.config["EMAIL_DEV_MODE"] = self._original_email_dev_mode
+        app.config["NEWSLETTER_ENABLED"] = self._original_newsletter_enabled
+        app.config["SUPPORT_EMAIL"] = self._original_support_email
+        app.config["MAIL_DEFAULT_SENDER"] = self._original_mail_default_sender
+        app.config["GA_MEASUREMENT_ID"] = self._original_ga_measurement_id
+        app.config["ENABLE_ANALYTICS_IN_DEV"] = self._original_enable_analytics_in_dev
+        app.extensions["email_outbox"] = []
 
         with app.app_context():
             rebind_sqlalchemy_for_current_config()
@@ -127,6 +151,22 @@ class AppSmokeTests(unittest.TestCase):
             b"\x02\x02D\x01\x00;"
         )
 
+    def email_outbox(self):
+        return app.extensions["email_outbox"]
+
+    def set_consent_cookie(self, analytics=False, marketing=False):
+        self.client.set_cookie(
+            app_module.CONSENT_COOKIE_NAME,
+            json.dumps(
+                {
+                    "version": app_module.CONSENT_COOKIE_VERSION,
+                    "necessary": True,
+                    "analytics": analytics,
+                    "marketing": marketing,
+                }
+            ),
+        )
+
     def test_health_endpoint(self):
         response = self.client.get("/health")
 
@@ -143,6 +183,16 @@ class AppSmokeTests(unittest.TestCase):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
             self.assertIn(snippet, response.data)
+
+    def test_privacy_and_cookies_pages_mention_email_and_avoid_ads_or_analytics_scripts(self):
+        privacy_response = self.client.get("/privacy")
+        cookies_response = self.client.get("/cookies")
+
+        self.assertIn(b"Transactional and support emails", privacy_response.data)
+        self.assertIn(b"Minimal analytics only after consent", privacy_response.data)
+        self.assertIn(b"Consent preferences", cookies_response.data)
+        self.assertNotIn(b"googletagmanager", privacy_response.data.lower())
+        self.assertIn(b"Google Ads is not active", cookies_response.data)
 
     def test_robots_and_sitemap_routes_render_expected_public_entries(self):
         with app.app_context():
@@ -169,6 +219,64 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b'<link rel="canonical" href="http://localhost/">', response.data)
         self.assertIn(b'"@type": "Organization"', response.data)
         self.assertIn(b'"@type": "WebSite"', response.data)
+        self.assertNotIn(b"googletagmanager", response.data.lower())
+        self.assertIn(b"window.track_event = trackEvent;", response.data)
+
+    def test_consent_banner_appears_without_saved_preferences(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-consent-banner', response.data)
+        self.assertIn(b"Privacy settings", response.data)
+        self.assertNotIn(b"hidden", response.data.split(b'data-consent-banner', 1)[1].split(b">", 1)[0])
+
+    def test_analytics_script_is_not_bootstrapped_before_consent(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"googletagmanager.com/gtag/js", response.data)
+        self.assertIn(b"window.track_event = trackEvent;", response.data)
+
+    def test_analytics_script_is_bootstrapped_after_analytics_consent(self):
+        self.set_consent_cookie(analytics=True)
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"googletagmanager.com/gtag/js?id=G-TEST1234", response.data)
+        self.assertIn(b'"autoload": true', response.data)
+
+    def test_analytics_consent_cookie_persists_across_requests(self):
+        self.set_consent_cookie(analytics=True)
+
+        home_response = self.client.get("/")
+        plans_response = self.client.get("/plans")
+
+        self.assertIn(b"googletagmanager.com/gtag/js?id=G-TEST1234", home_response.data)
+        self.assertIn(b"googletagmanager.com/gtag/js?id=G-TEST1234", plans_response.data)
+
+    def test_admin_pages_do_not_bootstrap_analytics_even_with_consent(self):
+        with app.app_context():
+            admin_user = User(email="admin-analytics@example.com", name="Admin Analytics", picture="", role="admin", plan="business")
+            db.session.add(admin_user)
+            db.session.commit()
+
+        self.login_session("admin-analytics@example.com", "Admin Analytics")
+        self.set_consent_cookie(analytics=True)
+
+        response = self.client.get("/admin/moderation")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"googletagmanager.com/gtag/js", response.data)
+
+    def test_track_event_helper_is_defined_when_analytics_is_disabled(self):
+        app.config["GA_MEASUREMENT_ID"] = ""
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"window.track_event = trackEvent;", response.data)
+        self.assertNotIn(b"googletagmanager.com/gtag/js", response.data)
 
     def test_sqlite_fallback_still_works_when_database_url_missing(self):
         self.assertEqual(app_module.normalize_database_url(None), "sqlite:///planable.db")
@@ -387,6 +495,35 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         fake_google.authorize_redirect.assert_called_once()
 
+    def test_send_email_captures_in_dev_mode_without_real_smtp(self):
+        with patch.object(app_module.smtplib, "SMTP") as smtp:
+            result = app_module.send_email(
+                "Hello",
+                ["person@example.com"],
+                "Plain body",
+                html_body="<p>Plain body</p>",
+                category="transactional",
+            )
+
+        self.assertTrue(result)
+        smtp.assert_not_called()
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertEqual(self.email_outbox()[0]["category"], "transactional")
+
+    def test_send_email_failure_returns_false_without_crashing(self):
+        app.config["EMAIL_ENABLED"] = True
+        app.config["EMAIL_DEV_MODE"] = False
+        app.config["TESTING"] = False
+        app.config["MAIL_SERVER"] = "smtp.example.com"
+        app.config["MAIL_PORT"] = 587
+        app.config["MAIL_DEFAULT_SENDER"] = "hello@planira.test"
+
+        with patch.object(app_module.smtplib, "SMTP", side_effect=RuntimeError("smtp down")):
+            result = app_module.send_email("Hello", ["person@example.com"], "Plain body")
+
+        self.assertFalse(result)
+        self.assertEqual(len(self.email_outbox()), 0)
+
     def test_turnstile_missing_in_production_blocks_protected_submission(self):
         with app.app_context():
             user = User(email="prod-turnstile@example.com", name="Prod Turnstile", picture="", role="member", plan="free")
@@ -465,6 +602,34 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(refreshed.google_sub, "google-linked-sub")
         self.assertEqual(refreshed.name, "Linked User")
         self.assertIsNotNone(refreshed.last_login_at)
+
+    def test_new_google_user_gets_welcome_email_once(self):
+        fake_google = SimpleNamespace(
+            authorize_access_token=unittest.mock.Mock(
+                return_value={
+                    "userinfo": {
+                        "sub": "google-welcome-sub",
+                        "email": "welcome@example.com",
+                        "email_verified": True,
+                        "name": "Welcome User",
+                    }
+                }
+            )
+        )
+
+        with patch.object(app_module, "google", fake_google):
+            first_response = self.client.get("/auth/google/callback")
+
+        self.assertEqual(first_response.status_code, 302)
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertIn("Welcome to Planira", self.email_outbox()[0]["subject"])
+
+        app.extensions["email_outbox"] = []
+        with patch.object(app_module, "google", fake_google):
+            second_response = self.client.get("/auth/google/callback")
+
+        self.assertEqual(second_response.status_code, 302)
+        self.assertEqual(len(self.email_outbox()), 0)
 
     def test_user_has_api_access_matches_paid_business_and_staff_states(self):
         with app.app_context():
@@ -975,6 +1140,214 @@ class AppSmokeTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             self.assertEqual(session["next_url"], "/place/safe-next-place")
 
+    def test_contact_form_creates_message_and_emails_support(self):
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        response = self.client.post(
+            "/contact",
+            data={
+                "csrf_token": "token123",
+                "name": "Jamie",
+                "email": "jamie@example.com",
+                "subject": "Need help",
+                "message": "A practical support message.",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Message received", response.data)
+        with app.app_context():
+            saved = ContactMessage.query.one()
+        self.assertEqual(saved.email, "jamie@example.com")
+        self.assertEqual(saved.status, "new")
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertEqual(self.email_outbox()[0]["recipients"], ["support@example.com"])
+
+    def test_staff_can_view_support_inbox_and_non_staff_cannot(self):
+        with app.app_context():
+            staff = User(email="support-staff@example.com", name="Support Staff", picture="", role="staff", plan="free")
+            member = User(email="support-member@example.com", name="Support Member", picture="", role="member", plan="free")
+            message = ContactMessage(name="Pat", email="pat@example.com", subject="Inbox check", message="Help")
+            db.session.add_all([staff, member, message])
+            db.session.commit()
+
+        self.login_session("support-staff@example.com", "Support Staff")
+        staff_response = self.client.get("/admin/support")
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertIn(b"Incoming contact messages", staff_response.data)
+
+        self.login_session("support-member@example.com", "Support Member")
+        member_response = self.client.get("/admin/support")
+        self.assertEqual(member_response.status_code, 302)
+
+    def test_staff_reply_sends_email_and_updates_status(self):
+        with app.app_context():
+            staff = User(email="reply-staff@example.com", name="Reply Staff", picture="", role="staff", plan="free")
+            message = ContactMessage(name="Alex", email="alex@example.com", subject="Reply subject", message="Original note")
+            db.session.add_all([staff, message])
+            db.session.commit()
+            message_id = message.id
+
+        self.login_session("reply-staff@example.com", "Reply Staff")
+        response = self.client.post(
+            f"/admin/support/{message_id}/reply",
+            data={"csrf_token": "token123", "reply_body": "Thanks for getting in touch."},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Reply sent.", response.data)
+        with app.app_context():
+            message = db.session.get(ContactMessage, message_id)
+        self.assertEqual(message.status, "replied")
+        self.assertIsNotNone(message.reply_sent_at)
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertEqual(self.email_outbox()[0]["recipients"], ["alex@example.com"])
+
+    def test_failed_staff_reply_does_not_mark_message_replied(self):
+        with app.app_context():
+            staff = User(email="reply-fail-staff@example.com", name="Reply Fail Staff", picture="", role="staff", plan="free")
+            message = ContactMessage(name="Casey", email="casey@example.com", subject="Reply failure", message="Original note")
+            db.session.add_all([staff, message])
+            db.session.commit()
+            message_id = message.id
+
+        self.login_session("reply-fail-staff@example.com", "Reply Fail Staff")
+        with patch.object(app_module, "send_templated_email", return_value=False):
+            response = self.client.post(
+                f"/admin/support/{message_id}/reply",
+                data={"csrf_token": "token123", "reply_body": "This should fail"},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"could not be sent right now", response.data)
+        with app.app_context():
+            message = db.session.get(ContactMessage, message_id)
+        self.assertEqual(message.status, "new")
+        self.assertIsNone(message.reply_sent_at)
+
+    def test_newsletter_opt_in_creates_subscriber_with_consent(self):
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        response = self.client.post(
+            "/newsletter",
+            data={
+                "csrf_token": "token123",
+                "email": "newsletter@example.com",
+                "newsletter_opt_in": "yes",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            subscriber = NewsletterSubscriber.query.filter_by(email="newsletter@example.com").first()
+        self.assertIsNotNone(subscriber)
+        self.assertEqual(subscriber.status, "subscribed")
+        self.assertIn("occasional Planira email updates", subscriber.consent_text)
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertEqual(self.email_outbox()[0]["category"], "newsletter")
+
+    def test_duplicate_newsletter_opt_in_is_handled_cleanly(self):
+        with app.app_context():
+            db.session.add(
+                NewsletterSubscriber(
+                    email="duplicate-newsletter@example.com",
+                    status="subscribed",
+                    subscribed_at=app_module.datetime.now(app_module.timezone.utc),
+                    source="public_newsletter_form",
+                    consent_text=app_module.NEWSLETTER_CONSENT_TEXT,
+                )
+            )
+            db.session.commit()
+
+        with self.client.session_transaction() as session:
+            session["_csrf_token"] = "token123"
+
+        response = self.client.post(
+            "/newsletter",
+            data={
+                "csrf_token": "token123",
+                "email": "duplicate-newsletter@example.com",
+                "newsletter_opt_in": "yes",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"already subscribed", response.data)
+        with app.app_context():
+            self.assertEqual(NewsletterSubscriber.query.filter_by(email="duplicate-newsletter@example.com").count(), 1)
+
+    def test_unsubscribe_works_without_login(self):
+        with app.app_context():
+            subscriber = NewsletterSubscriber(
+                email="unsubscribe@example.com",
+                status="subscribed",
+                subscribed_at=app_module.datetime.now(app_module.timezone.utc),
+                source="public_newsletter_form",
+                consent_text=app_module.NEWSLETTER_CONSENT_TEXT,
+            )
+            db.session.add(subscriber)
+            db.session.commit()
+
+        token = app_module.build_unsubscribe_token("unsubscribe@example.com")
+        response = self.client.get(f"/newsletter/unsubscribe/{token}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"unsubscribed", response.data.lower())
+        with app.app_context():
+            subscriber = NewsletterSubscriber.query.filter_by(email="unsubscribe@example.com").first()
+        self.assertEqual(subscriber.status, "unsubscribed")
+
+    def test_unsubscribed_users_are_not_included_in_newsletter_tests(self):
+        admin_email = "newsletter-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Newsletter Admin", picture="", role="admin", plan="admin")
+            draft = NewsletterDraft(subject="Newsletter test", body_text="Draft body", status="draft", created_by_user=admin)
+            subscriber = NewsletterSubscriber(
+                email=admin_email,
+                status="unsubscribed",
+                unsubscribed_at=app_module.datetime.now(app_module.timezone.utc),
+                source="account_settings",
+                consent_text=app_module.NEWSLETTER_CONSENT_TEXT,
+            )
+            db.session.add_all([admin, draft, subscriber])
+            db.session.commit()
+            draft_id = draft.id
+
+        self.login_session(admin_email, "Newsletter Admin")
+        response = self.client.post(
+            f"/admin/newsletter/drafts/{draft_id}/test",
+            data={"csrf_token": "token123"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"unsubscribed from newsletter mail", response.data)
+        self.assertEqual(len(self.email_outbox()), 0)
+
+    def test_newsletter_admin_is_admin_only(self):
+        with app.app_context():
+            staff = User(email="newsletter-staff@example.com", name="Newsletter Staff", picture="", role="staff", plan="free")
+            admin = User(email="newsletter-owner@example.com", name="Newsletter Owner", picture="", role="admin", plan="admin")
+            db.session.add_all([staff, admin])
+            db.session.commit()
+
+        self.login_session("newsletter-staff@example.com", "Newsletter Staff")
+        staff_response = self.client.get("/admin/newsletter")
+        self.assertEqual(staff_response.status_code, 302)
+
+        self.login_session("newsletter-owner@example.com", "Newsletter Owner")
+        admin_response = self.client.get("/admin/newsletter")
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertIn(b"Drafts and subscriber overview", admin_response.data)
+
     def test_paid_user_can_upload_place_image_and_place_page_renders_it(self):
         with app.app_context():
             user = User(email="paid-photo@example.com", name="Paid Photo", picture="", role="member", plan="paid")
@@ -1279,6 +1652,45 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(refreshed.stripe_subscription_id, "sub_paid_success")
         self.assertIsNone(refreshed.subscription_status)
         self.assertTrue(app_module.user_has_api_access(refreshed))
+        self.assertEqual(len(self.email_outbox()), 1)
+        self.assertIn("active on your Planira account", self.email_outbox()[0]["subject"])
+
+    def test_replayed_checkout_webhook_does_not_duplicate_payment_email(self):
+        with app.app_context():
+            user = User(email="webhook-email@example.com", name="Webhook Email", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        fake_event = {
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_test_email_once",
+                    "metadata": {
+                        "user_id": str(user_id),
+                        "plan_key": "paid_consumer",
+                        "target_role": "paid_consumer",
+                    },
+                    "customer": "cus_email_once",
+                    "subscription": "sub_email_once",
+                }
+            },
+        }
+        fake_stripe = SimpleNamespace(Webhook=SimpleNamespace(construct_event=unittest.mock.Mock(return_value=fake_event)))
+
+        with patch.object(app_module, "stripe", fake_stripe):
+            with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123", "STRIPE_WEBHOOK_SECRET": "whsec_test_123"}, clear=False):
+                first_response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+                second_response = self.client.post("/stripe/webhook", data=b"{}", headers={"Stripe-Signature": "sig_test"})
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            self.assertEqual(EmailEvent.query.filter_by(event_key="payment_confirmation:cs_test_email_once").count(), 1)
+        self.assertEqual(user.plan, "paid")
+        self.assertEqual(len(self.email_outbox()), 1)
 
     def test_stripe_webhook_for_api_buyer_does_not_grant_business_plan_or_api_access(self):
         with app.app_context():

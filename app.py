@@ -4,11 +4,14 @@ import logging
 import os
 import re
 import secrets
+import smtplib
 import threading
 import warnings
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from functools import wraps
+from html import escape as html_escape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -16,9 +19,10 @@ from xml.sax.saxutils import escape as xml_escape
 
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from flask_migrate import Migrate, upgrade
 from flask_sqlalchemy import SQLAlchemy
+from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy import Integer, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -120,6 +124,20 @@ PRIVATE_PATH_PREFIXES = (
 )
 NOINDEX_FOLLOW_PATHS = {"/search"}
 NOINDEX_NOFOLLOW_PATHS = {"/health"}
+CONSENT_COOKIE_NAME = "planira_consent"
+CONSENT_COOKIE_MAX_AGE = 60 * 60 * 24 * 180
+CONSENT_COOKIE_VERSION = 1
+CONSENT_CATEGORIES = ("necessary", "analytics", "marketing")
+SENSITIVE_ANALYTICS_PARAM_KEYS = {
+    "address",
+    "address1",
+    "email",
+    "message",
+    "name",
+    "postcode",
+    "subject",
+}
+ANALYTICS_DISABLED_PATH_PREFIXES = ("/admin", "/staff", "/dashboard", "/obs")
 
 
 def env_flag(name, default=False):
@@ -127,6 +145,10 @@ def env_flag(name, default=False):
     if raw_value is None:
         return default
     return raw_value.strip().lower() in TRUTHY_ENV_VALUES
+
+
+def support_email_address():
+    return (app.config.get("SUPPORT_EMAIL") or app.config.get("MAIL_DEFAULT_SENDER") or "").strip()
 
 
 def secret_key_issues(secret_key):
@@ -185,6 +207,22 @@ app.config["PLACE_IMAGE_UPLOAD_DIR"] = os.getenv(
 )
 app.config["CLOUDFLARE_TURNSTILE_SITE_KEY"] = os.getenv("CLOUDFLARE_TURNSTILE_SITE_KEY", "").strip()
 app.config["CLOUDFLARE_TURNSTILE_SECRET_KEY"] = os.getenv("CLOUDFLARE_TURNSTILE_SECRET_KEY", "").strip()
+app.config["MAIL_SERVER"] = os.getenv("MAIL_SERVER", "").strip()
+app.config["MAIL_PORT"] = int(os.getenv("MAIL_PORT", "587"))
+app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME", "").strip()
+app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD", "")
+app.config["MAIL_DEFAULT_SENDER"] = os.getenv("MAIL_DEFAULT_SENDER", "").strip()
+app.config["MAIL_USE_TLS"] = env_flag("MAIL_USE_TLS", default=True)
+app.config["MAIL_USE_SSL"] = env_flag("MAIL_USE_SSL", default=False)
+app.config["SUPPORT_EMAIL"] = os.getenv("SUPPORT_EMAIL", "").strip()
+app.config["EMAIL_ENABLED"] = env_flag("EMAIL_ENABLED", default=False)
+app.config["EMAIL_DEV_MODE"] = env_flag(
+    "EMAIL_DEV_MODE",
+    default=app.config["ENVIRONMENT"] != "production",
+)
+app.config["NEWSLETTER_ENABLED"] = env_flag("NEWSLETTER_ENABLED", default=False)
+app.config["GA_MEASUREMENT_ID"] = os.getenv("GA_MEASUREMENT_ID", "").strip()
+app.config["ENABLE_ANALYTICS_IN_DEV"] = env_flag("ENABLE_ANALYTICS_IN_DEV", default=False)
 
 trusted_hosts = [host.strip() for host in os.getenv("TRUSTED_HOSTS", "").split(",") if host.strip()]
 if trusted_hosts:
@@ -212,6 +250,9 @@ PLACE_IMAGE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 PLACE_IMAGE_ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 PLACE_IMAGE_STATIC_PREFIX = "uploads/place_images"
 MANUAL_ENTITLEMENT_ALLOWED_PLANS = {"paid_consumer", "api_20", "api_50", "api_100", "business"}
+CONTACT_MESSAGE_STATUS_VALUES = {"new", "open", "replied", "closed"}
+NEWSLETTER_STATUS_VALUES = {"subscribed", "unsubscribed"}
+NEWSLETTER_CONSENT_TEXT = "I want to receive occasional Planira email updates and can unsubscribe at any time."
 
 proxy_fix_count = int(os.getenv("PROXY_FIX_COUNT", "0"))
 if proxy_fix_count:
@@ -444,6 +485,56 @@ class AuditLog(db.Model):
     reason = db.Column(db.Text)
 
 
+class ContactMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    subject = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(30), default="new", nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    handled_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
+    handled_by_user = db.relationship("User", foreign_keys=[handled_by_user_id])
+    handled_at = db.Column(db.DateTime)
+    reply_sent_at = db.Column(db.DateTime)
+
+
+class NewsletterSubscriber(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    subscribed_at = db.Column(db.DateTime)
+    unsubscribed_at = db.Column(db.DateTime)
+    status = db.Column(db.String(30), default="subscribed", nullable=False, index=True)
+    source = db.Column(db.String(120))
+    consent_text = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class EmailEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    event_key = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    category = db.Column(db.String(80), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
+    user = db.relationship("User", foreign_keys=[user_id])
+    related_type = db.Column(db.String(80))
+    related_id = db.Column(db.String(120))
+    recipient_count = db.Column(db.Integer, default=1, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
+class NewsletterDraft(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(255), nullable=False)
+    body_text = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(30), default="draft", nullable=False, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
+    created_by_user = db.relationship("User", foreign_keys=[created_by_user_id])
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 def is_production():
     return app.config["ENVIRONMENT"] == "production"
 
@@ -484,6 +575,13 @@ def missing_config_keys():
             missing.append("CLOUDFLARE_TURNSTILE_SITE_KEY")
         if not app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"):
             missing.append("CLOUDFLARE_TURNSTILE_SECRET_KEY")
+        if app.config.get("EMAIL_ENABLED"):
+            if not app.config.get("MAIL_SERVER"):
+                missing.append("MAIL_SERVER")
+            if not app.config.get("MAIL_DEFAULT_SENDER"):
+                missing.append("MAIL_DEFAULT_SENDER")
+            if not support_email_address():
+                missing.append("SUPPORT_EMAIL")
     return missing
 
 
@@ -663,6 +761,312 @@ def build_seo_payload(
     }
 
 
+def normalized_email_address(value):
+    return (value or "").strip().lower()
+
+
+def email_outbox():
+    return app.extensions.setdefault("email_outbox", [])
+
+
+def capture_email_for_dev(subject, recipients, text_body, html_body=None, reply_to=None, category="transactional"):
+    email_outbox().append(
+        {
+            "subject": subject,
+            "recipients": list(recipients),
+            "text_body": text_body,
+            "html_body": html_body,
+            "reply_to": reply_to,
+            "category": category,
+        }
+    )
+
+
+def email_real_delivery_enabled():
+    return bool(
+        app.config.get("EMAIL_ENABLED")
+        and not app.config.get("EMAIL_DEV_MODE")
+        and app.config.get("MAIL_SERVER")
+        and app.config.get("MAIL_DEFAULT_SENDER")
+    )
+
+
+def send_email(subject, recipients, text_body, html_body=None, reply_to=None, category="transactional"):
+    normalized_recipients = [normalized_email_address(item) for item in (recipients or []) if normalized_email_address(item)]
+    if not normalized_recipients:
+        app.logger.warning("Email skipped category=%s recipient_count=0 success=false", category)
+        return False
+
+    if app.config.get("TESTING") or app.config.get("EMAIL_DEV_MODE"):
+        capture_email_for_dev(subject, normalized_recipients, text_body, html_body=html_body, reply_to=reply_to, category=category)
+        app.logger.info("Email captured category=%s recipient_count=%s success=true", category, len(normalized_recipients))
+        return True
+
+    if not email_real_delivery_enabled():
+        app.logger.warning("Email disabled category=%s recipient_count=%s success=false", category, len(normalized_recipients))
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = app.config["MAIL_DEFAULT_SENDER"]
+    message["To"] = ", ".join(normalized_recipients)
+    if reply_to:
+        message["Reply-To"] = reply_to
+    message.set_content(text_body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
+
+    try:
+        if app.config.get("MAIL_USE_SSL"):
+            with smtplib.SMTP_SSL(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as server:
+                if app.config.get("MAIL_USERNAME"):
+                    server.login(app.config["MAIL_USERNAME"], app.config.get("MAIL_PASSWORD", ""))
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(app.config["MAIL_SERVER"], app.config["MAIL_PORT"]) as server:
+                if app.config.get("MAIL_USE_TLS"):
+                    server.starttls()
+                if app.config.get("MAIL_USERNAME"):
+                    server.login(app.config["MAIL_USERNAME"], app.config.get("MAIL_PASSWORD", ""))
+                server.send_message(message)
+    except Exception:
+        app.logger.exception(
+            "Email send failed category=%s recipient_count=%s success=false",
+            category,
+            len(normalized_recipients),
+        )
+        return False
+
+    app.logger.info("Email sent category=%s recipient_count=%s success=true", category, len(normalized_recipients))
+    return True
+
+
+def render_email_bodies(template_name, **context):
+    context.setdefault("support_email", support_email_address())
+    context.setdefault("contact_phone", CONTACT_PHONE)
+    context.setdefault("brand_name", APP_NAME)
+    return (
+        render_template(f"emails/{template_name}.txt", **context),
+        render_template(f"emails/{template_name}.html", **context),
+    )
+
+
+def send_templated_email(subject, recipients, template_name, *, reply_to=None, category="transactional", **context):
+    text_body, html_body = render_email_bodies(template_name, **context)
+    return send_email(
+        subject,
+        recipients,
+        text_body,
+        html_body=html_body,
+        reply_to=reply_to,
+        category=category,
+    )
+
+
+def basic_html_from_text(value):
+    lines = [html_escape(line.strip()) for line in (value or "").splitlines()]
+    paragraphs = []
+    current = []
+    for line in lines:
+        if line:
+            current.append(line)
+            continue
+        if current:
+            paragraphs.append("<p>" + "<br>".join(current) + "</p>")
+            current = []
+    if current:
+        paragraphs.append("<p>" + "<br>".join(current) + "</p>")
+    return "".join(paragraphs) or "<p></p>"
+
+
+def newsletter_serializer():
+    return URLSafeSerializer(app.config["SECRET_KEY"], salt="planira-newsletter-unsubscribe")
+
+
+def build_unsubscribe_token(email):
+    return newsletter_serializer().dumps({"email": normalized_email_address(email)})
+
+
+def decode_unsubscribe_token(token):
+    try:
+        payload = newsletter_serializer().loads(token)
+    except BadSignature:
+        return None
+    return normalized_email_address(payload.get("email"))
+
+
+def has_sent_email_event(event_key):
+    return EmailEvent.query.filter_by(event_key=event_key).first() is not None
+
+
+def send_email_once(event_key, subject, recipients, text_body, html_body=None, reply_to=None, category="transactional", user=None, related_type=None, related_id=None):
+    if has_sent_email_event(event_key):
+        app.logger.info("Email skipped duplicate category=%s recipient_count=%s success=true", category, len(recipients or []))
+        return False
+
+    if not send_email(subject, recipients, text_body, html_body=html_body, reply_to=reply_to, category=category):
+        return False
+
+    db.session.add(
+        EmailEvent(
+            event_key=event_key,
+            category=category,
+            user_id=user.id if user else None,
+            related_type=related_type,
+            related_id=str(related_id) if related_id is not None else None,
+            recipient_count=len(recipients or []),
+        )
+    )
+    db.session.commit()
+    return True
+
+
+def send_templated_email_once(event_key, subject, recipients, template_name, *, reply_to=None, category="transactional", user=None, related_type=None, related_id=None, **context):
+    text_body, html_body = render_email_bodies(template_name, **context)
+    return send_email_once(
+        event_key,
+        subject,
+        recipients,
+        text_body,
+        html_body=html_body,
+        reply_to=reply_to,
+        category=category,
+        user=user,
+        related_type=related_type,
+        related_id=related_id,
+    )
+
+
+def current_newsletter_subscriber(email):
+    normalized = normalized_email_address(email)
+    if not normalized:
+        return None
+    return NewsletterSubscriber.query.filter_by(email=normalized).first()
+
+
+def newsletter_status_for_email(email):
+    subscriber = current_newsletter_subscriber(email)
+    if not subscriber:
+        return {
+            "status": "not_subscribed",
+            "label": "Not subscribed",
+            "subscriber": None,
+        }
+    if subscriber.status == "subscribed":
+        return {"status": "subscribed", "label": "Subscribed", "subscriber": subscriber}
+    return {"status": "unsubscribed", "label": "Unsubscribed", "subscriber": subscriber}
+
+
+def subscribe_newsletter(email, *, source, consent_text):
+    normalized = normalized_email_address(email)
+    if not normalized:
+        raise ValueError("Enter a valid email address.")
+
+    now = datetime.now(timezone.utc)
+    subscriber = NewsletterSubscriber.query.filter_by(email=normalized).first()
+    if subscriber and subscriber.status == "subscribed":
+        return subscriber, "already_subscribed"
+
+    if not subscriber:
+        subscriber = NewsletterSubscriber(email=normalized, created_at=now)
+        db.session.add(subscriber)
+
+    subscriber.status = "subscribed"
+    subscriber.subscribed_at = now
+    subscriber.unsubscribed_at = None
+    subscriber.source = source
+    subscriber.consent_text = consent_text
+    db.session.commit()
+    return subscriber, "subscribed"
+
+
+def unsubscribe_newsletter(email):
+    subscriber = current_newsletter_subscriber(email)
+    if not subscriber:
+        return None, "missing"
+    if subscriber.status == "unsubscribed":
+        return subscriber, "already_unsubscribed"
+    subscriber.status = "unsubscribed"
+    subscriber.unsubscribed_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return subscriber, "unsubscribed"
+
+
+def send_newsletter_confirmation_email(subscriber):
+    if not subscriber or not app.config.get("NEWSLETTER_ENABLED"):
+        return False
+    unsubscribe_url = url_for("newsletter_unsubscribe", token=build_unsubscribe_token(subscriber.email), _external=True)
+    return send_templated_email(
+        "You’re on the Planira newsletter list",
+        [subscriber.email],
+        "newsletter",
+        category="newsletter",
+        heading="You’re on the list",
+        intro="Thanks for opting in to occasional Planira updates.",
+        body_html=basic_html_from_text(
+            "We’ll only send occasional product and launch updates.\n\nYou can unsubscribe at any time using the link below."
+        ),
+        body_text="We’ll only send occasional product and launch updates.\n\nYou can unsubscribe at any time using the link below.",
+        unsubscribe_url=unsubscribe_url,
+    )
+
+
+def send_welcome_email_for_user(user):
+    if not user:
+        return False
+    return send_templated_email_once(
+        f"welcome:{user.id}",
+        "Welcome to Planira",
+        [user.email],
+        "welcome",
+        category="transactional",
+        user=user,
+        related_type="user",
+        related_id=user.id,
+        user_name=user.name or "there",
+    )
+
+
+def send_payment_confirmation_email(user, *, plan_name, event_key):
+    if not user or not event_key:
+        return False
+    return send_templated_email_once(
+        f"payment_confirmation:{event_key}",
+        f"{plan_name} is active on your Planira account",
+        [user.email],
+        "payment_confirmation",
+        category="transactional",
+        user=user,
+        related_type="billing",
+        related_id=event_key,
+        user_name=user.name or "there",
+        plan_name=plan_name,
+    )
+
+
+def send_payment_failure_email(user, *, event_key):
+    if not user or not event_key:
+        return False
+    return send_templated_email_once(
+        f"payment_failure:{event_key}",
+        "Planira payment update",
+        [user.email],
+        "payment_failure",
+        category="transactional",
+        user=user,
+        related_type="billing",
+        related_id=event_key,
+        user_name=user.name or "there",
+    )
+
+
+def validate_basic_email_address(value, field_name="Email"):
+    normalized = normalized_email_address(value)
+    if not normalized or "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+        raise ValueError(f"{field_name} must be a valid email address.")
+    return normalized
+
+
 def turnstile_is_configured():
     return bool(app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY") and app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"))
 
@@ -758,6 +1162,28 @@ def csrf_token():
     return token
 
 
+def build_analytics_template_context():
+    consent = consent_cookie_preferences()
+    enabled = analytics_enabled_for_request()
+    measurement_id = app.config.get("GA_MEASUREMENT_ID", "")
+    has_analytics_consent = bool(enabled and consent.get("analytics"))
+    return {
+        "cookie_name": CONSENT_COOKIE_NAME,
+        "consent": consent,
+        "measurement_id": measurement_id,
+        "enabled": enabled,
+        "has_analytics_consent": has_analytics_consent,
+        "autoload": has_analytics_consent,
+        "script_src": (
+            f"https://www.googletagmanager.com/gtag/js?id={measurement_id}"
+            if has_analytics_consent and measurement_id
+            else ""
+        ),
+        "events": queued_analytics_events() + page_analytics_events(),
+        "cookie_max_age": CONSENT_COOKIE_MAX_AGE,
+    }
+
+
 @app.context_processor
 def inject_user():
     user = current_user()
@@ -778,6 +1204,7 @@ def inject_user():
         "seo": build_seo_payload(),
         "turnstile_site_key": app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY", ""),
         "turnstile_enabled": turnstile_is_configured(),
+        "analytics": build_analytics_template_context(),
     }
 
 
@@ -841,6 +1268,133 @@ def oauth_email_is_verified(value):
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() == "true"
+
+
+def default_consent_preferences():
+    return {
+        "version": 0,
+        "necessary": True,
+        "analytics": False,
+        "marketing": False,
+    }
+
+
+def normalize_consent_preferences(raw_value):
+    preferences = default_consent_preferences()
+    if not isinstance(raw_value, dict):
+        return preferences
+
+    for key in CONSENT_CATEGORIES:
+        if key == "necessary":
+            preferences[key] = True
+        else:
+            preferences[key] = bool(raw_value.get(key))
+    if raw_value.get("version") == CONSENT_COOKIE_VERSION:
+        preferences["version"] = CONSENT_COOKIE_VERSION
+    return preferences
+
+
+def consent_cookie_preferences():
+    raw_cookie = request.cookies.get(CONSENT_COOKIE_NAME, "")
+    if not raw_cookie:
+        return default_consent_preferences()
+
+    try:
+        payload = json.loads(raw_cookie)
+    except (TypeError, ValueError):
+        return default_consent_preferences()
+    return normalize_consent_preferences(payload)
+
+
+def analytics_enabled_for_environment():
+    if not app.config.get("GA_MEASUREMENT_ID"):
+        return False
+    if app.config.get("ENVIRONMENT") == "production":
+        return True
+    return bool(app.config.get("ENABLE_ANALYTICS_IN_DEV"))
+
+
+def analytics_allowed_on_request_path(path=None):
+    normalized_path = (path or request.path or "/").rstrip("/") or "/"
+    return not any(
+        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
+        for prefix in ANALYTICS_DISABLED_PATH_PREFIXES
+    )
+
+
+def analytics_enabled_for_request():
+    return analytics_enabled_for_environment() and analytics_allowed_on_request_path()
+
+
+def filter_analytics_params(params):
+    if not isinstance(params, dict):
+        return {}
+
+    filtered = {}
+    for key, value in params.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            continue
+        if normalized_key.lower() in SENSITIVE_ANALYTICS_PARAM_KEYS:
+            continue
+        if isinstance(value, bool):
+            filtered[normalized_key] = value
+        elif isinstance(value, int):
+            filtered[normalized_key] = value
+        elif isinstance(value, float):
+            filtered[normalized_key] = round(value, 2)
+        elif isinstance(value, str):
+            trimmed = value.strip()
+            if trimmed:
+                filtered[normalized_key] = trimmed[:120]
+    return filtered
+
+
+def build_analytics_event(name, params=None):
+    event_name = re.sub(r"[^a-z0-9_]+", "_", str(name or "").strip().lower()).strip("_")
+    if not event_name:
+        return None
+    return {
+        "name": event_name[:40],
+        "params": filter_analytics_params(params),
+    }
+
+
+def page_analytics_events():
+    events = getattr(g, "_page_analytics_events", None)
+    if events is None:
+        events = []
+        g._page_analytics_events = events
+    return events
+
+
+def queued_analytics_events():
+    events = getattr(g, "_queued_analytics_events", None)
+    if events is None:
+        events = session.pop("_analytics_events", [])
+        if not isinstance(events, list):
+            events = []
+        g._queued_analytics_events = events
+    return events
+
+
+def add_page_analytics_event(name, params=None):
+    event = build_analytics_event(name, params=params)
+    if event:
+        page_analytics_events().append(event)
+    return event
+
+
+def queue_analytics_event(name, params=None):
+    event = build_analytics_event(name, params=params)
+    if not event:
+        return None
+    queued_events = session.get("_analytics_events", [])
+    if not isinstance(queued_events, list):
+        queued_events = []
+    queued_events.append(event)
+    session["_analytics_events"] = queued_events
+    return event
 
 
 def user_has_disabled_api_pack_entitlement(user):
@@ -2879,15 +3433,19 @@ def build_shell_navigation(user):
 def build_staff_navigation(user):
     if not user or not is_staff_user(user):
         return []
-    return [
+    navigation = [
         {"label": "Dashboard", "endpoint": "dashboard"},
         {"label": "Streaming", "endpoint": "staff_streaming_control_room"},
         {"label": "Venues", "endpoint": "admin_venues"},
         {"label": "Moderation", "endpoint": "admin_moderation"},
+        {"label": "Support", "endpoint": "admin_support"},
         {"label": "Users", "endpoint": "admin_users"},
         {"label": "Legacy data view", "endpoint": "admin_data"},
         {"label": "Add venue", "endpoint": "new_place"},
     ]
+    if get_access_label(user) == "Admin":
+        navigation.append({"label": "Newsletter", "endpoint": "admin_newsletter"})
+    return navigation
 
 
 def current_month_range():
@@ -3027,6 +3585,12 @@ def build_settings_sections(user):
             "total_lookups_used": developer_summary["total_lookups_used"],
             "has_unlimited_key": developer_summary["has_unlimited_key"],
         },
+        "newsletter": {
+            "status": newsletter_status_for_email(user.email)["status"],
+            "label": newsletter_status_for_email(user.email)["label"],
+            "enabled": bool(app.config.get("NEWSLETTER_ENABLED")),
+            "consent_text": NEWSLETTER_CONSENT_TEXT,
+        },
     }
 
 
@@ -3145,6 +3709,44 @@ def build_moderation_items(limit=8):
             }
         )
     return items
+
+
+def build_support_rows(messages):
+    rows = []
+    for message in messages:
+        rows.append(
+            {
+                "message": message,
+                "created_at_label": format_admin_timestamp(message.created_at, with_time=True) or "Recently",
+                "handled_at_label": format_admin_timestamp(message.handled_at, with_time=True),
+                "reply_sent_at_label": format_admin_timestamp(message.reply_sent_at, with_time=True),
+                "handled_by_label": message.handled_by_user.email if message.handled_by_user else None,
+            }
+        )
+    return rows
+
+
+def build_support_stats():
+    return {
+        "new": ContactMessage.query.filter_by(status="new").count(),
+        "open": ContactMessage.query.filter_by(status="open").count(),
+        "replied": ContactMessage.query.filter_by(status="replied").count(),
+        "closed": ContactMessage.query.filter_by(status="closed").count(),
+    }
+
+
+def build_newsletter_draft_rows():
+    drafts = NewsletterDraft.query.order_by(NewsletterDraft.updated_at.desc(), NewsletterDraft.id.desc()).all()
+    rows = []
+    for draft in drafts:
+        rows.append(
+            {
+                "draft": draft,
+                "created_by_label": draft.created_by_user.email if draft.created_by_user else "Admin",
+                "updated_at_label": format_admin_timestamp(draft.updated_at, with_time=True) or "Recently",
+            }
+        )
+    return rows
 
 
 def format_admin_timestamp(value, with_time=False):
@@ -4409,10 +5011,152 @@ def cookies():
     )
 
 
+@app.route("/contact", methods=["GET", "POST"])
+def contact():
+    form_values = {
+        "name": (request.form.get("name") or "").strip(),
+        "email": (request.form.get("email") or "").strip(),
+        "subject": (request.form.get("subject") or "").strip(),
+        "message": (request.form.get("message") or "").strip(),
+    }
+    if request.method == "POST":
+        enforce_rate_limit("contact_form", limit=5, window_seconds=3600)
+        if not protect_with_turnstile("contact_submission"):
+            return redirect(url_for("contact"))
+
+        try:
+            name = form_values["name"][:255]
+            email = validate_basic_email_address(form_values["email"])
+            subject = form_values["subject"][:255]
+            message = form_values["message"]
+            if not name:
+                raise ValueError("Please add your name.")
+            if not subject:
+                raise ValueError("Please add a subject.")
+            if not message:
+                raise ValueError("Please add a message.")
+            if len(message) > 5000:
+                raise ValueError("Messages must be 5000 characters or fewer.")
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return render_template(
+                "contact.html",
+                form_values=form_values,
+                turnstile_contact=build_turnstile_context("contact_submission"),
+                enable_turnstile=True,
+                seo=build_seo_payload(
+                    title=f"Contact | {APP_NAME}",
+                    description="Send a support message to Planira without exposing a public inbox address.",
+                    canonical_url=build_absolute_url("contact"),
+                ),
+            )
+
+        contact_message = ContactMessage(name=name, email=email, subject=subject, message=message, status="new")
+        db.session.add(contact_message)
+        db.session.commit()
+        queue_analytics_event("contact_submitted", {"source": "contact_form"})
+        email_sent = False
+        if support_email_address():
+            email_sent = send_templated_email(
+                f"Planira support: {subject}",
+                [support_email_address()],
+                "contact_notification",
+                reply_to=email,
+                category="support",
+                contact_message=contact_message,
+            )
+
+        if email_sent:
+            flash("Message received. We’ll review it and reply if needed.", "success")
+        else:
+            flash("Message received. Your message was saved safely even though email delivery could not be confirmed.", "info")
+        return redirect(url_for("contact"))
+
+    return render_template(
+        "contact.html",
+        form_values=form_values,
+        turnstile_contact=build_turnstile_context("contact_submission"),
+        enable_turnstile=True,
+        seo=build_seo_payload(
+            title=f"Contact | {APP_NAME}",
+            description="Send a support message to Planira without exposing a public inbox address.",
+            canonical_url=build_absolute_url("contact"),
+        ),
+    )
+
+
+@app.route("/newsletter", methods=["GET", "POST"])
+def newsletter():
+    form_values = {"email": (request.form.get("email") or "").strip()}
+    if request.method == "POST":
+        enforce_rate_limit("newsletter_signup", limit=5, window_seconds=3600)
+        if not protect_with_turnstile("newsletter_signup"):
+            return redirect(url_for("newsletter"))
+        if request.form.get("newsletter_opt_in") != "yes":
+            flash("Please confirm that you want to receive occasional Planira emails.", "error")
+            return redirect(url_for("newsletter"))
+
+        try:
+            email = validate_basic_email_address(form_values["email"])
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("newsletter"))
+
+        subscriber, result = subscribe_newsletter(
+            email,
+            source="public_newsletter_form",
+            consent_text=NEWSLETTER_CONSENT_TEXT,
+        )
+        if result == "already_subscribed":
+            flash("That email address is already subscribed.", "info")
+            return redirect(url_for("newsletter"))
+
+        confirmation_sent = send_newsletter_confirmation_email(subscriber)
+        if confirmation_sent:
+            flash("You’re subscribed. A confirmation email is on the way.", "success")
+        else:
+            flash("You’re subscribed. We may not be able to send confirmation email right away, but your preference has been saved.", "success")
+        return redirect(url_for("newsletter"))
+
+    return render_template(
+        "newsletter.html",
+        consent_text=NEWSLETTER_CONSENT_TEXT,
+        form_values=form_values,
+        turnstile_newsletter=build_turnstile_context("newsletter_signup"),
+        enable_turnstile=True,
+        seo=build_seo_payload(
+            title=f"Newsletter | {APP_NAME}",
+            description="Opt in to occasional Planira email updates with a one-click unsubscribe link.",
+            canonical_url=build_absolute_url("newsletter"),
+        ),
+    )
+
+
+@app.route("/newsletter/unsubscribe/<token>")
+def newsletter_unsubscribe(token):
+    email = decode_unsubscribe_token(token)
+    state = "invalid"
+    if email:
+        _, result = unsubscribe_newsletter(email)
+        if result in {"unsubscribed", "already_unsubscribed"}:
+            state = result
+    return render_template(
+        "newsletter_unsubscribed.html",
+        state=state,
+        seo=build_seo_payload(
+            title=f"Newsletter unsubscribe | {APP_NAME}",
+            description="Manage your Planira newsletter subscription.",
+            canonical_url=build_absolute_url("newsletter_unsubscribe", token=token),
+            robots="noindex, nofollow",
+        ),
+    )
+
+
 @app.route("/plans")
 def plans():
     user = current_user()
     account_state = build_account_state(user)
+    add_page_analytics_event("pricing_viewed", {"signed_in": bool(user)})
     active_key = current_plan_catalog_key(user) if user else "free_visitor"
     account_summary = build_user_summary(user) if user else None
     active_quota_copy = account_summary["quota_copy"] if account_summary else None
@@ -4572,6 +5316,39 @@ def update_account_profile_image():
     return redirect(url_for("account_settings"))
 
 
+@app.route("/account/settings/newsletter", methods=["POST"])
+@login_required
+def update_account_newsletter():
+    user = current_user()
+    if not user:
+        abort(403)
+
+    action = (request.form.get("action") or "").strip().lower()
+    if action == "subscribe":
+        subscriber, result = subscribe_newsletter(
+            user.email,
+            source="account_settings",
+            consent_text=NEWSLETTER_CONSENT_TEXT,
+        )
+        if result == "already_subscribed":
+            flash("This account is already subscribed to newsletter updates.", "info")
+        else:
+            confirmation_sent = send_newsletter_confirmation_email(subscriber)
+            if confirmation_sent:
+                flash("Newsletter subscription saved and confirmation email sent.", "success")
+            else:
+                flash("Newsletter subscription saved.", "success")
+    elif action == "unsubscribe":
+        _, result = unsubscribe_newsletter(user.email)
+        if result == "missing":
+            flash("This account was not subscribed to newsletter updates.", "info")
+        else:
+            flash("Newsletter subscription updated.", "success")
+    else:
+        flash("That newsletter action is not available.", "error")
+    return redirect(url_for("account_settings"))
+
+
 @app.route("/account/api-keys")
 @login_required
 def account_api_keys():
@@ -4596,6 +5373,7 @@ def create_account_api_key():
     except ValueError as exc:
         return jsonify({"error": "invalid_scope", "message": str(exc)}), 400
     db.session.commit()
+    queue_analytics_event("api_key_created", {"surface": "account"})
     return (
         jsonify(
             {
@@ -4655,6 +5433,7 @@ def create_developer_api_key():
         flash(str(exc), "error")
         return redirect(url_for("developers"))
     db.session.commit()
+    add_page_analytics_event("api_key_created", {"surface": "developers"})
     flash("API key created. Copy it now because it will not be shown again.", "success")
     return render_template("developers.html", **build_developers_page_context(user, raw_api_key=raw_key, raw_api_key_label=label))
 
@@ -4786,6 +5565,11 @@ def billing_success():
         db.session.refresh(user)
         refresh_session_user(user)
 
+    send_payment_confirmation_email(
+        user,
+        plan_name=plan["name"],
+        event_key=checkout_session_id,
+    )
     flash(f"{plan['name']} is now active on your account.", "success")
     return redirect(url_for("plans"))
 
@@ -4857,6 +5641,18 @@ def stripe_webhook():
 
     if stripe_fields_changed and not entitlement_changed:
         db.session.commit()
+
+    event_object_id = stripe_object_value(event_object, "id", "") or metadata.get("checkout_session_id") or metadata.get("session_id")
+    if event_type == "checkout.session.completed" and user and metadata.get("plan_key") and metadata.get("plan_key") not in DISABLED_API_PACK_PLAN_KEYS and target_role != "api_buyer":
+        plan = get_plan(metadata.get("plan_key"))
+        if plan:
+            send_payment_confirmation_email(
+                user,
+                plan_name=plan["name"],
+                event_key=event_object_id,
+            )
+    elif event_type == "invoice.payment_failed" and user:
+        send_payment_failure_email(user, event_key=event_object_id or event_type)
 
     return jsonify({"received": True})
 
@@ -5224,6 +6020,15 @@ def search():
                 filters_json=filters_payload,
                 result_count=pagination.total,
             )
+            add_page_analytics_event(
+                "search_submitted",
+                {
+                    "result_count": pagination.total,
+                    "has_query": bool(q),
+                    "has_town": bool(town),
+                    "selected_place": bool(selected_place_id),
+                },
+            )
             db.session.commit()
     search_usage = build_user_summary(user)
     return render_template(
@@ -5303,6 +6108,13 @@ def place_detail(slug):
         for comment in comments
     ]
     signal = build_access_signal(profile)
+    add_page_analytics_event(
+        "place_viewed",
+        {
+            "place_id": place.id,
+            "venue_type": (place.venue_type or "unknown").lower(),
+        },
+    )
     return render_template(
         "place.html",
         place=place,
@@ -5489,6 +6301,7 @@ def dashboard():
         {"label": "Streaming control room", "href": url_for("staff_streaming_control_room")},
         {"label": "Add venue", "href": url_for("new_place")},
         {"label": "Open moderation", "href": url_for("admin_moderation")},
+        {"label": "Support inbox", "href": url_for("admin_support")},
         {"label": "Manage users", "href": url_for("admin_users")},
     ]
     return render_template(
@@ -5508,6 +6321,214 @@ def dashboard():
         api_operations=api_operations,
         quick_actions=quick_actions,
     )
+
+
+@app.route("/admin/support")
+@login_required
+@staff_required
+def admin_support():
+    status_filter = (request.args.get("status") or "all").strip().lower() or "all"
+    query = ContactMessage.query
+    if status_filter in CONTACT_MESSAGE_STATUS_VALUES:
+        query = query.filter(ContactMessage.status == status_filter)
+    messages = query.order_by(ContactMessage.created_at.desc()).all()
+    return render_template(
+        "admin_support.html",
+        support_rows=build_support_rows(messages),
+        support_stats=build_support_stats(),
+        status_filter=status_filter,
+    )
+
+
+@app.route("/admin/support/<int:message_id>")
+@login_required
+@staff_required
+def admin_support_detail(message_id):
+    message = db.session.get(ContactMessage, message_id)
+    if not message:
+        abort(404)
+    return render_template(
+        "admin_support_detail.html",
+        contact_message=message,
+        support_stats=build_support_stats(),
+    )
+
+
+@app.route("/admin/support/<int:message_id>/reply", methods=["POST"])
+@login_required
+@staff_required
+def admin_support_reply(message_id):
+    message = db.session.get(ContactMessage, message_id)
+    if not message:
+        abort(404)
+
+    reply_body = (request.form.get("reply_body") or "").strip()
+    if not reply_body:
+        flash("Please add a reply before sending.", "error")
+        return redirect(url_for("admin_support_detail", message_id=message.id))
+
+    actor = current_user()
+    email_sent = send_templated_email(
+        f"Re: {message.subject}",
+        [message.email],
+        "staff_reply",
+        reply_to=support_email_address() or None,
+        category="support",
+        contact_message=message,
+        reply_body=reply_body,
+        reply_body_html=basic_html_from_text(reply_body),
+        staff_user=actor,
+    )
+    if not email_sent:
+        flash("Reply email could not be sent right now. The message status was not changed.", "error")
+        return redirect(url_for("admin_support_detail", message_id=message.id))
+
+    now = datetime.now(timezone.utc)
+    before_state = {
+        "status": message.status,
+        "handled_by_user_id": message.handled_by_user_id,
+        "handled_at": message.handled_at,
+        "reply_sent_at": message.reply_sent_at,
+    }
+    message.status = "replied"
+    message.handled_by_user_id = actor.id if actor else None
+    message.handled_at = now
+    message.reply_sent_at = now
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="support.reply_sent",
+        entity_type="contact_message",
+        entity_id=message.id,
+        before=before_state,
+        after={
+            "status": message.status,
+            "handled_by_user_id": message.handled_by_user_id,
+            "handled_at": message.handled_at,
+            "reply_sent_at": message.reply_sent_at,
+        },
+        reason="Staff reply sent",
+    )
+    db.session.commit()
+    flash("Reply sent.", "success")
+    return redirect(url_for("admin_support_detail", message_id=message.id))
+
+
+@app.route("/admin/support/<int:message_id>/status", methods=["POST"])
+@login_required
+@staff_required
+def admin_support_status(message_id):
+    message = db.session.get(ContactMessage, message_id)
+    if not message:
+        abort(404)
+
+    new_status = (request.form.get("status") or "").strip().lower()
+    if new_status not in CONTACT_MESSAGE_STATUS_VALUES:
+        flash("Choose a valid support status.", "error")
+        return redirect(url_for("admin_support_detail", message_id=message.id))
+
+    actor = current_user()
+    before_state = {
+        "status": message.status,
+        "handled_by_user_id": message.handled_by_user_id,
+        "handled_at": message.handled_at,
+    }
+    message.status = new_status
+    message.handled_by_user_id = actor.id if actor else None
+    message.handled_at = datetime.now(timezone.utc)
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="support.status_updated",
+        entity_type="contact_message",
+        entity_id=message.id,
+        before=before_state,
+        after={
+            "status": message.status,
+            "handled_by_user_id": message.handled_by_user_id,
+            "handled_at": message.handled_at,
+        },
+        reason=f"Support status changed to {new_status}",
+    )
+    db.session.commit()
+    flash("Support status updated.", "success")
+    return redirect(url_for("admin_support_detail", message_id=message.id))
+
+
+@app.route("/admin/newsletter")
+@login_required
+@admin_required
+def admin_newsletter():
+    subscriber_count = NewsletterSubscriber.query.filter_by(status="subscribed").count()
+    subscribers = (
+        NewsletterSubscriber.query.order_by(NewsletterSubscriber.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return render_template(
+        "admin_newsletter.html",
+        subscriber_count=subscriber_count,
+        subscribers=subscribers,
+        draft_rows=build_newsletter_draft_rows(),
+        newsletter_enabled=bool(app.config.get("NEWSLETTER_ENABLED")),
+        newsletter_status=newsletter_status_for_email(current_user().email),
+    )
+
+
+@app.route("/admin/newsletter/drafts", methods=["POST"])
+@login_required
+@admin_required
+def create_newsletter_draft():
+    subject = (request.form.get("subject") or "").strip()[:255]
+    body_text = (request.form.get("body_text") or "").strip()
+    if not subject:
+        flash("Please add a newsletter subject.", "error")
+        return redirect(url_for("admin_newsletter"))
+    if not body_text:
+        flash("Please add newsletter body copy.", "error")
+        return redirect(url_for("admin_newsletter"))
+
+    actor = current_user()
+    draft = NewsletterDraft(subject=subject, body_text=body_text, status="draft", created_by_user_id=actor.id if actor else None)
+    db.session.add(draft)
+    db.session.commit()
+    flash("Newsletter draft saved.", "success")
+    return redirect(url_for("admin_newsletter"))
+
+
+@app.route("/admin/newsletter/drafts/<int:draft_id>/test", methods=["POST"])
+@login_required
+@admin_required
+def send_newsletter_test(draft_id):
+    draft = db.session.get(NewsletterDraft, draft_id)
+    if not draft:
+        abort(404)
+
+    actor = current_user()
+    subscription_state = newsletter_status_for_email(actor.email)
+    if subscription_state["status"] == "unsubscribed":
+        flash("You are unsubscribed from newsletter mail, so a test email was not sent.", "info")
+        return redirect(url_for("admin_newsletter"))
+
+    unsubscribe_url = url_for("newsletter_unsubscribe", token=build_unsubscribe_token(actor.email), _external=True)
+    text_body, html_body = render_email_bodies(
+        "newsletter",
+        heading=draft.subject,
+        intro="This is a test send from the Planira newsletter workspace.",
+        body_html=basic_html_from_text(draft.body_text),
+        body_text=draft.body_text,
+        unsubscribe_url=unsubscribe_url,
+    )
+    email_sent = send_email(
+        draft.subject,
+        [actor.email],
+        text_body,
+        html_body=html_body,
+        category="newsletter",
+    )
+    if email_sent:
+        flash("Newsletter test sent.", "success")
+    else:
+        flash("Newsletter test could not be sent right now.", "error")
+    return redirect(url_for("admin_newsletter"))
 
 
 @app.route("/staff/streaming")
@@ -6268,6 +7289,7 @@ def auth_callback():
             app.logger.warning("Blocked Google login for email=%s due to sub mismatch.", email)
             flash("That Google account could not be matched safely. Contact support if you need help.", "error")
             return redirect(url_for("index"))
+    created_new_user = False
     if not user:
         user = User(
             email=email,
@@ -6277,6 +7299,7 @@ def auth_callback():
             role="admin" if is_admin_email(email) else DEFAULT_MEMBER_ROLE,
         )
         db.session.add(user)
+        created_new_user = True
     else:
         if not user.google_sub:
             user.google_sub = google_sub
@@ -6284,6 +7307,15 @@ def auth_callback():
         user.picture = info.get("picture")
     user.last_login_at = datetime.now(timezone.utc)
     db.session.commit()
+    if created_new_user:
+        send_welcome_email_for_user(user)
+    queue_analytics_event(
+        "signup_completed",
+        {
+            "method": "google",
+            "account_status": "new" if created_new_user else "existing",
+        },
+    )
     refresh_session_user(user)
     return redirect_to_next("search")
 

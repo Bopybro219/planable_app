@@ -30,8 +30,16 @@
         <span>Planira stores comments, moderation decisions, staff audit logs, and internal venue workflow records so the service can be reviewed, improved, and protected from misuse.</span>
       </div>
       <div class="stack-row">
+        <strong>Email records</strong>
+        <span>Planira can store support messages, newsletter consent state, and a limited record of which transactional emails were sent so duplicate payment or welcome emails can be avoided.</span>
+      </div>
+      <div class="stack-row">
         <strong>Anti-abuse checks</strong>
         <span>Protected forms may use Cloudflare Turnstile to help distinguish real visitors from automated abuse. Planira verifies the Turnstile response on the server before accepting the submission.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Optional analytics</strong>
+        <span>If Google Analytics 4 is enabled for a live environment, Planira only loads it after you opt in to analytics cookies. It is used for high-level product signals such as search submissions, place views, pricing views, contact submissions, OAuth sign-ins, and API key creation.</span>
       </div>
     </div>
   </article>
@@ -55,6 +63,18 @@
         <strong>Improving venue information</strong>
         <span>Planira uses contribution and verification history to improve accessibility records and make the product more useful.</span>
       </div>
+      <div class="stack-row">
+        <strong>Transactional and support emails</strong>
+        <span>Planira may send welcome emails, account or payment updates, support replies, and staff notifications tied to messages you send through the contact form.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Newsletter opt-in</strong>
+        <span>Newsletter emails are only sent when you explicitly opt in. Every newsletter email includes an unsubscribe link, and opting out does not require logging in.</span>
+      </div>
+      <div class="stack-row">
+        <strong>Minimal analytics only after consent</strong>
+        <span>If analytics is enabled, Planira uses it only after you consent and only for aggregated product understanding. Planira does not send names, email addresses, support message content, or exact addresses to Google Analytics.</span>
+      </div>
     </div>
   </article>
 
@@ -65,12 +85,12 @@
 
   <article class="surface-panel">
     <h2>Retention and limits</h2>
-    <p class="muted">Planira does not currently publish fixed retention periods for every record type. In practice, account data, usage logs, moderation records, and audit history may be kept while they are still needed to run the service, investigate abuse, or understand product usage. If that changes, these pages should become more specific.</p>
+    <p class="muted">Planira does not currently publish fixed retention periods for every record type. In practice, account data, usage logs, moderation records, audit history, support messages, and newsletter consent records may be kept while they are still needed to run the service, investigate abuse, or understand product usage. Future cleanup rules for older support messages still need to be formalised.</p>
   </article>
 
   <article class="surface-panel">
     <h2>What Planira does not claim</h2>
-    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. Planira does not currently run Google Analytics, Google Tag Manager, Google Ads, or similar ad-tracking tools. If that changes later, these pages should be updated first. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
+    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. Planira does not run Google Ads today, does not use analytics before consent, and does not send personal details like names, email addresses, support messages, or exact addresses to analytics tools. If that changes later, these pages should be updated first. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
   </article>
 </section>
 {% endblock %}

@@ -407,14 +407,77 @@
               <a href="{{ url_for('account') }}">Account</a>
             {% endif %}
             <a href="{{ url_for('developers') }}">Developers</a>
+            <a href="{{ url_for('contact') }}">Contact</a>
+            <a href="{{ url_for('newsletter') }}">Newsletter</a>
             <a href="{{ url_for('privacy') }}">Privacy</a>
             <a href="{{ url_for('terms') }}">Terms</a>
             <a href="{{ url_for('data_rights') }}">Data rights</a>
             <a href="{{ url_for('cookies') }}">Cookies</a>
+            <button type="button" class="planira-footer-link-button" data-privacy-settings>Privacy settings</button>
             <span>Call: <span data-phone>{{ contact_phone }}</span></span>
           </nav>
         </div>
       </footer>
+
+      <section
+        class="planira-consent-banner"
+        data-consent-banner
+        aria-label="Privacy choices"
+        {% if analytics.consent.version %}hidden{% endif %}
+      >
+        <div class="planira-consent-card surface-panel" role="dialog" aria-modal="false" aria-labelledby="consent-title">
+          <div class="planira-consent-copy">
+            <span class="eyebrow">Privacy choices</span>
+            <h2 id="consent-title">Choose how Planira uses optional cookies</h2>
+            <p class="muted">Necessary cookies stay on for sign-in and security. Analytics stays off unless you say yes. Marketing is reserved for the future and stays off today.</p>
+          </div>
+          <div class="planira-consent-actions">
+            <button type="button" class="planira-button-secondary btn-secondary-planira" data-consent-customize>Save preferences</button>
+            <button type="button" class="planira-button-quiet" data-consent-reject>Reject non-essential</button>
+            <button type="button" class="planira-button-primary btn-primary-planira" data-consent-accept>Accept all</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="planira-consent-panel" data-consent-panel hidden>
+        <div class="planira-consent-card surface-panel" role="dialog" aria-modal="true" aria-labelledby="consent-panel-title">
+          <div class="planira-consent-panel-head">
+            <div>
+              <span class="eyebrow">Privacy settings</span>
+              <h2 id="consent-panel-title">Update cookie preferences</h2>
+            </div>
+            <button type="button" class="planira-button-quiet" data-consent-close aria-label="Close privacy settings">Close</button>
+          </div>
+          <form class="planira-consent-form" data-consent-form>
+            <label class="planira-consent-option">
+              <span>
+                <strong>Necessary</strong>
+                <small>Required for sign-in, session safety, and basic site operation.</small>
+              </span>
+              <input type="checkbox" checked disabled aria-describedby="consent-necessary-note">
+            </label>
+            <p class="sr-only" id="consent-necessary-note">Necessary cookies are always enabled.</p>
+            <label class="planira-consent-option">
+              <span>
+                <strong>Analytics</strong>
+                <small>Helps Planira understand high-level product usage without tracking personal details.</small>
+              </span>
+              <input type="checkbox" name="analytics" value="yes" data-consent-toggle="analytics">
+            </label>
+            <label class="planira-consent-option">
+              <span>
+                <strong>Marketing</strong>
+                <small>Reserved for future use. Planira does not run ads today.</small>
+              </span>
+              <input type="checkbox" name="marketing" value="yes" data-consent-toggle="marketing">
+            </label>
+            <div class="planira-consent-panel-actions">
+              <button type="button" class="planira-button-quiet" data-consent-reject-panel>Reject non-essential</button>
+              <button type="submit" class="planira-button-primary btn-primary-planira">Save preferences</button>
+            </div>
+          </form>
+        </div>
+      </section>
     </div>
 
     <script>
@@ -428,6 +491,246 @@
       window.setTimeout(() => {
         document.querySelectorAll(".toast.toast-success, .toast.toast-info").forEach((toast) => toast.classList.add("toast-hide"));
       }, 8000);
+
+      const analyticsConfig = {{ analytics|tojson }};
+      const consentBanner = document.querySelector("[data-consent-banner]");
+      const consentPanel = document.querySelector("[data-consent-panel]");
+      const consentForm = document.querySelector("[data-consent-form]");
+      const analyticsToggle = document.querySelector('[data-consent-toggle="analytics"]');
+      const marketingToggle = document.querySelector('[data-consent-toggle="marketing"]');
+      const privacyButtons = document.querySelectorAll("[data-privacy-settings]");
+      const consentAcceptButton = document.querySelector("[data-consent-accept]");
+      const consentRejectButton = document.querySelector("[data-consent-reject]");
+      const consentCustomizeButton = document.querySelector("[data-consent-customize]");
+      const consentCloseButton = document.querySelector("[data-consent-close]");
+      const consentRejectPanelButton = document.querySelector("[data-consent-reject-panel]");
+
+      const defaultConsent = {
+        version: 0,
+        necessary: true,
+        analytics: false,
+        marketing: false,
+      };
+
+      const consentCookieName = analyticsConfig.cookie_name || "planira_consent";
+      const consentCookieMaxAge = analyticsConfig.cookie_max_age || (60 * 60 * 24 * 180);
+      const gaMeasurementId = analyticsConfig.measurement_id || "";
+      const gaScriptSrc = analyticsConfig.script_src || "";
+      const analyticsRuntimeEnabled = Boolean(analyticsConfig.enabled && gaMeasurementId);
+
+      const normalizeConsent = (value) => ({
+        version: value && typeof value.version === "number" ? value.version : 1,
+        necessary: true,
+        analytics: Boolean(value && value.analytics),
+        marketing: Boolean(value && value.marketing),
+      });
+
+      const readConsent = () => {
+        const cookieMatch = document.cookie.match(new RegExp(`(?:^|; )${consentCookieName}=([^;]*)`));
+        const rawCookie = cookieMatch ? decodeURIComponent(cookieMatch[1]) : "";
+        if (rawCookie) {
+          try {
+            return normalizeConsent(JSON.parse(rawCookie));
+          } catch (error) {
+            console.warn("Planira consent cookie could not be parsed.", error);
+          }
+        }
+
+        try {
+          const rawStorage = window.localStorage.getItem(consentCookieName);
+          if (rawStorage) {
+            return normalizeConsent(JSON.parse(rawStorage));
+          }
+        } catch (error) {
+          console.warn("Planira consent storage could not be read.", error);
+        }
+        return normalizeConsent(defaultConsent);
+      };
+
+      const writeConsent = (value) => {
+        const normalized = normalizeConsent(value);
+        const encoded = encodeURIComponent(JSON.stringify(normalized));
+        document.cookie = `${consentCookieName}=${encoded}; Max-Age=${consentCookieMaxAge}; Path=/; SameSite=Lax`;
+        try {
+          window.localStorage.setItem(consentCookieName, JSON.stringify(normalized));
+        } catch (error) {
+          console.warn("Planira consent storage could not be saved.", error);
+        }
+        return normalized;
+      };
+
+      const syncConsentControls = (value) => {
+        if (analyticsToggle) analyticsToggle.checked = Boolean(value.analytics);
+        if (marketingToggle) marketingToggle.checked = Boolean(value.marketing);
+      };
+
+      const showConsentBanner = (show) => {
+        if (!consentBanner) return;
+        consentBanner.hidden = !show;
+      };
+
+      const openConsentPanel = () => {
+        const consent = readConsent();
+        syncConsentControls(consent);
+        if (consentPanel) {
+          consentPanel.hidden = false;
+          const firstInput = consentPanel.querySelector("input:not([disabled]), button");
+          if (firstInput) firstInput.focus();
+        }
+      };
+
+      const closeConsentPanel = () => {
+        if (consentPanel) consentPanel.hidden = true;
+      };
+
+      const deleteGaCookies = () => {
+        document.cookie.split(";").forEach((cookiePart) => {
+          const name = cookiePart.split("=")[0].trim();
+          if (name === "_ga" || name.startsWith("_ga_")) {
+            document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
+          }
+        });
+      };
+
+      let gaLoaded = false;
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = window.gtag || function gtag(){ window.dataLayer.push(arguments); };
+
+      const loadGoogleAnalytics = () => {
+        if (!analyticsRuntimeEnabled || gaLoaded || !gaScriptSrc) {
+          return false;
+        }
+        const existingScript = document.getElementById("planira-ga-script");
+        if (existingScript) {
+          gaLoaded = true;
+          return true;
+        }
+        const script = document.createElement("script");
+        script.id = "planira-ga-script";
+        script.async = true;
+        script.src = gaScriptSrc;
+        document.head.appendChild(script);
+        window[`ga-disable-${gaMeasurementId}`] = false;
+        window.gtag("js", new Date());
+        window.gtag("consent", "default", {
+          analytics_storage: "granted",
+          ad_storage: "denied",
+          ad_personalization: "denied",
+          ad_user_data: "denied",
+        });
+        window.gtag("config", gaMeasurementId, {
+          anonymize_ip: true,
+          allow_google_signals: false,
+          allow_ad_personalization_signals: false,
+        });
+        gaLoaded = true;
+        return true;
+      };
+
+      const disableGoogleAnalytics = () => {
+        if (!gaMeasurementId) return;
+        window[`ga-disable-${gaMeasurementId}`] = true;
+        window.gtag("consent", "update", {
+          analytics_storage: "denied",
+          ad_storage: "denied",
+          ad_personalization: "denied",
+          ad_user_data: "denied",
+        });
+        deleteGaCookies();
+      };
+
+      const eventQueue = Array.isArray(analyticsConfig.events) ? analyticsConfig.events.slice() : [];
+
+      const flushQueuedEvents = () => {
+        if (!gaLoaded) return;
+        while (eventQueue.length) {
+          const nextEvent = eventQueue.shift();
+          if (!nextEvent || !nextEvent.name) continue;
+          window.gtag("event", nextEvent.name, nextEvent.params || {});
+        }
+      };
+
+      const trackEvent = (name, params = {}) => {
+        if (!analyticsRuntimeEnabled) {
+          return false;
+        }
+        const consent = readConsent();
+        if (!consent.analytics) {
+          return false;
+        }
+        const payload = {
+          name: String(name || "").trim(),
+          params: params && typeof params === "object" ? params : {},
+        };
+        if (!payload.name) {
+          return false;
+        }
+        if (!gaLoaded) {
+          eventQueue.push(payload);
+          loadGoogleAnalytics();
+          flushQueuedEvents();
+          return true;
+        }
+        window.gtag("event", payload.name, payload.params);
+        return true;
+      };
+
+      window.PlaniraAnalytics = {
+        load: loadGoogleAnalytics,
+        disable: disableGoogleAnalytics,
+        trackEvent,
+      };
+      window.track_event = trackEvent;
+
+      const applyConsent = (value, { closePanel = true } = {}) => {
+        const normalized = writeConsent(value);
+        syncConsentControls(normalized);
+        showConsentBanner(false);
+        if (normalized.analytics) {
+          loadGoogleAnalytics();
+          flushQueuedEvents();
+        } else {
+          disableGoogleAnalytics();
+        }
+        if (closePanel) closeConsentPanel();
+        return normalized;
+      };
+
+      privacyButtons.forEach((button) => button.addEventListener("click", openConsentPanel));
+      if (consentAcceptButton) {
+        consentAcceptButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: true, marketing: false }));
+      }
+      if (consentRejectButton) {
+        consentRejectButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: false, marketing: false }));
+      }
+      if (consentCustomizeButton) {
+        consentCustomizeButton.addEventListener("click", openConsentPanel);
+      }
+      if (consentCloseButton) {
+        consentCloseButton.addEventListener("click", closeConsentPanel);
+      }
+      if (consentRejectPanelButton) {
+        consentRejectPanelButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: false, marketing: false }));
+      }
+      if (consentForm) {
+        consentForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          applyConsent({
+            version: 1,
+            necessary: true,
+            analytics: Boolean(analyticsToggle && analyticsToggle.checked),
+            marketing: Boolean(marketingToggle && marketingToggle.checked),
+          });
+        });
+      }
+
+      const initialConsent = readConsent();
+      syncConsentControls(initialConsent);
+      showConsentBanner(initialConsent.version < 1);
+      if (analyticsConfig.autoload && initialConsent.analytics) {
+        loadGoogleAnalytics();
+        flushQueuedEvents();
+      }
 
       const navToggle = document.querySelector("[data-nav-toggle]");
       const staffToggle = document.querySelector("[data-staff-toggle]");
@@ -840,5 +1143,6 @@
         });
       });
     </script>
+    {% block page_scripts %}{% endblock %}
   </body>
 </html>

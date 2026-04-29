@@ -3064,3 +3064,112 @@ body.planira-theme-calm .planira-staff-dropdown-toggle:focus-visible {
   border-radius: 16px;
   background: rgba(255, 252, 248, 0.72);
 }
+
+.planira-footer-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit !important;
+  font: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.planira-consent-banner,
+.planira-consent-panel {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 140;
+}
+
+.planira-consent-panel {
+  top: 16px;
+  bottom: 16px;
+  display: grid;
+  place-items: end center;
+  background: rgba(26, 33, 38, 0.22);
+  backdrop-filter: blur(6px);
+}
+
+.planira-consent-panel[hidden],
+.planira-consent-banner[hidden] {
+  display: none;
+}
+
+.planira-consent-card {
+  width: min(100%, 760px);
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  box-shadow: 0 24px 60px rgba(45, 56, 64, 0.18);
+}
+
+.planira-consent-copy h2,
+.planira-consent-panel-head h2 {
+  margin-bottom: 8px;
+}
+
+.planira-consent-actions,
+.planira-consent-panel-actions,
+.planira-consent-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.planira-consent-form {
+  display: grid;
+  gap: 12px;
+}
+
+.planira-consent-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(118, 138, 146, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 252, 248, 0.68);
+}
+
+.planira-consent-option span {
+  display: grid;
+  gap: 4px;
+}
+
+.planira-consent-option small {
+  color: var(--muted);
+}
+
+.planira-consent-option input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+@media (max-width: 700px) {
+  .planira-consent-actions,
+  .planira-consent-panel-actions,
+  .planira-consent-panel-head,
+  .planira-consent-option {
+    align-items: stretch;
+  }
+
+  .planira-consent-actions > *,
+  .planira-consent-panel-actions > *,
+  .planira-consent-panel-head > *,
+  .planira-consent-option > * {
+    width: 100%;
+  }
+
+  .planira-consent-option input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+    justify-self: end;
+  }
+}
