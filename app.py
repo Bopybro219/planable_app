@@ -3,6 +3,9 @@ import logging
 import os
 import re
 import secrets
+import threading
+import warnings
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urljoin, urlparse
@@ -12,9 +15,11 @@ from dotenv import load_dotenv
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_migrate import Migrate, upgrade
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import inspect
+from sqlalchemy import Integer, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 
 from planira_presenters import (
     APP_NAME,
@@ -61,6 +66,76 @@ def is_sqlite_database_uri(database_url):
     return database_url.startswith("sqlite:")
 
 
+def is_postgresql_database_uri(database_url):
+    return database_url.startswith("postgresql")
+
+
+TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
+SECRET_KEY_MIN_LENGTH = 32
+SECRET_KEY_PLACEHOLDER_VALUES = {
+    "",
+    "changeme",
+    "change-me",
+    "dev",
+    "dev-secret",
+    "dev-change-me",
+    "example",
+    "placeholder",
+    "replace-me",
+    "replace-with-a-long-random-secret",
+    "secret",
+    "test",
+    "unsafe-dev-secret",
+}
+FIXED_API_SCOPES = {"places:read", "places:write", "api:usage", "admin:read"}
+LEGACY_SCOPE_ALIASES = {"search:read": "places:read"}
+DEFAULT_API_KEY_SCOPES = ("places:read", "api:usage")
+DISABLED_API_PACK_PLAN_KEYS = {"api_20", "api_50", "api_100"}
+API_PACK_DISABLED_MESSAGE = (
+    "API pack checkout is temporarily disabled while lookup-credit accounting is being completed."
+)
+API_PACK_ACCESS_DISABLED_MESSAGE = (
+    "API pack access is temporarily unavailable while lookup-credit accounting is being finished."
+)
+RATE_LIMIT_ERROR_MESSAGE = "Too many requests. Please wait a moment and try again."
+_RATE_LIMIT_STATE = defaultdict(deque)
+_RATE_LIMIT_LOCK = threading.Lock()
+
+
+def env_flag(name, default=False):
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in TRUTHY_ENV_VALUES
+
+
+def secret_key_issues(secret_key):
+    cleaned = (secret_key or "").strip()
+    lowered = cleaned.lower()
+    issues = []
+    if not cleaned:
+        issues.append("missing")
+        return issues
+    if len(cleaned) < SECRET_KEY_MIN_LENGTH:
+        issues.append("too_short")
+    if lowered in SECRET_KEY_PLACEHOLDER_VALUES:
+        issues.append("placeholder")
+    if len(set(cleaned)) < 10:
+        issues.append("low_entropy")
+    complexity_score = sum(
+        bool(pattern.search(cleaned))
+        for pattern in (
+            re.compile(r"[a-z]"),
+            re.compile(r"[A-Z]"),
+            re.compile(r"\d"),
+            re.compile(r"[^A-Za-z0-9]"),
+        )
+    )
+    if complexity_score < 3:
+        issues.append("not_complex_enough")
+    return issues
+
+
 app = Flask(__name__)
 database_url = normalize_database_url(os.getenv("DATABASE_URL"))
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-change-me")
@@ -75,8 +150,19 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
 app.config["PERMANENT_SESSION_LIFETIME"] = int(os.getenv("SESSION_LIFETIME_SECONDS", "1209600"))
-app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(1024 * 1024)))
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", str(2 * 1024 * 1024)))
 app.config["PREFERRED_URL_SCHEME"] = "https" if app.config["SESSION_COOKIE_SECURE"] else "http"
+app.config["RATE_LIMIT_ENABLED"] = env_flag("RATE_LIMIT_ENABLED", default=app.config["ENVIRONMENT"] == "production")
+app.config["PROFILE_IMAGE_MAX_BYTES"] = int(os.getenv("PROFILE_IMAGE_MAX_BYTES", str(2 * 1024 * 1024)))
+app.config["PLACE_IMAGE_MAX_BYTES"] = int(os.getenv("PLACE_IMAGE_MAX_MB", "2")) * 1024 * 1024
+app.config["PROFILE_IMAGE_UPLOAD_DIR"] = os.getenv(
+    "PROFILE_IMAGE_UPLOAD_DIR",
+    os.path.join(app.static_folder, "uploads", "profile_pics"),
+)
+app.config["PLACE_IMAGE_UPLOAD_DIR"] = os.getenv(
+    "PLACE_IMAGE_UPLOAD_DIR",
+    os.path.join(app.static_folder, "uploads", "place_images"),
+)
 
 trusted_hosts = [host.strip() for host in os.getenv("TRUSTED_HOSTS", "").split(",") if host.strip()]
 if trusted_hosts:
@@ -95,6 +181,15 @@ API_KEY_PATTERN = re.compile(r"^plnr_(?:live|test)_[A-Za-z0-9_-]{24,}$")
 CONTACT_PHONE = os.getenv("PUBLIC_CONTACT_PHONE", "01604 289096").strip() or "01604 289096"
 API_ACCESS_REQUIRED_MESSAGE = "API access requires an active Planira API or Early Access plan."
 DEFAULT_MEMBER_ROLE = "member"
+PLACE_WRITE_STATUS_VALUES = {"needs_call", "calling", "callback", "verified"}
+ACCESSIBILITY_CHOICE_VALUES = {"yes", "no", "unknown", "partial"}
+PROFILE_IMAGE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+PROFILE_IMAGE_ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+PROFILE_IMAGE_STATIC_PREFIX = "uploads/profile_pics"
+PLACE_IMAGE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+PLACE_IMAGE_ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+PLACE_IMAGE_STATIC_PREFIX = "uploads/place_images"
+MANUAL_ENTITLEMENT_ALLOWED_PLANS = {"paid_consumer", "api_20", "api_50", "api_100", "business"}
 
 proxy_fix_count = int(os.getenv("PROXY_FIX_COUNT", "0"))
 if proxy_fix_count:
@@ -111,6 +206,27 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 app.logger.setLevel(getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO))
+
+if app.config["ENVIRONMENT"] == "production":
+    app.config["SESSION_COOKIE_SECURE"] = True
+    app.config["PREFERRED_URL_SCHEME"] = "https"
+    app.config["DEBUG"] = False
+else:
+    dev_secret_issues = secret_key_issues(app.config["SECRET_KEY"])
+    if dev_secret_issues:
+        warning_message = (
+            "Planira is using an unsafe development SECRET_KEY. "
+            "Use a long random value before sharing the environment or testing auth flows."
+        )
+        app.logger.warning("%s Issues: %s", warning_message, ", ".join(dev_secret_issues))
+        warnings.warn(warning_message, RuntimeWarning, stacklevel=2)
+
+production_secret_issues = secret_key_issues(app.config["SECRET_KEY"])
+if app.config["ENVIRONMENT"] == "production" and production_secret_issues:
+    raise RuntimeError(
+        "Refusing to start in production with an unsafe SECRET_KEY. "
+        f"Issues: {', '.join(production_secret_issues)}."
+    )
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -132,10 +248,16 @@ google = oauth.register(
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    google_sub = db.Column(db.String(255), unique=True, index=True)
     name = db.Column(db.String(255))
     picture = db.Column(db.Text)
+    profile_image_filename = db.Column(db.String(255))
     role = db.Column(db.String(50), default=DEFAULT_MEMBER_ROLE)
     plan = db.Column(db.String(50), default="free", nullable=False)
+    manual_entitlement_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    manual_entitlement_plan = db.Column(db.String(50))
+    access_override_until = db.Column(db.DateTime)
+    manual_entitlement_note = db.Column(db.String(255))
     stripe_customer_id = db.Column(db.String(255), unique=True, index=True)
     stripe_subscription_id = db.Column(db.String(255), unique=True, index=True)
     subscription_status = db.Column(db.String(80), index=True)
@@ -149,6 +271,14 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_login_at = db.Column(db.DateTime)
+
+    @property
+    def avatar_url(self):
+        return get_avatar_url(self)
+
+    @property
+    def avatar_initials(self):
+        return get_avatar_initials(self)
 
 
 class Place(db.Model):
@@ -168,6 +298,19 @@ class Place(db.Model):
     status = db.Column(db.String(60), default="needs_call", index=True)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class PlaceImage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    place_id = db.Column(db.Integer, db.ForeignKey("place.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False, unique=True)
+    original_filename = db.Column(db.String(255))
+    caption = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    is_approved = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    place = db.relationship("Place", backref=db.backref("images", lazy="dynamic", order_by="desc(PlaceImage.created_at)"))
+    uploader = db.relationship("User", backref=db.backref("uploaded_place_images", lazy="dynamic"))
 
 
 class AccessibilityProfile(db.Model):
@@ -292,9 +435,9 @@ def should_auto_create_schema():
 
 def missing_config_keys():
     missing = []
-    secret_key = app.config["SECRET_KEY"]
-    if not secret_key or secret_key == "dev-change-me":
-        missing.append("SECRET_KEY")
+    secret_issues = secret_key_issues(app.config["SECRET_KEY"])
+    if secret_issues:
+        missing.append(f"SECRET_KEY ({', '.join(secret_issues)})")
 
     if is_production():
         if not os.getenv("GOOGLE_CLIENT_ID", "").strip():
@@ -303,6 +446,18 @@ def missing_config_keys():
             missing.append("GOOGLE_CLIENT_SECRET")
         if not ADMIN_EMAILS:
             missing.append("ADMIN_EMAILS")
+        if not app.config.get("SESSION_COOKIE_SECURE"):
+            missing.append("SESSION_COOKIE_SECURE=true")
+        if app.config.get("PREFERRED_URL_SCHEME") != "https":
+            missing.append("PREFERRED_URL_SCHEME=https")
+        if not app.config.get("TRUSTED_HOSTS"):
+            missing.append("TRUSTED_HOSTS")
+        if not app.config.get("SERVER_NAME"):
+            missing.append("SERVER_NAME")
+        if proxy_fix_count <= 0:
+            missing.append("PROXY_FIX_COUNT")
+        if env_flag("FLASK_DEBUG", default=False):
+            missing.append("FLASK_DEBUG must be disabled")
     return missing
 
 
@@ -356,6 +511,62 @@ def build_public_author_label(email):
     return f"{local_part[:3]}..."
 
 
+def request_client_identifier():
+    if request.access_route:
+        return request.access_route[0]
+    return request.remote_addr or "unknown"
+
+
+def rate_limit_enabled():
+    return bool(app.config.get("RATE_LIMIT_ENABLED")) and not app.config.get("TESTING", False)
+
+
+def rate_limit_state_key(scope, identifier):
+    return f"{scope}:{identifier}"
+
+
+def is_rate_limited(scope, identifier, *, limit, window_seconds):
+    if not rate_limit_enabled():
+        return False
+
+    cutoff = datetime.now(timezone.utc).timestamp() - window_seconds
+    state_key = rate_limit_state_key(scope, identifier)
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_STATE[state_key]
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+        return len(bucket) >= limit
+
+
+def register_rate_limit_hit(scope, identifier):
+    if not rate_limit_enabled():
+        return
+
+    state_key = rate_limit_state_key(scope, identifier)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_STATE[state_key].append(now_ts)
+
+
+def enforce_rate_limit(scope, *, limit, window_seconds, identifier=None, description=RATE_LIMIT_ERROR_MESSAGE):
+    identifier = identifier or request_client_identifier()
+    if is_rate_limited(scope, identifier, limit=limit, window_seconds=window_seconds):
+        abort(429, description=description)
+
+
+def oauth_email_is_verified(value):
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() == "true"
+
+
+def user_has_disabled_api_pack_entitlement(user):
+    if not user:
+        return False
+    manual_plan = (user.manual_entitlement_plan or "").strip().lower()
+    return manual_plan in DISABLED_API_PACK_PLAN_KEYS or user.role == "api_buyer"
+
+
 def is_safe_redirect_target(target):
     if not target:
         return False
@@ -383,17 +594,210 @@ def normalize_optional_url(value):
     return value
 
 
+def get_profile_image_upload_dir():
+    return app.config["PROFILE_IMAGE_UPLOAD_DIR"]
+
+
+def get_place_image_upload_dir():
+    return app.config["PLACE_IMAGE_UPLOAD_DIR"]
+
+
+def get_avatar_initials(user):
+    if not user:
+        return "PA"
+
+    raw_value = (user.name or "").strip()
+    if raw_value:
+        parts = [part for part in re.split(r"\s+", raw_value) if part]
+    else:
+        local_part = (user.email or "").split("@", 1)[0]
+        parts = [part for part in re.split(r"[\s._-]+", local_part) if part]
+
+    initials = "".join(part[:1] for part in parts[:2]).upper()
+    if initials:
+        return initials
+
+    fallback = (user.email or user.name or "Planira")[:2].upper()
+    return fallback or "PA"
+
+
+def profile_image_filesystem_path(filename):
+    safe_name = secure_filename(filename or "")
+    if not safe_name or safe_name != (filename or ""):
+        return None
+    return os.path.join(get_profile_image_upload_dir(), safe_name)
+
+
+def get_avatar_url(user):
+    if not user or not user.profile_image_filename:
+        return None
+
+    path = profile_image_filesystem_path(user.profile_image_filename)
+    if not path or not os.path.exists(path):
+        return None
+
+    return url_for("static", filename=f"{PROFILE_IMAGE_STATIC_PREFIX}/{user.profile_image_filename}")
+
+
+def place_image_filesystem_path(filename):
+    safe_name = secure_filename(filename or "")
+    if not safe_name or safe_name != (filename or ""):
+        return None
+    return os.path.join(get_place_image_upload_dir(), safe_name)
+
+
+def get_place_image_url(image):
+    if not image or not image.filename:
+        return None
+
+    path = place_image_filesystem_path(image.filename)
+    if not path or not os.path.exists(path):
+        return None
+
+    return url_for("static", filename=f"{PLACE_IMAGE_STATIC_PREFIX}/{image.filename}")
+
+
+def sniff_supported_image_extension(data):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data[:6] in {b"GIF87a", b"GIF89a"}:
+        return "gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def validate_profile_image_upload(upload):
+    if upload is None or not upload.filename:
+        raise ValueError("Choose an image to upload.")
+
+    safe_original_name = secure_filename(upload.filename)
+    _, extension = os.path.splitext(safe_original_name)
+    normalized_extension = extension.lower().lstrip(".")
+    if normalized_extension not in PROFILE_IMAGE_ALLOWED_EXTENSIONS:
+        raise ValueError("Use a PNG, JPG, WEBP or GIF image.")
+
+    mime_type = (upload.mimetype or "").lower()
+    if mime_type and mime_type not in PROFILE_IMAGE_ALLOWED_MIME_TYPES:
+        raise ValueError("That file type is not allowed.")
+
+    max_bytes = int(app.config["PROFILE_IMAGE_MAX_BYTES"])
+    payload = upload.stream.read(max_bytes + 1)
+    upload.stream.seek(0)
+    if not payload:
+        raise ValueError("Choose an image to upload.")
+    if len(payload) > max_bytes:
+        raise ValueError("Profile pictures must be 2MB or smaller.")
+
+    detected_extension = sniff_supported_image_extension(payload)
+    if not detected_extension:
+        raise ValueError("That file does not look like a supported image.")
+
+    if detected_extension == "jpg":
+        if normalized_extension not in {"jpg", "jpeg"}:
+            raise ValueError("File content does not match the selected image type.")
+    elif normalized_extension != detected_extension:
+        raise ValueError("File content does not match the selected image type.")
+
+    return payload, detected_extension
+
+
+def save_profile_image_upload(upload):
+    payload, detected_extension = validate_profile_image_upload(upload)
+    upload_dir = get_profile_image_upload_dir()
+    os.makedirs(upload_dir, exist_ok=True)
+
+    safe_filename = secure_filename(f"{secrets.token_hex(16)}.{detected_extension}")
+    path = os.path.join(upload_dir, safe_filename)
+    with open(path, "xb") as file_obj:
+        file_obj.write(payload)
+    return safe_filename
+
+
+def validate_place_image_upload(upload):
+    if upload is None or not upload.filename:
+        raise ValueError("Choose an image to upload.")
+
+    safe_original_name = secure_filename(upload.filename)
+    _, extension = os.path.splitext(safe_original_name)
+    normalized_extension = extension.lower().lstrip(".")
+    if normalized_extension not in PLACE_IMAGE_ALLOWED_EXTENSIONS:
+        raise ValueError("Use a PNG, JPG, WEBP or GIF image.")
+
+    mime_type = (upload.mimetype or "").lower()
+    if mime_type and mime_type not in PLACE_IMAGE_ALLOWED_MIME_TYPES:
+        raise ValueError("That file type is not allowed.")
+
+    max_bytes = int(app.config["PLACE_IMAGE_MAX_BYTES"])
+    payload = upload.stream.read(max_bytes + 1)
+    upload.stream.seek(0)
+    if not payload:
+        raise ValueError("Choose an image to upload.")
+    if len(payload) > max_bytes:
+        raise ValueError("Place images must be 2MB or smaller.")
+
+    detected_extension = sniff_supported_image_extension(payload)
+    if not detected_extension:
+        raise ValueError("That file does not look like a supported image.")
+
+    if detected_extension == "jpg":
+        if normalized_extension not in {"jpg", "jpeg"}:
+            raise ValueError("File content does not match the selected image type.")
+    elif normalized_extension != detected_extension:
+        raise ValueError("File content does not match the selected image type.")
+
+    original_filename = safe_original_name[:255] or None
+    return payload, detected_extension, original_filename
+
+
+def save_place_image_upload(upload):
+    payload, detected_extension, original_filename = validate_place_image_upload(upload)
+    upload_dir = get_place_image_upload_dir()
+    os.makedirs(upload_dir, exist_ok=True)
+
+    safe_filename = secure_filename(f"{secrets.token_hex(16)}.{detected_extension}")
+    path = os.path.join(upload_dir, safe_filename)
+    with open(path, "xb") as file_obj:
+        file_obj.write(payload)
+    return safe_filename, original_filename
+
+
+def delete_profile_image_file(filename):
+    path = profile_image_filesystem_path(filename)
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
+def delete_place_image_file(filename):
+    path = place_image_filesystem_path(filename)
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
 def parse_int_field(raw_value, field_name, minimum=None, maximum=None, default=None):
-    value = (raw_value or "").strip()
-    if not value:
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{field_name} must be a whole number.")
+
+    if raw_value is None:
         if default is not None:
             return default
         raise ValueError(f"{field_name} is required.")
 
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be a whole number.") from exc
+    if isinstance(raw_value, int):
+        parsed = raw_value
+    else:
+        value = str(raw_value).strip()
+        if not value:
+            if default is not None:
+                return default
+            raise ValueError(f"{field_name} is required.")
+
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be a whole number.") from exc
 
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{field_name} must be at least {minimum}.")
@@ -532,8 +936,17 @@ def staff_required(fn):
 
 def get_or_create_profile(place):
     if not place.accessibility:
-        db.session.add(AccessibilityProfile(place=place))
-        db.session.commit()
+        try:
+            sync_primary_key_sequence(AccessibilityProfile)
+            db.session.add(AccessibilityProfile(place=place))
+            db.session.commit()
+        except IntegrityError as exc:
+            db.session.rollback()
+            if not is_duplicate_primary_key_error(exc, "accessibility_profile_pkey"):
+                raise
+            sync_primary_key_sequence(AccessibilityProfile)
+            db.session.add(AccessibilityProfile(place=place))
+            db.session.commit()
     return place.accessibility
 
 
@@ -545,15 +958,76 @@ def ensure_accessibility_profiles(commit=True):
         .all()
     )
 
+    if missing_places:
+        sync_primary_key_sequence(AccessibilityProfile)
+
     for place in missing_places:
         db.session.add(AccessibilityProfile(place_id=place.id))
 
-    if commit and missing_places:
-        db.session.commit()
-    elif not commit:
-        db.session.flush()
+    try:
+        if commit and missing_places:
+            db.session.commit()
+        elif not commit:
+            db.session.flush()
+    except IntegrityError as exc:
+        db.session.rollback()
+        if not missing_places or not is_duplicate_primary_key_error(exc, "accessibility_profile_pkey"):
+            raise
+
+        sync_primary_key_sequence(AccessibilityProfile)
+        for place in missing_places:
+            still_missing = (
+                db.session.query(AccessibilityProfile.id)
+                .filter(AccessibilityProfile.place_id == place.id)
+                .first()
+                is None
+            )
+            if still_missing:
+                db.session.add(AccessibilityProfile(place_id=place.id))
+
+        if commit:
+            db.session.commit()
+        else:
+            db.session.flush()
 
     return len(missing_places)
+
+
+def get_postgresql_sequence_name(table_name, column_name):
+    return db.session.execute(
+        text("SELECT pg_get_serial_sequence(:table_name, :column_name)"),
+        {"table_name": table_name, "column_name": column_name},
+    ).scalar()
+
+
+def sync_table_primary_key_sequence(table, pk_column):
+    if not is_postgresql_database_uri(app.config["SQLALCHEMY_DATABASE_URI"]):
+        return
+
+    sequence_name = get_postgresql_sequence_name(table.name, pk_column.name)
+    if not sequence_name:
+        return
+
+    max_id = db.session.query(db.func.max(pk_column)).select_from(table).scalar()
+    db.session.execute(
+        text("SELECT setval(:sequence_name, :sequence_value, :is_called)"),
+        {
+            "sequence_name": sequence_name,
+            "sequence_value": max_id or 1,
+            "is_called": max_id is not None,
+        },
+    )
+
+
+def sync_primary_key_sequence(model):
+    sync_table_primary_key_sequence(model.__table__, model.__table__.c.id)
+
+
+def is_duplicate_primary_key_error(exc, constraint_name):
+    original = getattr(exc, "orig", None)
+    if original is None:
+        return False
+    return getattr(original, "pgcode", None) == "23505" and constraint_name in str(original)
 
 
 def build_access_signal(profile):
@@ -679,6 +1153,50 @@ def target_plan_for_role(target_role):
     return None
 
 
+def manual_entitlement_plan_to_billing_plan(plan_key):
+    if plan_key == "paid_consumer":
+        return "paid"
+    if plan_key in {"api_20", "api_50", "api_100", "business"}:
+        return "business"
+    return None
+
+
+def manual_entitlement_role(plan_key):
+    if plan_key == "paid_consumer":
+        return "paid_consumer"
+    if plan_key in {"api_20", "api_50", "api_100", "business"}:
+        return "api_buyer"
+    return None
+
+
+def manual_entitlement_expires_at(user):
+    if not user:
+        return None
+    value = user.access_override_until
+    if value and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def manual_entitlement_is_active(user, *, now=None):
+    if not user or not user.manual_entitlement_enabled:
+        return False
+    plan_key = (user.manual_entitlement_plan or "").strip().lower()
+    if plan_key not in MANUAL_ENTITLEMENT_ALLOWED_PLANS:
+        return False
+    expires_at = manual_entitlement_expires_at(user)
+    comparison_time = now or datetime.now(timezone.utc)
+    if expires_at and expires_at <= comparison_time:
+        return False
+    return True
+
+
+def active_manual_entitlement_plan(user):
+    if not manual_entitlement_is_active(user):
+        return None
+    return (user.manual_entitlement_plan or "").strip().lower() or None
+
+
 def role_for_plan_name(plan_name):
     if plan_name == "paid":
         return "paid_consumer"
@@ -699,6 +1217,9 @@ def stored_billing_plan_name(user):
 def infer_entitlement_role(user):
     if not user:
         return None
+    manual_plan = active_manual_entitlement_plan(user)
+    if manual_plan:
+        return manual_entitlement_role(manual_plan)
     stored_plan = stored_billing_plan_name(user)
     if stored_plan in {"paid", "business"}:
         return role_for_plan_name(stored_plan)
@@ -971,6 +1492,11 @@ def is_staff_user(user):
 def current_role_key(user):
     if not user:
         return "free_visitor"
+    manual_plan = active_manual_entitlement_plan(user)
+    if manual_plan == "paid_consumer":
+        return "paid_consumer"
+    if manual_plan in {"api_20", "api_50", "api_100", "business"}:
+        return "api_buyer"
     stored_plan = stored_billing_plan_name(user)
     if stored_plan == "paid":
         return "paid_consumer"
@@ -989,6 +1515,9 @@ def current_role_key(user):
 def normalize_plan_name(user):
     if not user:
         return "visitor"
+    manual_plan = active_manual_entitlement_plan(user)
+    if manual_plan:
+        return manual_entitlement_plan_to_billing_plan(manual_plan) or "free"
     stored_plan = stored_billing_plan_name(user)
     if stored_plan:
         return stored_plan
@@ -1011,6 +1540,9 @@ def humanize_plan_name(plan_name):
 def normalize_billing_plan_name(user):
     if not user:
         return "free"
+    manual_plan = active_manual_entitlement_plan(user)
+    if manual_plan:
+        return manual_entitlement_plan_to_billing_plan(manual_plan) or "free"
     stored_plan = stored_billing_plan_name(user)
     if stored_plan:
         return stored_plan
@@ -1032,6 +1564,18 @@ def get_access_label(user):
     return "Member"
 
 
+def api_access_status(user):
+    if not user:
+        return False, API_ACCESS_REQUIRED_MESSAGE
+    if user_has_disabled_api_pack_entitlement(user):
+        return False, API_PACK_ACCESS_DISABLED_MESSAGE
+    if is_staff_user(user):
+        return True, None
+    if normalize_billing_plan_name(user) in {"paid", "business"}:
+        return True, None
+    return False, API_ACCESS_REQUIRED_MESSAGE
+
+
 def build_account_state(user):
     billing_plan_name = normalize_billing_plan_name(user)
     return {
@@ -1044,6 +1588,9 @@ def build_account_state(user):
 
 
 def current_plan_catalog_key(user):
+    manual_plan = active_manual_entitlement_plan(user)
+    if manual_plan:
+        return manual_plan
     plan_name = normalize_billing_plan_name(user)
     if plan_name == "paid":
         return "paid_consumer"
@@ -1053,11 +1600,24 @@ def current_plan_catalog_key(user):
 
 
 def user_has_api_access(user):
+    allowed, _ = api_access_status(user)
+    return allowed
+
+
+def can_upload_place_images(user):
     if not user:
         return False
     if is_staff_user(user):
         return True
     return normalize_billing_plan_name(user) in {"paid", "business"}
+
+
+def can_delete_place_image(user, place_image):
+    if not user or not place_image:
+        return False
+    if is_staff_user(user):
+        return True
+    return place_image.user_id == user.id
 
 
 def get_monthly_search_limit(user):
@@ -1078,6 +1638,48 @@ def get_monthly_search_limit(user):
 
 def can_bypass_search_limits(user):
     return is_staff_user(user)
+
+
+def parse_optional_datetime_local(raw_value, field_name):
+    value = (raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a valid date and time.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def manual_entitlement_status(user):
+    if not user or not user.manual_entitlement_enabled:
+        return {
+            "label": "No manual override",
+            "tone": "muted",
+            "detail": "No manual access override is stored on this account.",
+            "active": False,
+        }
+
+    expires_at = manual_entitlement_expires_at(user)
+    expiry_copy = format_admin_timestamp(expires_at, with_time=True) if expires_at else "No expiry"
+    plan_key = (user.manual_entitlement_plan or "").strip().lower()
+    plan = get_plan(plan_key)
+    plan_label = plan["name"] if plan else humanize_label(plan_key or "unknown")
+    if manual_entitlement_is_active(user):
+        return {
+            "label": "Active manual access",
+            "tone": "success",
+            "detail": f"{plan_label} override active. Expires: {expiry_copy}.",
+            "active": True,
+        }
+    return {
+        "label": "Expired manual access",
+        "tone": "warning",
+        "detail": f"{plan_label} override no longer counts for access. Expired: {expiry_copy}.",
+        "active": False,
+    }
 
 
 def current_api_key_prefix():
@@ -1116,14 +1718,32 @@ def serialize_api_key(api_key, raw_key=None):
     }
 
 
-def normalize_scope_list(scopes):
+def owner_allowed_api_scopes(user):
+    allowed = {"places:read", "api:usage"}
+    if is_staff_user(user):
+        allowed.update({"places:write", "admin:read"})
+    return allowed
+
+
+def default_api_scopes_for_user(user):
+    scopes = list(DEFAULT_API_KEY_SCOPES)
+    if is_staff_user(user):
+        scopes.append("places:write")
+    return scopes
+
+
+def normalize_scope_list(scopes, *, allowed_scopes=None):
     if scopes is None:
         return None
     if isinstance(scopes, str):
         values = [item.strip() for item in scopes.split(",")]
     else:
         values = [str(item).strip() for item in scopes]
-    cleaned = sorted({value for value in values if value})
+    cleaned = sorted({LEGACY_SCOPE_ALIASES.get(value, value) for value in values if value})
+    if allowed_scopes is not None:
+        invalid = sorted(set(cleaned) - set(allowed_scopes))
+        if invalid:
+            raise ValueError(f"Unsupported API scope(s): {', '.join(invalid)}.")
     return cleaned or None
 
 
@@ -1133,7 +1753,8 @@ def generate_api_key_value(prefix=None):
 
 def create_api_key_for_user(user, label=None, scopes=None, monthly_lookup_limit=None, lookup_credits=None, prefix=None):
     normalized_label = (label or "Primary key").strip() or "Primary key"
-    normalized_scopes = normalize_scope_list(scopes)
+    requested_scopes = scopes if scopes is not None else default_api_scopes_for_user(user)
+    normalized_scopes = normalize_scope_list(requested_scopes, allowed_scopes=owner_allowed_api_scopes(user))
     normalized_credits = max(int(lookup_credits or 0), 0)
 
     for _ in range(3):
@@ -1242,21 +1863,33 @@ def record_api_lookup(api_key_id, user_id, endpoint, query=None, status_code=Non
 
 
 def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=None, required_scopes=None, endpoint=None, query=None, status_code=200, commit=True, record_event=True, apply_usage=True):
+    request_context = request_obj or request
+    client_identifier = request_context.access_route[0] if request_context and request_context.access_route else (
+        request_context.remote_addr if request_context else "unknown"
+    )
+    if is_rate_limited("api_auth_fail", client_identifier, limit=20, window_seconds=300):
+        return {"ok": False, "error": "rate_limited", "status_code": 429}
+
     candidate = resolve_api_key_candidate(raw_key=raw_key, authorization_header=authorization_header, request_obj=request_obj)
     if not candidate:
         return {"ok": False, "error": "missing_api_key", "status_code": 401}
     if is_malformed_api_key(candidate):
+        register_rate_limit_hit("api_auth_fail", client_identifier)
         return {"ok": False, "error": "malformed_api_key", "status_code": 401}
 
     candidate_hash = hash_api_key_value(candidate)
     matched_key = APIKey.query.filter_by(key_hash=candidate_hash).first()
     if matched_key and not matched_key.is_active:
+        register_rate_limit_hit("api_auth_fail", client_identifier)
         return {"ok": False, "error": "inactive_api_key", "status_code": 403}
     if not matched_key:
+        register_rate_limit_hit("api_auth_fail", client_identifier)
         return {"ok": False, "error": "invalid_api_key", "status_code": 401}
-    if not user_has_api_access(matched_key.user):
-        return {"ok": False, "error": "api_access_required", "status_code": 403}
+    access_allowed, access_message = api_access_status(matched_key.user)
+    if not access_allowed:
+        return {"ok": False, "error": "api_access_required", "status_code": 403, "message": access_message}
     if not api_key_has_required_scopes(matched_key, required_scopes=required_scopes):
+        register_rate_limit_hit("api_auth_fail", client_identifier)
         return {"ok": False, "error": "insufficient_scope", "status_code": 403}
 
     limit_context = api_key_limit_context(matched_key)
@@ -1288,6 +1921,7 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
         "api_key": matched_key,
         "user": matched_key.user,
         "limit_context": api_key_limit_context(matched_key),
+        "message": access_message,
     }
 
 
@@ -1334,6 +1968,269 @@ def api_error_response(error, message, status_code, **extra):
     }
     payload.update(extra)
     return jsonify(payload), status_code
+
+
+def api_auth_error_response(auth_result, *, write=False):
+    error_map = {
+        "missing_api_key": ("missing_api_key", "Send an API key using the Authorization Bearer header.", 401),
+        "malformed_api_key": ("invalid_api_key", "The API key format is not valid for this environment.", 401),
+        "invalid_api_key": ("invalid_api_key", "The API key could not be verified.", 401),
+        "inactive_api_key": ("revoked_api_key", "This API key is no longer active.", 403),
+        "api_access_required": ("api_access_required", auth_result.get("message") or API_ACCESS_REQUIRED_MESSAGE, 403),
+        "insufficient_scope": ("invalid_api_key", "This API key does not have access to this endpoint.", 403),
+        "monthly_lookup_limit_reached": ("limit_reached", "This API key has used its available lookup allowance.", 429),
+        "rate_limited": ("rate_limited", RATE_LIMIT_ERROR_MESSAGE, 429),
+    }
+    error_key, message, status_code = error_map.get(
+        auth_result["error"],
+        ("invalid_api_key", "The API request could not be authorized.", auth_result.get("status_code", 401)),
+    )
+    if write and auth_result["error"] == "insufficient_scope":
+        error_key, message, status_code = ("invalid_api_key", "This API key does not have access to this write endpoint.", 403)
+    return api_error_response(error_key, message, status_code)
+
+
+def parse_json_api_payload():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Send a JSON object body.")
+    return payload
+
+
+def extract_api_write_sections(payload):
+    allowed_root_keys = {"place", "accessibility", "verification", "mark_verified"}
+    unknown_root_keys = sorted(set(payload) - allowed_root_keys)
+    if unknown_root_keys:
+        raise ValueError(f"Unknown top-level field(s): {', '.join(unknown_root_keys)}.")
+
+    place_payload = payload.get("place")
+    accessibility_payload = payload.get("accessibility")
+    verification_payload = payload.get("verification")
+
+    if place_payload is not None and not isinstance(place_payload, dict):
+        raise ValueError("place must be a JSON object when provided.")
+    if accessibility_payload is not None and not isinstance(accessibility_payload, dict):
+        raise ValueError("accessibility must be a JSON object when provided.")
+    if verification_payload is not None and not isinstance(verification_payload, dict):
+        raise ValueError("verification must be a JSON object when provided.")
+
+    effective_accessibility_payload = dict(accessibility_payload or {})
+    effective_verification_payload = {}
+
+    if verification_payload is not None:
+        allowed_verification_keys = {"mark_verified", "source", "confidence_score"}
+        unknown_verification_keys = sorted(set(verification_payload) - allowed_verification_keys)
+        if unknown_verification_keys:
+            raise ValueError(f"Unknown verification field(s): {', '.join(unknown_verification_keys)}.")
+
+        if "mark_verified" in verification_payload:
+            effective_verification_payload["mark_verified"] = verification_payload["mark_verified"]
+        if "source" in verification_payload:
+            if "source" in effective_accessibility_payload and effective_accessibility_payload["source"] != verification_payload["source"]:
+                raise ValueError("source cannot differ between accessibility and verification payloads.")
+            effective_accessibility_payload["source"] = verification_payload["source"]
+        if "confidence_score" in verification_payload:
+            if (
+                "confidence_score" in effective_accessibility_payload
+                and effective_accessibility_payload["confidence_score"] != verification_payload["confidence_score"]
+            ):
+                raise ValueError("confidence_score cannot differ between accessibility and verification payloads.")
+            effective_accessibility_payload["confidence_score"] = verification_payload["confidence_score"]
+
+    if "mark_verified" in payload:
+        if "mark_verified" in effective_verification_payload and effective_verification_payload["mark_verified"] != payload["mark_verified"]:
+            raise ValueError("mark_verified cannot differ between top-level and verification payloads.")
+        effective_verification_payload["mark_verified"] = payload["mark_verified"]
+
+    return place_payload, (effective_accessibility_payload or None), effective_verification_payload
+
+
+def normalize_api_text_value(value, field_name, *, max_length=None, nullable=True):
+    if value is None:
+        if nullable:
+            return None
+        raise ValueError(f"{field_name} cannot be null.")
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string.")
+
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} cannot be blank. Omit it to keep the existing value or send null to clear it.")
+    if max_length is not None and len(normalized) > max_length:
+        raise ValueError(f"{field_name} must be {max_length} characters or fewer.")
+    return normalized
+
+
+def normalize_api_choice_value(value, field_name, allowed_values):
+    normalized = normalize_api_text_value(value, field_name, max_length=30, nullable=False).lower()
+    if normalized not in allowed_values:
+        raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed_values))}.")
+    return normalized
+
+
+def generate_unique_place_slug(name, town, *, current_place_id=None):
+    base_slug = slugify(f"{name} {town or ''}")
+    slug = base_slug
+    counter = 2
+    while True:
+        existing = Place.query.filter_by(slug=slug).first()
+        if not existing or existing.id == current_place_id:
+            return slug
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+
+def apply_place_write_payload(place, payload, *, creating=False):
+    allowed_keys = {
+        "name",
+        "venue_type",
+        "phone",
+        "website",
+        "address1",
+        "town",
+        "county",
+        "postcode",
+        "priority",
+        "status",
+        "latitude",
+        "longitude",
+    }
+    unknown_keys = sorted(set(payload) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(f"Unknown place field(s): {', '.join(unknown_keys)}.")
+
+    if creating and "name" not in payload:
+        raise ValueError("name is required.")
+
+    if "name" in payload:
+        place.name = normalize_api_text_value(payload.get("name"), "name", max_length=255, nullable=False)
+    if "venue_type" in payload:
+        place.venue_type = normalize_api_text_value(payload.get("venue_type"), "venue_type", max_length=80)
+    if "phone" in payload:
+        place.phone = normalize_api_text_value(payload.get("phone"), "phone", max_length=80)
+    if "website" in payload:
+        website_value = payload.get("website")
+        if website_value is None:
+            place.website = None
+        else:
+            place.website = normalize_optional_url(normalize_api_text_value(website_value, "website", max_length=255))
+    if "address1" in payload:
+        place.address1 = normalize_api_text_value(payload.get("address1"), "address1", max_length=255)
+    if "town" in payload:
+        place.town = normalize_api_text_value(payload.get("town"), "town", max_length=120)
+    if "county" in payload:
+        place.county = normalize_api_text_value(payload.get("county"), "county", max_length=120)
+    if "postcode" in payload:
+        place.postcode = normalize_api_text_value(payload.get("postcode"), "postcode", max_length=30)
+    if "priority" in payload:
+        place.priority = parse_int_field(payload.get("priority"), "priority", minimum=1, maximum=5)
+    if "status" in payload:
+        place.status = normalize_api_choice_value(payload.get("status"), "status", PLACE_WRITE_STATUS_VALUES)
+    if "latitude" in payload:
+        latitude_value = payload.get("latitude")
+        place.latitude = None if latitude_value is None else parse_float_field(str(latitude_value), "latitude", minimum=-90, maximum=90)
+    if "longitude" in payload:
+        longitude_value = payload.get("longitude")
+        place.longitude = None if longitude_value is None else parse_float_field(str(longitude_value), "longitude", minimum=-180, maximum=180)
+
+    if creating or "name" in payload or "town" in payload:
+        place.slug = generate_unique_place_slug(place.name, place.town, current_place_id=place.id)
+
+
+def apply_accessibility_write_payload(profile, payload):
+    allowed_keys = {
+        "toilets_available",
+        "toilet_location",
+        "toilet_distance_from_bar",
+        "toilet_distance_from_bar_m",
+        "accessible_toilet",
+        "baby_changing",
+        "baby_changing_location",
+        "step_free_entrance",
+        "stairs_inside",
+        "lift_available",
+        "disabled_parking",
+        "sensory_notes",
+        "public_comments",
+        "internal_notes",
+        "source",
+        "confidence_score",
+    }
+    unknown_keys = sorted(set(payload) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(f"Unknown accessibility field(s): {', '.join(unknown_keys)}.")
+
+    choice_fields = {
+        "toilets_available",
+        "accessible_toilet",
+        "baby_changing",
+        "step_free_entrance",
+        "stairs_inside",
+        "lift_available",
+        "disabled_parking",
+    }
+    text_fields = {
+        "toilet_location": 120,
+        "toilet_distance_from_bar": 120,
+        "baby_changing_location": 120,
+        "sensory_notes": None,
+        "public_comments": None,
+        "internal_notes": None,
+        "source": 80,
+    }
+
+    for field_name in choice_fields:
+        if field_name in payload:
+            setattr(profile, field_name, normalize_api_choice_value(payload.get(field_name), field_name, ACCESSIBILITY_CHOICE_VALUES))
+
+    for field_name, max_length in text_fields.items():
+        if field_name in payload:
+            setattr(profile, field_name, normalize_api_text_value(payload.get(field_name), field_name, max_length=max_length))
+
+    if "toilet_distance_from_bar_m" in payload:
+        distance_value = payload.get("toilet_distance_from_bar_m")
+        profile.toilet_distance_from_bar_m = None if distance_value is None else parse_float_field(
+            str(distance_value),
+            "toilet_distance_from_bar_m",
+            minimum=0,
+            maximum=5000,
+        )
+
+    if "confidence_score" in payload:
+        profile.confidence_score = parse_int_field(payload.get("confidence_score"), "confidence_score", minimum=0, maximum=100)
+
+
+def apply_api_verification_payload(place, profile, actor_user, payload):
+    if "mark_verified" not in payload:
+        return
+
+    mark_verified = payload.get("mark_verified")
+    if not isinstance(mark_verified, bool):
+        raise ValueError("mark_verified must be true or false.")
+    if not mark_verified:
+        return
+
+    profile.last_verified_at = datetime.now(timezone.utc)
+    profile.last_verified_by = actor_user.email if actor_user else None
+    profile.verified_by_user_id = actor_user.id if actor_user else None
+    place.status = "verified"
+
+
+def authenticate_api_write_request(endpoint, *, query=None):
+    auth_result = authenticate_api_key(
+        request_obj=request,
+        required_scopes={"places:write"},
+        endpoint=endpoint,
+        query=query,
+        apply_usage=False,
+        record_event=False,
+        commit=False,
+    )
+    if not auth_result["ok"]:
+        return None, api_auth_error_response(auth_result, write=True)
+    if not is_staff_user(auth_result["user"]):
+        return None, api_error_response("write_access_forbidden", "This API key can read data but does not have permission to edit it.", 403)
+    return auth_result, None
 
 
 def build_quota_copy(user, limit_context=None):
@@ -1561,11 +2458,13 @@ def build_developer_example_response():
 
 
 def build_developers_page_context(user, *, raw_api_key=None, raw_api_key_label=None):
+    has_api_access, api_access_message = api_access_status(user) if user else (False, API_ACCESS_REQUIRED_MESSAGE)
     return {
         "developer_summary": build_developer_summary(user) if user else None,
         "raw_api_key": raw_api_key,
         "raw_api_key_label": raw_api_key_label,
-        "has_api_access": user_has_api_access(user) if user else False,
+        "has_api_access": has_api_access if user else False,
+        "api_access_message": api_access_message,
         "example_api_key": f"{current_api_key_prefix()}replace_me",
         "api_search_url": url_for("api_places_search", _external=True),
         "example_response": build_developer_example_response(),
@@ -1760,7 +2659,8 @@ def build_settings_sections(user):
         "profile": {
             "name": user.name or "Planira member",
             "email": user.email,
-            "avatar_initials": "".join(part[:1] for part in (user.name or user.email).split()[:2]).upper() or "PA",
+            "avatar_initials": get_avatar_initials(user),
+            "avatar_url": get_avatar_url(user),
             "plan": summary["account_state"]["plan_label"],
             "access": summary["account_state"]["access_label"],
             "rank_title": summary["rank_title"],
@@ -2030,6 +2930,7 @@ def build_user_rows(users):
             or user.plan == "admin"
         )
         is_staff_role = user.role == "staff"
+        manual_override = manual_entitlement_status(user)
         rows.append(
             {
                 "user": user,
@@ -2056,6 +2957,17 @@ def build_user_rows(users):
                 "search_credits": max(user.search_credits or 0, 0),
                 "status_label": "Status not tracked yet",
                 "status_note": "Suspension controls are not wired because user suspension fields do not exist yet.",
+                "manual_override": manual_override,
+                "manual_override_enabled": bool(user.manual_entitlement_enabled),
+                "manual_override_plan": (user.manual_entitlement_plan or "").strip().lower(),
+                "manual_override_until_value": (
+                    manual_entitlement_expires_at(user).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+                    if manual_entitlement_expires_at(user)
+                    else ""
+                ),
+                "manual_override_note": user.manual_entitlement_note or "",
+                "primary_date_label": format_admin_timestamp(last_activity_at, with_time=True) or format_admin_timestamp(user.created_at) or "Recently",
+                "primary_date_title": "Last active" if last_activity_at else "Joined",
                 "staff_toggle": {
                     "enabled": can_toggle_staff,
                     "label": "Remove staff" if is_staff_role else "Promote to staff",
@@ -2083,18 +2995,40 @@ def build_api_key_rows_for_user(user):
     return [serialize_api_key(api_key) for api_key in keys]
 
 
-def build_admin_user_query(*, q="", access="all"):
+def build_admin_user_query(*, q="", role="all", plan="all", manual_override="all", access="all"):
     query = User.query
 
     if q:
         like = f"%{q}%"
         query = query.filter(db.or_(User.email.ilike(like), User.name.ilike(like)))
 
-    normalized_access = (access or "all").strip().lower() or "all"
+    normalized_role = (role or "all").strip().lower() or "all"
+    normalized_plan = (plan or "all").strip().lower() or "all"
+    normalized_manual_override = (manual_override or "all").strip().lower() or "all"
+    legacy_access = (access or "all").strip().lower() or "all"
+    if legacy_access != "all":
+        if normalized_role == "all" and legacy_access in {"member", "staff", "admin"}:
+            normalized_role = legacy_access
+        if normalized_plan == "all" and legacy_access in {"paid", "business"}:
+            normalized_plan = legacy_access
+
     admin_email_list = sorted(ADMIN_EMAILS)
     admin_email_filter = db.func.lower(User.email).in_(admin_email_list) if admin_email_list else db.false()
+    manual_plan_filter = User.manual_entitlement_plan.in_(sorted(MANUAL_ENTITLEMENT_ALLOWED_PLANS))
+    now = datetime.now(timezone.utc)
+    active_manual_filter = db.and_(
+        User.manual_entitlement_enabled.is_(True),
+        manual_plan_filter,
+        db.or_(User.access_override_until.is_(None), User.access_override_until > now),
+    )
+    expired_manual_filter = db.and_(
+        User.manual_entitlement_enabled.is_(True),
+        manual_plan_filter,
+        User.access_override_until.isnot(None),
+        User.access_override_until <= now,
+    )
 
-    if normalized_access == "member":
+    if normalized_role == "member":
         query = query.filter(
             ~db.or_(
                 User.role.in_(["admin", "staff"]),
@@ -2102,14 +3036,26 @@ def build_admin_user_query(*, q="", access="all"):
                 admin_email_filter,
             )
         )
-    elif normalized_access == "staff":
+    elif normalized_role == "staff":
         query = query.filter(User.role == "staff")
-    elif normalized_access == "admin":
+    elif normalized_role == "admin":
         query = query.filter(db.or_(User.role == "admin", User.plan == "admin", admin_email_filter))
-    elif normalized_access == "paid":
+
+    if normalized_plan == "free":
+        query = query.filter(User.plan == "free")
+    elif normalized_plan == "paid":
         query = query.filter(User.plan == "paid")
-    elif normalized_access == "business":
+    elif normalized_plan == "business":
         query = query.filter(User.plan == "business")
+    elif normalized_plan == "admin":
+        query = query.filter(User.plan == "admin")
+
+    if normalized_manual_override == "none":
+        query = query.filter(User.manual_entitlement_enabled.isnot(True))
+    elif normalized_manual_override == "active":
+        query = query.filter(active_manual_filter)
+    elif normalized_manual_override == "expired":
+        query = query.filter(expired_manual_filter)
 
     return query
 
@@ -2140,6 +3086,35 @@ def build_admin_user_stats():
             "pending": True,
         },
     ]
+
+
+def admin_user_return_url(*, user_id=None, fallback_endpoint="admin_users"):
+    query_text = request.form.get("return_q") or request.args.get("q") or None
+    role_filter = request.form.get("return_role") or request.args.get("role") or None
+    plan_filter = request.form.get("return_plan") or request.args.get("plan") or None
+    manual_override_filter = request.form.get("return_manual_override") or request.args.get("manual_override") or None
+    page = request.form.get("return_page", type=int) or request.args.get("page", type=int) or 1
+    return_view = (request.form.get("return_view") or request.args.get("return_view") or "").strip().lower()
+
+    if return_view == "edit" and user_id:
+        return url_for(
+            "admin_user_edit",
+            user_id=user_id,
+            q=query_text,
+            role=role_filter if role_filter and role_filter != "all" else None,
+            plan=plan_filter if plan_filter and plan_filter != "all" else None,
+            manual_override=manual_override_filter if manual_override_filter and manual_override_filter != "all" else None,
+            page=page,
+        )
+
+    return url_for(
+        fallback_endpoint,
+        q=query_text,
+        role=role_filter if role_filter and role_filter != "all" else None,
+        plan=plan_filter if plan_filter and plan_filter != "all" else None,
+        manual_override=manual_override_filter if manual_override_filter and manual_override_filter != "all" else None,
+        page=page,
+    )
 
 
 SEARCH_BINARY_FILTER_VALUES = {"", "yes", "no"}
@@ -2301,6 +3276,13 @@ def build_search_pagination_args(filters, submitted):
     }
 
 
+def parse_selected_place_id(raw_value):
+    try:
+        return parse_int_field(raw_value, "Selected place", minimum=1, default=None)
+    except ValueError:
+        return None
+
+
 def meaningful_text_distance_filter():
     return db.func.length(db.func.trim(db.func.coalesce(AccessibilityProfile.toilet_distance_from_bar, ""))) > 0
 
@@ -2311,6 +3293,231 @@ def meaningful_profile_text_filter(column):
 
 def stale_verification_cutoff():
     return datetime.now(timezone.utc) - timedelta(days=STALE_VERIFICATION_DAYS)
+
+
+def autocomplete_signal_badge_label(profile):
+    if not profile:
+        return None
+
+    label = build_access_signal(profile)["label"]
+    return {
+        "Easy": "Looks straightforward",
+        "Tricky": "Might be tricky",
+    }.get(label, label)
+
+
+def build_autocomplete_badges(place):
+    profile = getattr(place, "accessibility", None)
+    badges = []
+    verification = verification_status(profile)
+
+    if verification["verified"]:
+        badges.append("Verified")
+    if profile and getattr(profile, "step_free_entrance", "") == "yes":
+        badges.append("Step-free")
+    if profile and getattr(profile, "accessible_toilet", "") == "yes":
+        badges.append("Accessible toilet")
+
+    signal_badge = autocomplete_signal_badge_label(profile)
+    if signal_badge:
+        badges.append(signal_badge)
+
+    return badges
+
+
+def serialize_autocomplete_place(place, *, suggestion_type="place"):
+    return {
+        "type": suggestion_type,
+        "id": place.id,
+        "place_id": place.id,
+        "title": place.name,
+        "name": place.name,
+        "town": place.town or "",
+        "subtitle": place.town or "",
+        "query": place.name,
+        "selected_place_id": place.id,
+        "badges": build_autocomplete_badges(place),
+    }
+
+
+def current_user_for_optional_request():
+    if not session.get("user"):
+        return None
+    return current_user()
+
+
+def autocomplete_recent_groups(user, query_text, *, limit=2):
+    if not user:
+        return []
+
+    like = f"%{query_text}%"
+    recent_events = (
+        SearchEvent.query.filter(
+            SearchEvent.user_id == user.id,
+            db.or_(
+                SearchEvent.query_text.ilike(like),
+                SearchEvent.town.ilike(like),
+            ),
+        )
+        .order_by(SearchEvent.created_at.desc())
+        .limit(12)
+        .all()
+    )
+
+    seen = set()
+    items = []
+    for event in recent_events:
+        key = ((event.query_text or "").strip().lower(), (event.town or "").strip().lower())
+        if key in seen or (not event.query_text and not event.town):
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "type": "recent",
+                "title": event.query_text or event.town or "Recent search",
+                "subtitle": event.town or "",
+                "query": event.query_text or "",
+                "town": event.town or "",
+                "selected_place_id": None,
+                "badges": [],
+            }
+        )
+        if len(items) >= limit:
+            break
+
+    return items
+
+
+def autocomplete_popular_places(query_text, *, town_context="", exclude_ids=None, limit=2):
+    exclude_ids = exclude_ids or set()
+    like = f"%{query_text}%"
+    town_like = f"%{town_context}%"
+    verified_cutoff = datetime.now(timezone.utc) - timedelta(days=45)
+    query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
+
+    if town_context:
+        query = query.filter(Place.town.ilike(town_like))
+    else:
+        query = query.filter(
+            db.or_(
+                Place.name.ilike(like),
+                Place.town.ilike(like),
+            )
+        )
+
+    if exclude_ids:
+        query = query.filter(~Place.id.in_(exclude_ids))
+
+    results = (
+        query.order_by(
+            db.case(
+                (
+                    db.and_(
+                        AccessibilityProfile.last_verified_at.isnot(None),
+                        AccessibilityProfile.last_verified_at >= verified_cutoff,
+                    ),
+                    0,
+                ),
+                else_=1,
+            ).asc(),
+            AccessibilityProfile.confidence_score.desc().nullslast(),
+            AccessibilityProfile.last_verified_at.desc().nullslast(),
+            Place.name.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    return [serialize_autocomplete_place(place, suggestion_type="popular") for place in results]
+
+
+def autocomplete_pg_trgm_supported():
+    if not is_postgresql_database_uri(app.config["SQLALCHEMY_DATABASE_URI"]):
+        return False
+
+    try:
+        return bool(
+            db.session.execute(
+                text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            ).scalar()
+        )
+    except Exception:
+        return False
+
+
+def autocomplete_place_matches(query_text, *, town_context="", limit=4):
+    like = f"%{query_text}%"
+    starts_like = f"{query_text}%"
+    query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
+
+    similarity_supported = autocomplete_pg_trgm_supported()
+    if similarity_supported:
+        lowered_query = query_text.lower()
+        query = query.filter(
+            db.or_(
+                Place.name.ilike(like),
+                Place.town.ilike(like),
+                db.func.similarity(db.func.lower(Place.name), lowered_query) >= 0.35,
+            )
+        )
+        relevance_order = [
+            db.case(
+                (Place.name.ilike(starts_like), 0),
+                (Place.name.ilike(like), 1),
+                (db.func.similarity(db.func.lower(Place.name), lowered_query) >= 0.5, 2),
+                (Place.town.ilike(starts_like), 3),
+                (Place.town.ilike(like), 4),
+                else_=5,
+            ),
+            db.func.similarity(db.func.lower(Place.name), lowered_query).desc(),
+            Place.name.asc(),
+        ]
+    else:
+        query = query.filter(
+            db.or_(
+                Place.name.ilike(like),
+                Place.town.ilike(like),
+            )
+        )
+        relevance_order = [
+            db.case(
+                (Place.name.ilike(starts_like), 0),
+                (Place.name.ilike(like), 1),
+                (Place.town.ilike(starts_like), 2),
+                (Place.town.ilike(like), 3),
+                else_=4,
+            ),
+            Place.name.asc(),
+        ]
+
+    if town_context:
+        query = query.filter(Place.town.ilike(f"%{town_context}%"))
+        relevance_order.insert(0, db.case((Place.town.ilike(f"{town_context}%"), 0), (Place.town.ilike(f"%{town_context}%"), 1), else_=2).asc())
+
+    results = query.order_by(*relevance_order, Place.town.asc().nullslast()).limit(limit).all()
+    return [serialize_autocomplete_place(place, suggestion_type="place") for place in results]
+
+
+def build_autocomplete_groups(query_text, *, town_context="", user=None):
+    place_items = autocomplete_place_matches(query_text, town_context=town_context, limit=4)
+    groups = []
+
+    recent_items = autocomplete_recent_groups(user, query_text, limit=2)
+    if recent_items:
+        groups.append({"key": "recent", "label": "Recent", "items": recent_items})
+
+    if place_items:
+        groups.append({"key": "places", "label": "Places", "items": place_items})
+
+    popular_items = autocomplete_popular_places(
+        query_text,
+        town_context=town_context,
+        exclude_ids={item["place_id"] for item in place_items if item.get("place_id")},
+        limit=2,
+    )
+    if popular_items:
+        groups.append({"key": "popular", "label": "Popular", "items": popular_items})
+
+    return groups
 
 
 def missing_key_accessibility_fields(profile):
@@ -2629,6 +3836,8 @@ def protect_forms():
         return None
     if request.endpoint in CSRF_EXEMPT_ENDPOINTS:
         return None
+    if request.path.startswith("/api/"):
+        return None
 
     sent_token = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
     if not sent_token or sent_token != session.get("_csrf_token"):
@@ -2673,6 +3882,15 @@ def not_found(error):
 @app.errorhandler(413)
 def payload_too_large(error):
     return render_template("error.html", title="Upload too large", message="That submission was too large to process."), 413
+
+
+@app.errorhandler(429)
+def too_many_requests(error):
+    return render_template(
+        "error.html",
+        title="Too many requests",
+        message=getattr(error, "description", RATE_LIMIT_ERROR_MESSAGE),
+    ), 429
 
 
 @app.errorhandler(500)
@@ -2851,10 +4069,55 @@ def account_settings():
     )
 
 
+@app.route("/account/settings/profile-image", methods=["POST"])
+@login_required
+def update_account_profile_image():
+    user = current_user()
+    if not user:
+        abort(403)
+
+    action = (request.form.get("action") or "upload").strip().lower()
+    if action == "remove":
+        if user.profile_image_filename:
+            old_filename = user.profile_image_filename
+            user.profile_image_filename = None
+            db.session.commit()
+            delete_profile_image_file(old_filename)
+            flash("Profile picture removed.", "success")
+        else:
+            flash("There is no profile picture to remove.", "info")
+        return redirect(url_for("account_settings"))
+
+    upload = request.files.get("profile_image")
+    try:
+        new_filename = save_profile_image_upload(upload)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("account_settings"))
+
+    old_filename = user.profile_image_filename
+    user.profile_image_filename = new_filename
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        delete_profile_image_file(new_filename)
+        raise
+
+    if old_filename and old_filename != new_filename:
+        delete_profile_image_file(old_filename)
+
+    flash("Profile picture updated.", "success")
+    return redirect(url_for("account_settings"))
+
+
 @app.route("/account/api-keys")
 @login_required
 def account_api_keys():
     user = current_user()
+    has_api_access, message = api_access_status(user)
+    if not has_api_access:
+        return jsonify({"error": "api_access_required", "message": message}), 403
     return jsonify({"api_keys": build_api_key_rows_for_user(user)})
 
 
@@ -2862,11 +4125,15 @@ def account_api_keys():
 @login_required
 def create_account_api_key():
     user = current_user()
-    if not user_has_api_access(user):
-        return jsonify({"error": "api_access_required", "message": API_ACCESS_REQUIRED_MESSAGE}), 403
+    has_api_access, message = api_access_status(user)
+    if not has_api_access:
+        return jsonify({"error": "api_access_required", "message": message}), 403
     label = request.form.get("label", "").strip() or "Primary key"
     scopes = request.form.get("scopes", "").strip() or None
-    api_key, raw_key = create_api_key_for_user(user, label=label, scopes=scopes)
+    try:
+        api_key, raw_key = create_api_key_for_user(user, label=label, scopes=scopes)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_scope", "message": str(exc)}), 400
     db.session.commit()
     return (
         jsonify(
@@ -2906,11 +4173,16 @@ def developers():
 @login_required
 def create_developer_api_key():
     user = current_user()
-    if not user_has_api_access(user):
-        flash(API_ACCESS_REQUIRED_MESSAGE, "info")
+    has_api_access, message = api_access_status(user)
+    if not has_api_access:
+        flash(message, "info")
         return redirect(url_for("developers"))
     label = request.form.get("label", "").strip() or "Primary key"
-    api_key, raw_key = create_api_key_for_user(user, label=label)
+    try:
+        api_key, raw_key = create_api_key_for_user(user, label=label)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("developers"))
     db.session.commit()
     flash("API key created. Copy it now because it will not be shown again.", "success")
     return render_template("developers.html", **build_developers_page_context(user, raw_api_key=raw_key, raw_api_key_label=label))
@@ -2938,6 +4210,9 @@ def create_checkout(plan_key):
     plan = get_plan(plan_key)
     if not plan or not plan["checkout_mode"]:
         flash("That plan is not available for checkout.", "error")
+        return redirect(url_for("plans"))
+    if plan_key in DISABLED_API_PACK_PLAN_KEYS:
+        flash(API_PACK_DISABLED_MESSAGE, "info")
         return redirect(url_for("plans"))
 
     if not stripe:
@@ -3011,6 +4286,9 @@ def billing_success():
     if not plan:
         flash("Payment completed, but the selected plan could not be matched.", "warn")
         return redirect(url_for("plans"))
+    if plan_key in DISABLED_API_PACK_PLAN_KEYS:
+        flash(API_PACK_DISABLED_MESSAGE, "warn")
+        return redirect(url_for("plans"))
 
     payment_ok = checkout_session.payment_status == "paid"
     subscription_ok = plan["checkout_mode"] == "subscription" and checkout_session.status == "complete"
@@ -3077,13 +4355,14 @@ def stripe_webhook():
         stripe_fields_changed = update_user_stripe_billing_fields(user, event_object)
 
     if event_type == "checkout.session.completed":
-        # TODO: API pack fulfilment still needs a durable credit-assignment flow.
-        # For early testing, API lookup credits remain manually assignable per key.
-        entitlement_changed = sync_user_entitlement(
-            user,
-            target_role=target_role,
-            reason=f"Stripe webhook {event_type}.",
-        )
+        if metadata.get("plan_key") in DISABLED_API_PACK_PLAN_KEYS or target_role == "api_buyer":
+            app.logger.warning("Ignoring disabled API pack webhook fulfilment for user=%s", getattr(user, "id", None))
+        else:
+            entitlement_changed = sync_user_entitlement(
+                user,
+                target_role=target_role,
+                reason=f"Stripe webhook {event_type}.",
+            )
     elif event_type == "customer.subscription.deleted":
         entitlement_changed = revoke_user_entitlement(
             user,
@@ -3122,7 +4401,7 @@ def api_places_search():
 
     auth_result = authenticate_api_key(
         request_obj=request,
-        required_scopes=None,
+        required_scopes={"places:read"},
         endpoint="/api/v1/places/search",
         query=f"q={q}&town={town}&postcode={postcode}",
         apply_usage=False,
@@ -3130,20 +4409,7 @@ def api_places_search():
         commit=False,
     )
     if not auth_result["ok"]:
-        error_map = {
-            "missing_api_key": ("missing_api_key", "Send an API key using the Authorization Bearer header.", 401),
-            "malformed_api_key": ("invalid_api_key", "The API key format is not valid for this environment.", 401),
-            "invalid_api_key": ("invalid_api_key", "The API key could not be verified.", 401),
-            "inactive_api_key": ("revoked_api_key", "This API key is no longer active.", 403),
-            "api_access_required": ("api_access_required", API_ACCESS_REQUIRED_MESSAGE, 403),
-            "insufficient_scope": ("invalid_api_key", "This API key does not have access to this endpoint.", 403),
-            "monthly_lookup_limit_reached": ("limit_reached", "This API key has used its available lookup allowance.", 429),
-        }
-        error_key, message, status_code = error_map.get(
-            auth_result["error"],
-            ("invalid_api_key", "The API request could not be authorized.", auth_result.get("status_code", 401)),
-        )
-        return api_error_response(error_key, message, status_code)
+        return api_auth_error_response(auth_result)
 
     query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
     if q:
@@ -3185,6 +4451,94 @@ def api_places_search():
     )
 
 
+@app.route("/api/v1/places", methods=["POST"])
+def api_create_place():
+    auth_result, error_response = authenticate_api_write_request("/api/v1/places", query="create")
+    if error_response is not None:
+        return error_response
+
+    try:
+        payload = parse_json_api_payload()
+        place_payload, accessibility_payload, verification_payload = extract_api_write_sections(payload)
+        if place_payload is None:
+            raise ValueError("place must be a JSON object.")
+
+        place = Place()
+        apply_place_write_payload(place, place_payload, creating=True)
+        db.session.add(place)
+        db.session.flush()
+
+        profile = AccessibilityProfile(place=place)
+        db.session.add(profile)
+        if accessibility_payload:
+            apply_accessibility_write_payload(profile, accessibility_payload)
+        apply_api_verification_payload(place, profile, auth_result["user"], verification_payload)
+
+        auth_result["api_key"].last_used_at = datetime.now(timezone.utc)
+        record_api_lookup(
+            api_key_id=auth_result["api_key"].id,
+            user_id=auth_result["user"].id,
+            endpoint="/api/v1/places",
+            query=place.name,
+            status_code=201,
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return api_error_response("invalid_payload", str(exc), 400)
+    except IntegrityError as exc:
+        db.session.rollback()
+        return api_error_response("invalid_payload", f"Could not save place data: {exc.orig}", 400)
+
+    return jsonify({"place": serialize_place_for_api(place)}), 201
+
+
+@app.route("/api/v1/places/<int:place_id>", methods=["PATCH"])
+def api_update_place(place_id):
+    auth_result, error_response = authenticate_api_write_request("/api/v1/places/<id>", query=str(place_id))
+    if error_response is not None:
+        return error_response
+
+    place = db.session.get(Place, place_id)
+    if not place:
+        return api_error_response("not_found", "Place not found.", 404)
+
+    profile = place.accessibility
+    if not profile:
+        profile = AccessibilityProfile(place=place)
+        db.session.add(profile)
+
+    try:
+        payload = parse_json_api_payload()
+        place_payload, accessibility_payload, verification_payload = extract_api_write_sections(payload)
+        if place_payload is None and accessibility_payload is None and "mark_verified" not in verification_payload:
+            raise ValueError("Include place, accessibility, or mark_verified in the payload.")
+
+        if place_payload:
+            apply_place_write_payload(place, place_payload, creating=False)
+        if accessibility_payload:
+            apply_accessibility_write_payload(profile, accessibility_payload)
+        apply_api_verification_payload(place, profile, auth_result["user"], verification_payload)
+
+        auth_result["api_key"].last_used_at = datetime.now(timezone.utc)
+        record_api_lookup(
+            api_key_id=auth_result["api_key"].id,
+            user_id=auth_result["user"].id,
+            endpoint="/api/v1/places/<id>",
+            query=str(place.id),
+            status_code=200,
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return api_error_response("invalid_payload", str(exc), 400)
+    except IntegrityError as exc:
+        db.session.rollback()
+        return api_error_response("invalid_payload", f"Could not save place data: {exc.orig}", 400)
+
+    return jsonify({"place": serialize_place_for_api(place)})
+
+
 @app.route("/search")
 def search():
     if not session.get("user"):
@@ -3215,6 +4569,7 @@ def search():
     sensory_notes = filters["sensory_notes"]
     public_comments = filters["public_comments"]
     source = filters["source"]
+    selected_place_id = parse_selected_place_id(request.args.get("selected_place_id"))
     submitted = request.args.get("submitted") == "1"
     try:
         page = parse_int_field(request.args.get("page"), "Page", minimum=1, default=1)
@@ -3240,9 +4595,12 @@ def search():
             sensory_notes,
             public_comments,
             source,
+            selected_place_id,
         ]
     )
     should_search = has_filters
+    if submitted and has_filters:
+        enforce_rate_limit("search_submit", limit=20, window_seconds=300)
     limit_context = search_limit_context(user)
     filters_payload = build_search_filter_payload(filters)
     active_filter_chips = build_search_active_filters(filters)
@@ -3291,7 +4649,9 @@ def search():
                 signal_examples=build_signal_examples(),
             )
         query = Place.query.options(selectinload(Place.accessibility)).outerjoin(AccessibilityProfile)
-        if q:
+        if selected_place_id:
+            query = query.filter(Place.id == selected_place_id)
+        elif q:
             like = f"%{q}%"
             query = query.filter(db.or_(Place.name.ilike(like), Place.postcode.ilike(like), Place.address1.ilike(like)))
         if town:
@@ -3421,16 +4781,36 @@ def search():
     )
 
 
+@app.route("/api/autocomplete")
+def autocomplete_places():
+    enforce_rate_limit("autocomplete", limit=60, window_seconds=60)
+    query_text = (request.args.get("q") or "").strip()
+    town_context = (request.args.get("town") or "").strip()
+    if len(query_text) < 2:
+        return jsonify([])
+
+    groups = build_autocomplete_groups(
+        query_text,
+        town_context=town_context,
+        user=current_user_for_optional_request(),
+    )
+    return jsonify(groups)
+
+
 @app.route("/place/<slug>")
-@login_required
 def place_detail(slug):
     place = Place.query.filter_by(slug=slug).first_or_404()
     profile = get_or_create_profile(place)
-    user = current_user()
+    user = current_user_for_optional_request()
     comment_query = Comment.query.filter_by(place_id=place.id, is_public=True)
     if not is_staff_user(user):
         comment_query = comment_query.filter_by(status="approved")
     comments = comment_query.order_by(Comment.created_at.desc()).all()
+    place_images = (
+        PlaceImage.query.filter_by(place_id=place.id, is_approved=True)
+        .order_by(PlaceImage.created_at.desc())
+        .all()
+    )
     comment_rows = [
         {
             "public_label": build_public_author_label(comment.user_email),
@@ -3444,13 +4824,90 @@ def place_detail(slug):
         place=place,
         profile=profile,
         comments=comment_rows,
+        place_images=place_images,
+        can_upload_place_images=can_upload_place_images(user),
+        get_place_image_url=get_place_image_url,
         signal=signal,
     )
+
+
+@app.route("/place/<int:place_id>/images/upload", methods=["POST"])
+@login_required
+def upload_place_image(place_id):
+    place = db.session.get(Place, place_id)
+    if not place:
+        abort(404)
+
+    user = current_user()
+    if not can_upload_place_images(user):
+        flash("Upgrade to a paid Planira plan to add place photos.", "info")
+        return redirect(url_for("place_detail", slug=place.slug))
+
+    caption = (request.form.get("caption") or "").strip()
+    if len(caption) > 255:
+        flash("Captions must be 255 characters or fewer.", "error")
+        return redirect(url_for("place_detail", slug=place.slug))
+
+    upload = request.files.get("place_image")
+    try:
+        filename, original_filename = save_place_image_upload(upload)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("place_detail", slug=place.slug))
+
+    place_image = PlaceImage(
+        place=place,
+        uploader=user,
+        filename=filename,
+        original_filename=original_filename,
+        caption=caption or None,
+        is_approved=True,
+    )
+    db.session.add(place_image)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        delete_place_image_file(filename)
+        raise
+
+    flash("Place photo added.", "success")
+    return redirect(url_for("place_detail", slug=place.slug))
+
+
+@app.route("/place-images/<int:image_id>/delete", methods=["POST"])
+@login_required
+def delete_place_image(image_id):
+    place_image = db.session.get(PlaceImage, image_id)
+    if not place_image:
+        abort(404)
+
+    user = current_user()
+    if not can_delete_place_image(user, place_image):
+        flash("You can only remove your own place photos.", "error")
+        return redirect(url_for("place_detail", slug=place_image.place.slug))
+
+    filename = place_image.filename
+    place_slug = place_image.place.slug
+    db.session.delete(place_image)
+    db.session.commit()
+    delete_place_image_file(filename)
+    flash("Place photo removed.", "success")
+    return redirect(url_for("place_detail", slug=place_slug))
 
 
 @app.route("/place/<slug>/comment", methods=["POST"])
 @login_required
 def add_comment(slug):
+    comment_actor = current_user()
+    comment_identifier = f"user:{comment_actor.id}" if comment_actor else request_client_identifier()
+    enforce_rate_limit(
+        "comment_submit",
+        limit=5,
+        window_seconds=600,
+        identifier=comment_identifier,
+        description="You have submitted several comments recently. Please wait a few minutes and try again.",
+    )
     place = Place.query.filter_by(slug=slug).first_or_404()
     body = request.form.get("body", "").strip()
     if not body:
@@ -3636,43 +5093,93 @@ def moderate_comment(comment_id):
 @staff_required
 def admin_users():
     query_text = request.args.get("q", "").strip()
+    role_filter = request.args.get("role", "all").strip().lower() or "all"
+    plan_filter = request.args.get("plan", "all").strip().lower() or "all"
+    manual_override_filter = request.args.get("manual_override", "all").strip().lower() or "all"
     access_filter = request.args.get("access", "all").strip().lower() or "all"
     page = request.args.get("page", 1, type=int) or 1
-    selected_user_id = request.args.get("selected", type=int)
-    per_page = 10
-    access_filter_options = [
-        {"value": "all", "label": "All users"},
+    per_page = 20
+    role_filter_options = [
+        {"value": "all", "label": "All roles"},
         {"value": "member", "label": "Members"},
         {"value": "staff", "label": "Staff"},
         {"value": "admin", "label": "Admins"},
-        {"value": "paid", "label": "Paid plan"},
-        {"value": "business", "label": "Business plan"},
+    ]
+    plan_filter_options = [
+        {"value": "all", "label": "All plans"},
+        {"value": "free", "label": "Free"},
+        {"value": "paid", "label": "Paid"},
+        {"value": "business", "label": "Business"},
+        {"value": "admin", "label": "Admin"},
+    ]
+    manual_override_filter_options = [
+        {"value": "all", "label": "Any override"},
+        {"value": "none", "label": "No override"},
+        {"value": "active", "label": "Manual active"},
+        {"value": "expired", "label": "Manual expired"},
     ]
 
-    query = build_admin_user_query(q=query_text, access=access_filter)
+    query = build_admin_user_query(
+        q=query_text,
+        role=role_filter,
+        plan=plan_filter,
+        manual_override=manual_override_filter,
+        access=access_filter,
+    )
     pagination = query.order_by(User.created_at.desc(), User.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
     user_rows = build_user_rows(pagination.items)
-    selected_row = next((row for row in user_rows if row["user"].id == selected_user_id), None)
-    if not selected_row and user_rows:
-        selected_row = user_rows[0]
 
     showing_start = ((pagination.page - 1) * pagination.per_page) + 1 if pagination.total else 0
     showing_end = ((pagination.page - 1) * pagination.per_page) + len(user_rows) if pagination.total else 0
     return render_template(
         "admin_users.html",
         query_text=query_text,
-        access_filter=access_filter,
-        access_filter_options=access_filter_options,
-        active_access_label=next((option["label"] for option in access_filter_options if option["value"] == access_filter), "All users"),
+        role_filter=role_filter,
+        plan_filter=plan_filter,
+        manual_override_filter=manual_override_filter,
+        role_filter_options=role_filter_options,
+        plan_filter_options=plan_filter_options,
+        manual_override_filter_options=manual_override_filter_options,
         admin_stats=build_admin_user_stats(),
         user_rows=user_rows,
         pagination=pagination,
-        selected_row=selected_row,
-        selected_user_id=selected_row["user"].id if selected_row else None,
-        selected_api_keys=build_api_key_rows_with_usage(selected_row["user"]) if selected_row else [],
-        selected_api_events=build_recent_api_lookup_activity(user_id=selected_row["user"].id) if selected_row else [],
         showing_start=showing_start,
         showing_end=showing_end,
+    )
+
+
+@app.route("/admin/users/<int:user_id>/edit")
+@login_required
+@admin_required
+def admin_user_edit(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+
+    query_text = request.args.get("q", "").strip()
+    role_filter = request.args.get("role", "all").strip().lower() or "all"
+    plan_filter = request.args.get("plan", "all").strip().lower() or "all"
+    manual_override_filter = request.args.get("manual_override", "all").strip().lower() or "all"
+    return_page = request.args.get("page", 1, type=int) or 1
+    manual_entitlement_options = [
+        {"value": "paid_consumer", "label": "Paid consumer"},
+        {"value": "api_20", "label": "API pack 20"},
+        {"value": "api_50", "label": "API pack 50"},
+        {"value": "api_100", "label": "API pack 100"},
+        {"value": "business", "label": "Business"},
+    ]
+    selected_row = build_user_rows([user])[0]
+    return render_template(
+        "admin_user_edit.html",
+        query_text=query_text,
+        role_filter=role_filter,
+        plan_filter=plan_filter,
+        manual_override_filter=manual_override_filter,
+        return_page=return_page,
+        selected_row=selected_row,
+        selected_api_keys=build_api_key_rows_with_usage(user),
+        selected_api_events=build_recent_api_lookup_activity(user_id=user.id),
+        manual_entitlement_options=manual_entitlement_options,
     )
 
 
@@ -3693,15 +5200,7 @@ def update_admin_user_credits(user_id):
         )
     except ValueError as exc:
         flash(str(exc), "error")
-        return redirect(
-            url_for(
-                "admin_users",
-                q=request.form.get("return_q") or None,
-                access=request.form.get("return_access") or "all",
-                page=request.form.get("return_page", type=int) or 1,
-                selected=user.id,
-            )
-        )
+        return redirect(admin_user_return_url(user_id=user.id))
 
     reason = (request.form.get("reason") or "").strip() or None
     before_state = {"search_credits": user.search_credits or 0}
@@ -3719,15 +5218,7 @@ def update_admin_user_credits(user_id):
     )
     db.session.commit()
     flash(f"Updated search credits for {user.email}.", "success")
-    return redirect(
-        url_for(
-            "admin_users",
-            q=request.form.get("return_q") or None,
-            access=request.form.get("return_access") or "all",
-            page=request.form.get("return_page", type=int) or 1,
-            selected=user.id,
-        )
-    )
+    return redirect(admin_user_return_url(user_id=user.id))
 
 
 @app.route("/admin/users/<int:user_id>/staff", methods=["POST"])
@@ -3740,20 +5231,12 @@ def update_admin_user_staff(user_id):
 
     if is_admin_email(user.email) or user.role == "admin" or user.plan == "admin":
         flash("Admin access is managed outside this screen.", "error")
-        return redirect(
-            url_for(
-                "admin_users",
-                q=request.form.get("return_q") or None,
-                access=request.form.get("return_access") or "all",
-                page=request.form.get("return_page", type=int) or 1,
-                selected=user.id,
-            )
-        )
+        return redirect(admin_user_return_url(user_id=user.id))
 
     action = (request.form.get("action") or "").strip().lower()
     if action not in {"promote", "demote"}:
         flash("Choose a valid staff action.", "error")
-        return redirect(url_for("admin_users", selected=user.id))
+        return redirect(admin_user_return_url(user_id=user.id))
 
     target_role = "staff" if action == "promote" else DEFAULT_MEMBER_ROLE
     before_state = {"role": user.role}
@@ -3773,20 +5256,72 @@ def update_admin_user_staff(user_id):
         f"{user.email} is now {'staff' if target_role == 'staff' else 'a member'}.",
         "success",
     )
-    return redirect(
-        url_for(
-            "admin_users",
-            q=request.form.get("return_q") or None,
-            access=request.form.get("return_access") or "all",
-            page=request.form.get("return_page", type=int) or 1,
-            selected=user.id,
+    return redirect(admin_user_return_url(user_id=user.id))
+
+
+@app.route("/admin/users/<int:user_id>/manual-entitlement", methods=["POST"])
+@login_required
+@admin_required
+def update_admin_user_manual_entitlement(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
+
+    enabled = bool(request.form.get("manual_entitlement_enabled"))
+    plan_key = (request.form.get("manual_entitlement_plan") or "").strip().lower()
+    note = (request.form.get("manual_entitlement_note") or "").strip() or None
+
+    try:
+        expires_at = parse_optional_datetime_local(
+            request.form.get("access_override_until"),
+            "Expiry date",
         )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(admin_user_return_url(user_id=user.id))
+
+    if enabled and plan_key not in MANUAL_ENTITLEMENT_ALLOWED_PLANS:
+        flash("Choose a valid manual access level.", "error")
+        return redirect(admin_user_return_url(user_id=user.id))
+
+    before_state = {
+        "manual_entitlement_enabled": user.manual_entitlement_enabled,
+        "manual_entitlement_plan": user.manual_entitlement_plan,
+        "access_override_until": manual_entitlement_expires_at(user),
+        "manual_entitlement_note": user.manual_entitlement_note,
+    }
+
+    user.manual_entitlement_enabled = enabled
+    user.manual_entitlement_plan = plan_key if enabled else None
+    user.access_override_until = expires_at if enabled else None
+    user.manual_entitlement_note = note
+
+    after_state = {
+        "manual_entitlement_enabled": user.manual_entitlement_enabled,
+        "manual_entitlement_plan": user.manual_entitlement_plan,
+        "access_override_until": user.access_override_until,
+        "manual_entitlement_note": user.manual_entitlement_note,
+    }
+
+    actor = current_user()
+    log_audit(
+        actor_user_id=actor.id if actor else None,
+        action="user.manual_entitlement.updated",
+        entity_type="user",
+        entity_id=user.id,
+        before=before_state,
+        after=after_state,
+        reason=note,
     )
+    db.session.commit()
+
+    flash(f"Manual access override updated for {user.email}.", "success")
+    return redirect(admin_user_return_url(user_id=user.id))
 
 
 @app.route("/admin/users/<int:user_id>/api-keys")
 @login_required
-@staff_required
+@admin_required
 def admin_user_api_keys(user_id):
     user = db.session.get(User, user_id)
     if not user:
@@ -3796,7 +5331,7 @@ def admin_user_api_keys(user_id):
 
 @app.route("/admin/users/<int:user_id>/api-keys", methods=["POST"])
 @login_required
-@staff_required
+@admin_required
 def create_admin_user_api_key(user_id):
     user = db.session.get(User, user_id)
     if not user:
@@ -3809,13 +5344,16 @@ def create_admin_user_api_key(user_id):
     monthly_lookup_limit = parse_int_field(raw_lookup_limit, "Monthly lookup limit", minimum=0) if raw_lookup_limit else None
     lookup_credits = parse_int_field(raw_lookup_credits, "Lookup credits", minimum=0, default=0) if raw_lookup_credits else 0
 
-    api_key, raw_key = create_api_key_for_user(
-        user,
-        label=label,
-        scopes=scopes,
-        monthly_lookup_limit=monthly_lookup_limit,
-        lookup_credits=lookup_credits,
-    )
+    try:
+        api_key, raw_key = create_api_key_for_user(
+            user,
+            label=label,
+            scopes=scopes,
+            monthly_lookup_limit=monthly_lookup_limit,
+            lookup_credits=lookup_credits,
+        )
+    except ValueError as exc:
+        return jsonify({"error": "invalid_scope", "message": str(exc)}), 400
     actor = current_user()
     log_audit(
         actor_user_id=actor.id if actor else None,
@@ -3848,7 +5386,7 @@ def create_admin_user_api_key(user_id):
 
 @app.route("/admin/users/<int:user_id>/api-keys/<int:key_id>", methods=["POST"])
 @login_required
-@staff_required
+@admin_required
 def update_admin_user_api_key(user_id, key_id):
     api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
     action = request.form.get("action", "").strip().lower()
@@ -3885,7 +5423,7 @@ def update_admin_user_api_key(user_id, key_id):
 
 @app.route("/admin/users/<int:user_id>/api-keys/<int:key_id>/revoke", methods=["POST"])
 @login_required
-@staff_required
+@admin_required
 def revoke_admin_user_api_key(user_id, key_id):
     api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
     actor = current_user()
@@ -3913,20 +5451,12 @@ def revoke_admin_user_api_key(user_id, key_id):
         flash(f"Revoked API key for user #{user_id}.", "success")
     else:
         flash("That API key is already revoked.", "info")
-    return redirect(
-        url_for(
-            "admin_users",
-            q=request.form.get("return_q") or None,
-            access=request.form.get("return_access") or "all",
-            page=request.form.get("return_page", type=int) or 1,
-            selected=user_id,
-        )
-    )
+    return redirect(admin_user_return_url(user_id=user_id))
 
 
 @app.route("/admin/users/<int:user_id>/api-keys/<int:key_id>/credits", methods=["POST"])
 @login_required
-@staff_required
+@admin_required
 def update_admin_user_api_key_credits(user_id, key_id):
     api_key = APIKey.query.filter_by(id=key_id, user_id=user_id).first_or_404()
     try:
@@ -3938,15 +5468,7 @@ def update_admin_user_api_key_credits(user_id, key_id):
         )
     except ValueError as exc:
         flash(str(exc), "error")
-        return redirect(
-            url_for(
-                "admin_users",
-                q=request.form.get("return_q") or None,
-                access=request.form.get("return_access") or "all",
-                page=request.form.get("return_page", type=int) or 1,
-                selected=user_id,
-            )
-        )
+        return redirect(admin_user_return_url(user_id=user_id))
 
     actor = current_user()
     before_state = {"lookup_credits": api_key.lookup_credits or 0}
@@ -3963,15 +5485,7 @@ def update_admin_user_api_key_credits(user_id, key_id):
     )
     db.session.commit()
     flash(f"Updated API lookup credits for user #{user_id}.", "success")
-    return redirect(
-        url_for(
-            "admin_users",
-            q=request.form.get("return_q") or None,
-            access=request.form.get("return_access") or "all",
-            page=request.form.get("return_page", type=int) or 1,
-            selected=user_id,
-        )
-    )
+    return redirect(admin_user_return_url(user_id=user_id))
 
 
 @app.route("/admin/venues")
@@ -4201,6 +5715,7 @@ def obs_health():
 
 @app.route("/auth/login")
 def login():
+    enforce_rate_limit("login", limit=20, window_seconds=300)
     if not os.getenv("GOOGLE_CLIENT_ID"):
         flash("Google OAuth is not configured yet. Add your keys to .env.", "error")
         return redirect(url_for("index"))
@@ -4219,23 +5734,40 @@ def auth_callback():
         flash(f"Google sign-in could not be completed: {exc}", "error")
         return redirect(url_for("index"))
 
+    google_sub = (info or {}).get("sub", "").strip()
     email = (info or {}).get("email", "").lower().strip()
+    if not oauth_email_is_verified((info or {}).get("email_verified")):
+        flash("Google sign-in requires a verified email address.", "error")
+        return redirect(url_for("index"))
+    if not google_sub:
+        flash("Google sign-in did not return a stable account identifier.", "error")
+        return redirect(url_for("index"))
     if not email:
         flash("Google sign-in did not return an email address.", "error")
         return redirect(url_for("index"))
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter_by(google_sub=google_sub).first()
+    if not user:
+        user = User.query.filter_by(email=email).first()
+        if user and user.google_sub and user.google_sub != google_sub:
+            app.logger.warning("Blocked Google login for email=%s due to sub mismatch.", email)
+            flash("That Google account could not be matched safely. Contact support if you need help.", "error")
+            return redirect(url_for("index"))
     if not user:
         user = User(
             email=email,
+            google_sub=google_sub,
             name=info.get("name"),
             picture=info.get("picture"),
             role="admin" if is_admin_email(email) else DEFAULT_MEMBER_ROLE,
         )
         db.session.add(user)
     else:
+        if not user.google_sub:
+            user.google_sub = google_sub
         user.name = info.get("name")
         user.picture = info.get("picture")
+    user.last_login_at = datetime.now(timezone.utc)
     db.session.commit()
     refresh_session_user(user)
     return redirect_to_next("search")
@@ -4295,8 +5827,44 @@ def ensure_profiles():
     print(f"Accessibility profile count: {AccessibilityProfile.query.count()}")
 
 
+@app.cli.command("repair-sequences")
+def repair_sequences():
+    database_uri = app.config["SQLALCHEMY_DATABASE_URI"]
+    if not is_postgresql_database_uri(database_uri):
+        print(f"Skipping sequence repair: database '{database_uri}' does not use PostgreSQL.")
+        return
+
+    repaired_count = 0
+
+    try:
+        for table in db.metadata.sorted_tables:
+            primary_key_columns = list(table.primary_key.columns)
+            if len(primary_key_columns) != 1:
+                continue
+
+            pk_column = primary_key_columns[0]
+            if not isinstance(pk_column.type, Integer):
+                continue
+
+            sequence_name = get_postgresql_sequence_name(table.name, pk_column.name)
+            if not sequence_name:
+                continue
+
+            sync_table_primary_key_sequence(table, pk_column)
+            repaired_count += 1
+            print(f"Repaired sequence for {table.name}.{pk_column.name}")
+
+        db.session.commit()
+        print(f"Sequence repair complete. Repaired {repaired_count} table(s).")
+    except Exception as exc:
+        db.session.rollback()
+        print(f"Sequence repair failed: {exc}")
+        raise SystemExit(1) from exc
+
+
 if __name__ == "__main__":
     with app.app_context():
         if should_auto_create_schema():
             db.create_all()
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=app.config["ENVIRONMENT"] == "development")
+    debug_enabled = app.config["ENVIRONMENT"] != "production" and env_flag("FLASK_DEBUG", default=False)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=debug_enabled)

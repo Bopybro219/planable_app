@@ -48,29 +48,10 @@
               <input type="hidden" name="submitted" value="1">
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
-
-
-              {% if current_user %}
-
-          
-              {% endif %}
-
-              {% if staff_navigation %}
-                <div class="planira-staff-dropdown">
-                  <button class="planira-nav-link planira-staff-dropdown-toggle {% if staff_nav_active %}planira-nav-link-active{% endif %}" type="button" aria-expanded="false" data-staff-toggle>
-                    Staff
-                  </button>
-                  <nav class="planira-staff-menu" aria-label="Staff workspace" hidden>
-                    {% for item in staff_navigation %}
-                      <a class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
-                        href="{{ url_for(item.endpoint) }}"
-                        {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
-                        {{ item.label }}
-                      </a>
-                    {% endfor %}
-                  </nav>
-                </div>
-              {% endif %}
+            <nav class="planira-nav planira-nav-secondary" aria-label="Primary">
+              <a class="planira-nav-link {% if request.endpoint == 'plans' %}planira-nav-link-active{% endif %}" href="{{ url_for('plans') }}" {% if request.endpoint == 'plans' %}aria-current="page"{% endif %}>
+                <span>Plans</span>
+              </a>
             </nav>
           </div>
 
@@ -84,11 +65,38 @@
                     <span>Account menu</span>
                   </span>
                 </button>
+
                 <nav class="planira-account-menu" aria-label="Account menu" hidden>
                   <a class="planira-staff-menu-link" href="{{ url_for('account') }}">Account overview</a>
                   <a class="planira-staff-menu-link" href="{{ url_for('account_settings') }}">Settings</a>
                   <a class="planira-staff-menu-link" href="{{ url_for('plans') }}">Plans</a>
                   <a class="planira-staff-menu-link" href="{{ url_for('developers') }}">Developers</a>
+
+                  {% if staff_navigation %}
+                    <div class="planira-staff-dropdown planira-account-staff-dropdown">
+                      <button
+                        class="planira-staff-menu-link planira-staff-dropdown-toggle {% if staff_nav_active %}active{% endif %}"
+                        type="button"
+                        aria-expanded="false"
+                        data-staff-toggle
+                      >
+                        Staff
+                      </button>
+
+                      <nav class="planira-staff-menu" aria-label="Staff workspace" hidden>
+                        {% for item in staff_navigation %}
+                          <a
+                            class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
+                            href="{{ url_for(item.endpoint) }}"
+                            {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}
+                          >
+                            {{ item.label }}
+                          </a>
+                        {% endfor %}
+                      </nav>
+                    </div>
+                  {% endif %}
+
                   <a class="planira-staff-menu-link" href="{{ url_for('logout') }}">Logout</a>
                 </nav>
               </div>
@@ -106,18 +114,18 @@
               <input type="hidden" name="submitted" value="1">
               <button class="planira-button-primary btn-primary-planira" type="submit">Search</button>
             </form>
-
+            <nav class="planira-mobile-nav" aria-label="Mobile primary navigation">
               {% if current_user %}
                 <a class="planira-nav-link {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}planira-nav-link-active{% endif %}" href="{{ url_for('account') }}" {% if request.endpoint == 'account' or request.endpoint == 'account_settings' %}aria-current="page"{% endif %}>
                   <span>Account</span>
                 </a>
-                <a class="planira-nav-link" href="{{ url_for('plans') }}">
-                  <span>Plans</span>
-                </a>
-                <a class="planira-nav-link" href="{{ url_for('developers') }}">
-                  <span>Developers</span>
-                </a>
               {% endif %}
+              <a class="planira-nav-link {% if request.endpoint == 'plans' %}planira-nav-link-active{% endif %}" href="{{ url_for('plans') }}" {% if request.endpoint == 'plans' %}aria-current="page"{% endif %}>
+                <span>Plans</span>
+              </a>
+              <a class="planira-nav-link {% if request.endpoint == 'developers' %}planira-nav-link-active{% endif %}" href="{{ url_for('developers') }}" {% if request.endpoint == 'developers' %}aria-current="page"{% endif %}>
+                <span>Developers</span>
+              </a>
             </nav>
 
             {% if staff_navigation %}
@@ -173,7 +181,7 @@
           <div class="planira-footer-brand">
             <strong>{{ brand_name }}</strong>
             <p class="muted">{{ brand_tagline }}</p>
-            <p class="helper-copy">Calm, practical place confidence for everyday journeys.</p>
+            <p class="helper-copy">Know before you go, with clear signals you can trust.</p>
           </div>
           <nav class="planira-footer-links" aria-label="Footer">
             <a href="{{ url_for('search') }}">Search</a>

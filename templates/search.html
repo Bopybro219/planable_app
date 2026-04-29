@@ -33,14 +33,6 @@
             <label for="search-town">Town</label>
             <input id="search-town" name="town" value="{{ town }}" placeholder="Town">
           </div>
-          <div class="field-group">
-            <label for="search-accessible">Accessibility filter</label>
-            <select id="search-accessible" name="accessible">
-              <option value="" {% if accessible == '' %}selected{% endif %}>Any accessible toilet</option>
-              <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Accessible toilet: yes</option>
-              <option value="no" {% if accessible == 'no' %}selected{% endif %}>Accessible toilet: no</option>
-            </select>
-          </div>
           <button class="btn-primary-planira">Show places</button>
         </div>
 

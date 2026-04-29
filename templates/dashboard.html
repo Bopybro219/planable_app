@@ -6,7 +6,7 @@
   <div class="page-title-group">
     <span class="eyebrow">Staff dashboard</span>
     <h1>Operations overview</h1>
-
+  </div>
   <div class="page-head-actions">
     {% for action in quick_actions %}
       <a class="{% if loop.first %}btn-primary-planira{% else %}btn-secondary-planira{% endif %}" href="{{ action.href }}">{{ action.label }}</a>

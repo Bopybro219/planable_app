@@ -1,4 +1,6 @@
+import io
 import os
+import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -9,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import app as app_module
 import venue_import
-from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, Place, SearchEvent, User, app, db
+from app import ADMIN_EMAILS, APILookupEvent, APIKey, AccessibilityProfile, AuditLog, Comment, Place, PlaceImage, SearchEvent, User, app, db
 
 
 def rebind_sqlalchemy_for_current_config():
@@ -42,13 +44,25 @@ class AppSmokeTests(unittest.TestCase):
         self._original_testing = app.config.get("TESTING", False)
         self._original_environment = app.config.get("ENVIRONMENT")
         self._original_schema_ready = app.config.get("_DB_SCHEMA_READY", False)
+        self._original_upload_dir = app.config.get("PROFILE_IMAGE_UPLOAD_DIR")
+        self._original_place_upload_dir = app.config.get("PLACE_IMAGE_UPLOAD_DIR")
+        self._original_max_content_length = app.config.get("MAX_CONTENT_LENGTH")
+        self._original_profile_image_max_bytes = app.config.get("PROFILE_IMAGE_MAX_BYTES")
+        self._original_place_image_max_bytes = app.config.get("PLACE_IMAGE_MAX_BYTES")
         self._db_fd, self._db_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(self._db_fd)
+        self._upload_dir = tempfile.mkdtemp(prefix="planira-profile-images-")
+        self._place_upload_dir = tempfile.mkdtemp(prefix="planira-place-images-")
 
         app.config["TESTING"] = True
         app.config["ENVIRONMENT"] = "testing"
         app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{self._db_path}"
         app.config["_DB_SCHEMA_READY"] = False
+        app.config["PROFILE_IMAGE_UPLOAD_DIR"] = self._upload_dir
+        app.config["PLACE_IMAGE_UPLOAD_DIR"] = self._place_upload_dir
+        app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+        app.config["PROFILE_IMAGE_MAX_BYTES"] = 2 * 1024 * 1024
+        app.config["PLACE_IMAGE_MAX_BYTES"] = 2 * 1024 * 1024
         self.client = app.test_client()
 
         with app.app_context():
@@ -66,17 +80,46 @@ class AppSmokeTests(unittest.TestCase):
         app.config["TESTING"] = self._original_testing
         app.config["ENVIRONMENT"] = self._original_environment
         app.config["_DB_SCHEMA_READY"] = self._original_schema_ready
+        app.config["PROFILE_IMAGE_UPLOAD_DIR"] = self._original_upload_dir
+        app.config["PLACE_IMAGE_UPLOAD_DIR"] = self._original_place_upload_dir
+        app.config["MAX_CONTENT_LENGTH"] = self._original_max_content_length
+        app.config["PROFILE_IMAGE_MAX_BYTES"] = self._original_profile_image_max_bytes
+        app.config["PLACE_IMAGE_MAX_BYTES"] = self._original_place_image_max_bytes
 
         with app.app_context():
             rebind_sqlalchemy_for_current_config()
 
         if os.path.exists(self._db_path):
             os.unlink(self._db_path)
+        shutil.rmtree(self._upload_dir, ignore_errors=True)
+        shutil.rmtree(self._place_upload_dir, ignore_errors=True)
 
     def login_session(self, email, name, picture=""):
         with self.client.session_transaction() as session:
             session["user"] = {"email": email, "name": name, "picture": picture}
             session["_csrf_token"] = "token123"
+
+    def png_bytes(self):
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+            b"\x90wS\xde"
+            b"\x00\x00\x00\x0cIDAT\x08\x99c\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00"
+            b"\x18\xdd\x8d\xb1"
+            b"\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+    def gif_bytes(self):
+        return (
+            b"GIF89a"
+            b"\x01\x00\x01\x00"
+            b"\x80\x00\x00"
+            b"\x00\x00\x00\xff\xff\xff"
+            b"!\xf9\x04\x01\x00\x00\x00\x00"
+            b",\x00\x00\x00\x00\x01\x00\x01\x00\x00"
+            b"\x02\x02D\x01\x00;"
+        )
 
     def test_health_endpoint(self):
         response = self.client.get("/health")
@@ -103,6 +146,10 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(normalized, "postgresql://user:pass@localhost:5432/planira")
 
+    def test_secret_key_validation_rejects_placeholder_secret(self):
+        self.assertIn("placeholder", app_module.secret_key_issues("change-me"))
+        self.assertIn("too_short", app_module.secret_key_issues("change-me"))
+
     def test_flask_migrate_is_initialized(self):
         self.assertIsNotNone(app_module.migrate)
         self.assertIs(app.extensions["migrate"].db, db)
@@ -118,6 +165,33 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertTrue(app.config["_DB_SCHEMA_READY"])
+
+    def test_production_missing_config_reports_hardening_requirements(self):
+        original_environment = app.config["ENVIRONMENT"]
+        original_server_name = app.config.get("SERVER_NAME")
+        original_trusted_hosts = app.config.get("TRUSTED_HOSTS")
+        original_cookie_secure = app.config.get("SESSION_COOKIE_SECURE")
+        original_scheme = app.config.get("PREFERRED_URL_SCHEME")
+
+        app.config["ENVIRONMENT"] = "production"
+        app.config["SERVER_NAME"] = None
+        app.config["TRUSTED_HOSTS"] = None
+        app.config["SESSION_COOKIE_SECURE"] = False
+        app.config["PREFERRED_URL_SCHEME"] = "http"
+
+        try:
+            missing = app_module.missing_config_keys()
+        finally:
+            app.config["ENVIRONMENT"] = original_environment
+            app.config["SERVER_NAME"] = original_server_name
+            app.config["TRUSTED_HOSTS"] = original_trusted_hosts
+            app.config["SESSION_COOKIE_SECURE"] = original_cookie_secure
+            app.config["PREFERRED_URL_SCHEME"] = original_scheme
+
+        self.assertTrue(any(item.startswith("SECRET_KEY") for item in missing))
+        self.assertIn("SESSION_COOKIE_SECURE=true", missing)
+        self.assertIn("TRUSTED_HOSTS", missing)
+        self.assertIn("SERVER_NAME", missing)
 
     def test_v2_schema_models_create_cleanly(self):
         with app.app_context():
@@ -222,6 +296,58 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(staff_state["access_label"], "Staff")
         self.assertEqual(admin_state["plan_label"], "Business")
         self.assertEqual(admin_state["access_label"], "Admin")
+
+    def test_google_callback_rejects_unverified_email(self):
+        fake_google = SimpleNamespace(
+            authorize_access_token=unittest.mock.Mock(
+                return_value={
+                    "userinfo": {
+                        "sub": "google-unverified",
+                        "email": "oauth-unverified@example.com",
+                        "email_verified": False,
+                        "name": "OAuth Unverified",
+                    }
+                }
+            )
+        )
+
+        with patch.object(app_module, "google", fake_google):
+            response = self.client.get("/auth/google/callback", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"requires a verified email address", response.data)
+        with app.app_context():
+            self.assertIsNone(User.query.filter_by(email="oauth-unverified@example.com").first())
+
+    def test_google_callback_links_existing_user_to_google_sub(self):
+        with app.app_context():
+            user = User(email="oauth-link@example.com", name="Old Name", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        fake_google = SimpleNamespace(
+            authorize_access_token=unittest.mock.Mock(
+                return_value={
+                    "userinfo": {
+                        "sub": "google-linked-sub",
+                        "email": "oauth-link@example.com",
+                        "email_verified": True,
+                        "name": "Linked User",
+                        "picture": "https://example.com/avatar.png",
+                    }
+                }
+            )
+        )
+
+        with patch.object(app_module, "google", fake_google):
+            response = self.client.get("/auth/google/callback")
+
+        self.assertEqual(response.status_code, 302)
+        with app.app_context():
+            refreshed = User.query.filter_by(email="oauth-link@example.com").first()
+        self.assertEqual(refreshed.google_sub, "google-linked-sub")
+        self.assertEqual(refreshed.name, "Linked User")
+        self.assertIsNotNone(refreshed.last_login_at)
 
     def test_user_has_api_access_matches_paid_business_and_staff_states(self):
         with app.app_context():
@@ -432,6 +558,339 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Extra credits", settings_response.data)
         self.assertIn(b"Community points", settings_response.data)
 
+    def test_account_settings_profile_avatar_fallback_and_helper_copy_render(self):
+        with app.app_context():
+            user = User(email="avatar-fallback@example.com", name="Avatar Fallback", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("avatar-fallback@example.com", "Avatar Fallback")
+        response = self.client.get("/account/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Profile picture", response.data)
+        self.assertIn(b"PNG, JPG, WEBP or GIF. Max 2MB.", response.data)
+        self.assertIn(b"AF", response.data)
+        self.assertIn(b"planira-avatar-fallback", response.data)
+
+    def test_profile_image_upload_replace_and_remove_flow(self):
+        with app.app_context():
+            user = User(email="avatar-upload@example.com", name="Avatar Upload", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("avatar-upload@example.com", "Avatar Upload")
+
+        upload_response = self.client.post(
+            "/account/settings/profile-image",
+            data={
+                "csrf_token": "token123",
+                "profile_image": (io.BytesIO(self.png_bytes()), "avatar.png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertIn(b"Profile picture updated.", upload_response.data)
+        with app.app_context():
+            user = User.query.filter_by(email="avatar-upload@example.com").first()
+            first_filename = user.profile_image_filename
+            first_path = os.path.join(self._upload_dir, first_filename)
+        self.assertTrue(first_filename.endswith(".png"))
+        self.assertTrue(os.path.exists(first_path))
+        self.assertIn(f"uploads/profile_pics/{first_filename}".encode(), upload_response.data)
+
+        replace_response = self.client.post(
+            "/account/settings/profile-image",
+            data={
+                "csrf_token": "token123",
+                "profile_image": (io.BytesIO(self.gif_bytes()), "avatar.gif"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(replace_response.status_code, 200)
+        with app.app_context():
+            user = User.query.filter_by(email="avatar-upload@example.com").first()
+            second_filename = user.profile_image_filename
+        self.assertNotEqual(first_filename, second_filename)
+        self.assertFalse(os.path.exists(first_path))
+        self.assertTrue(os.path.exists(os.path.join(self._upload_dir, second_filename)))
+
+        remove_response = self.client.post(
+            "/account/settings/profile-image",
+            data={"csrf_token": "token123", "action": "remove"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(remove_response.status_code, 200)
+        self.assertIn(b"Profile picture removed.", remove_response.data)
+        with app.app_context():
+            user = User.query.filter_by(email="avatar-upload@example.com").first()
+            self.assertIsNone(user.profile_image_filename)
+            self.assertIsNone(user.avatar_url)
+        self.assertFalse(os.path.exists(os.path.join(self._upload_dir, second_filename)))
+        self.assertIn(b"planira-avatar-fallback", remove_response.data)
+
+    def test_profile_image_upload_rejects_non_image_files(self):
+        with app.app_context():
+            user = User(email="avatar-bad@example.com", name="Avatar Bad", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("avatar-bad@example.com", "Avatar Bad")
+        response = self.client.post(
+            "/account/settings/profile-image",
+            data={
+                "csrf_token": "token123",
+                "profile_image": (io.BytesIO(b"<svg></svg>"), "avatar.svg"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Use a PNG, JPG, WEBP or GIF image.", response.data)
+        with app.app_context():
+            user = User.query.filter_by(email="avatar-bad@example.com").first()
+            self.assertIsNone(user.profile_image_filename)
+
+    def test_logged_out_and_free_users_can_view_existing_place_images(self):
+        with app.app_context():
+            free_user = User(email="gallery-free@example.com", name="Gallery Free", picture="", role="member", plan="free")
+            place = Place(name="Gallery Cafe", slug="gallery-cafe", town="Gallery Town")
+            uploader = User(email="gallery-paid@example.com", name="Gallery Paid", picture="", role="member", plan="paid")
+            db.session.add_all([free_user, place, uploader])
+            db.session.flush()
+            image = PlaceImage(place=place, uploader=uploader, filename="gallery.png", caption="Front entrance")
+            db.session.add(image)
+            db.session.commit()
+
+        with open(os.path.join(self._place_upload_dir, "gallery.png"), "wb") as file_obj:
+            file_obj.write(self.png_bytes())
+
+        logged_out_response = self.client.get("/place/gallery-cafe")
+        self.assertEqual(logged_out_response.status_code, 200)
+        self.assertIn(b"Front entrance", logged_out_response.data)
+        self.assertIn(b"uploads/place_images/gallery.png", logged_out_response.data)
+        self.assertNotIn(b"Add a place photo", logged_out_response.data)
+
+        self.login_session("gallery-free@example.com", "Gallery Free")
+        free_response = self.client.get("/place/gallery-cafe")
+        self.assertEqual(free_response.status_code, 200)
+        self.assertIn(b"Front entrance", free_response.data)
+        self.assertIn(b"Upgrade to add your own place photos.", free_response.data)
+        self.assertNotIn(b"Upload photo", free_response.data)
+
+    def test_free_user_cannot_upload_place_image_or_see_upload_form(self):
+        with app.app_context():
+            user = User(email="free-photo@example.com", name="Free Photo", picture="", role="member", plan="free")
+            place = Place(name="Free Photo Place", slug="free-photo-place", town="Quiet Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session("free-photo@example.com", "Free Photo")
+        page_response = self.client.get("/place/free-photo-place")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertNotIn(b"Add a place photo", page_response.data)
+        self.assertIn(b"Upgrade to add your own place photos.", page_response.data)
+
+        upload_response = self.client.post(
+            f"/place/{place_id}/images/upload",
+            data={
+                "csrf_token": "token123",
+                "caption": "Blocked upload",
+                "place_image": (io.BytesIO(self.png_bytes()), "blocked.png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertIn(b"Upgrade to a paid Planira plan to add place photos.", upload_response.data)
+        with app.app_context():
+            self.assertEqual(PlaceImage.query.count(), 0)
+
+    def test_paid_user_can_upload_place_image_and_place_page_renders_it(self):
+        with app.app_context():
+            user = User(email="paid-photo@example.com", name="Paid Photo", picture="", role="member", plan="paid")
+            place = Place(name="Paid Photo Place", slug="paid-photo-place", town="Photo Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session("paid-photo@example.com", "Paid Photo")
+        page_response = self.client.get("/place/paid-photo-place")
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(b"Add a place photo", page_response.data)
+
+        upload_response = self.client.post(
+            f"/place/{place_id}/images/upload",
+            data={
+                "csrf_token": "token123",
+                "caption": "Side entrance",
+                "place_image": (io.BytesIO(self.png_bytes()), "venue.png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(upload_response.status_code, 200)
+        self.assertIn(b"Place photo added.", upload_response.data)
+        self.assertIn(b"Side entrance", upload_response.data)
+        with app.app_context():
+            image = PlaceImage.query.one()
+            saved_path = os.path.join(self._place_upload_dir, image.filename)
+        self.assertTrue(image.filename.endswith(".png"))
+        self.assertTrue(os.path.exists(saved_path))
+        self.assertIn(f"uploads/place_images/{image.filename}".encode(), upload_response.data)
+
+    def test_place_image_upload_rejects_invalid_types_and_svg(self):
+        with app.app_context():
+            user = User(email="invalid-photo@example.com", name="Invalid Photo", picture="", role="member", plan="business")
+            place = Place(name="Invalid Photo Place", slug="invalid-photo-place", town="Photo Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session("invalid-photo@example.com", "Invalid Photo")
+        bad_type_response = self.client.post(
+            f"/place/{place_id}/images/upload",
+            data={
+                "csrf_token": "token123",
+                "place_image": (io.BytesIO(b"not-an-image"), "notes.txt"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertEqual(bad_type_response.status_code, 200)
+        self.assertIn(b"Use a PNG, JPG, WEBP or GIF image.", bad_type_response.data)
+
+        svg_response = self.client.post(
+            f"/place/{place_id}/images/upload",
+            data={
+                "csrf_token": "token123",
+                "place_image": (io.BytesIO(b"<svg></svg>"), "photo.svg"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        self.assertEqual(svg_response.status_code, 200)
+        self.assertIn(b"Use a PNG, JPG, WEBP or GIF image.", svg_response.data)
+        with app.app_context():
+            self.assertEqual(PlaceImage.query.count(), 0)
+
+    def test_uploader_can_delete_own_place_image(self):
+        with app.app_context():
+            user = User(email="delete-own@example.com", name="Delete Own", picture="", role="member", plan="paid")
+            place = Place(name="Delete Own Place", slug="delete-own-place", town="Delete Town")
+            db.session.add_all([user, place])
+            db.session.flush()
+            image = PlaceImage(place=place, uploader=user, filename="delete-own.png", caption="Own photo")
+            db.session.add(image)
+            db.session.commit()
+            image_id = image.id
+
+        file_path = os.path.join(self._place_upload_dir, "delete-own.png")
+        with open(file_path, "wb") as file_obj:
+            file_obj.write(self.png_bytes())
+
+        self.login_session("delete-own@example.com", "Delete Own")
+        response = self.client.post(
+            f"/place-images/{image_id}/delete",
+            data={"csrf_token": "token123"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Place photo removed.", response.data)
+        self.assertFalse(os.path.exists(file_path))
+        with app.app_context():
+            self.assertIsNone(db.session.get(PlaceImage, image_id))
+
+    def test_non_owner_and_free_user_cannot_delete_another_users_place_image(self):
+        with app.app_context():
+            owner = User(email="photo-owner@example.com", name="Photo Owner", picture="", role="member", plan="paid")
+            free_user = User(email="photo-free@example.com", name="Photo Free", picture="", role="member", plan="free")
+            place = Place(name="Ownership Place", slug="ownership-place", town="Owner Town")
+            db.session.add_all([owner, free_user, place])
+            db.session.flush()
+            image = PlaceImage(place=place, uploader=owner, filename="ownership.png", caption="Owner photo")
+            db.session.add(image)
+            db.session.commit()
+            image_id = image.id
+
+        with open(os.path.join(self._place_upload_dir, "ownership.png"), "wb") as file_obj:
+            file_obj.write(self.png_bytes())
+
+        self.login_session("photo-free@example.com", "Photo Free")
+        response = self.client.post(
+            f"/place-images/{image_id}/delete",
+            data={"csrf_token": "token123"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"You can only remove your own place photos.", response.data)
+        with app.app_context():
+            self.assertIsNotNone(db.session.get(PlaceImage, image_id))
+
+    def test_staff_can_delete_any_place_image_even_if_file_is_missing(self):
+        staff_email = "photo-staff@example.com"
+        ADMIN_EMAILS.add(staff_email)
+        with app.app_context():
+            owner = User(email="photo-owner-2@example.com", name="Photo Owner Two", picture="", role="member", plan="paid")
+            staff = User(email=staff_email, name="Photo Staff", picture="", role="staff", plan="free")
+            place = Place(name="Staff Delete Place", slug="staff-delete-place", town="Staff Town")
+            db.session.add_all([owner, staff, place])
+            db.session.flush()
+            image = PlaceImage(place=place, uploader=owner, filename="missing-file.png", caption="Staff delete")
+            db.session.add(image)
+            db.session.commit()
+            image_id = image.id
+
+        self.login_session(staff_email, "Photo Staff")
+        response = self.client.post(
+            f"/place-images/{image_id}/delete",
+            data={"csrf_token": "token123"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Place photo removed.", response.data)
+        with app.app_context():
+            self.assertIsNone(db.session.get(PlaceImage, image_id))
+
+    def test_nav_avatar_renders_for_logged_in_member_and_staff_users(self):
+        with app.app_context():
+            member = User(email="nav-member@example.com", name="Nav Member", picture="", role="member", plan="free")
+            staff = User(email="nav-staff@example.com", name="Nav Staff", picture="", role="staff", plan="free")
+            db.session.add_all([member, staff])
+            db.session.commit()
+
+        self.login_session("nav-member@example.com", "Nav Member")
+        member_response = self.client.get("/account")
+        self.assertEqual(member_response.status_code, 200)
+        self.assertIn(b"account-avatar", member_response.data)
+        self.assertIn(b"NM", member_response.data)
+        self.assertNotIn(b"Staff workspace", member_response.data)
+
+        self.login_session("nav-staff@example.com", "Nav Staff")
+        staff_response = self.client.get("/account")
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertIn(b"account-avatar", staff_response.data)
+        self.assertIn(b"NS", staff_response.data)
+        self.assertIn(b"Staff", staff_response.data)
+
+    def test_logged_out_pages_still_render_without_account_avatar(self):
+        response = self.client.get("/plans")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Continue with Google", response.data)
+        self.assertNotIn(b"account-avatar", response.data)
+
     def test_plans_page_uses_consistent_quota_language_for_current_account(self):
         with app.app_context():
             user = User(
@@ -469,14 +928,11 @@ class AppSmokeTests(unittest.TestCase):
                 with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123"}, clear=False):
                     response = self.client.post("/billing/checkout/api_20", data={"csrf_token": "token123"})
 
-        self.assertEqual(response.status_code, 303)
-        kwargs = session_create.call_args.kwargs
-        self.assertEqual(kwargs["metadata"]["plan_key"], "api_20")
-        self.assertEqual(kwargs["metadata"]["target_role"], "api_buyer")
-        self.assertEqual(kwargs["metadata"]["user_id"], str(user_id))
-        self.assertEqual(kwargs["metadata"]["user_email"], "checkout-fields@example.com")
-        self.assertEqual(kwargs["customer_email"], "checkout-fields@example.com")
-        self.assertEqual(kwargs["client_reference_id"], str(user_id))
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(session_create.call_args)
+        with self.client.session_transaction() as session:
+            flashes = session.get("_flashes", [])
+        self.assertTrue(any("temporarily disabled" in message for _, message in flashes))
 
     def test_subscription_checkout_includes_subscription_metadata(self):
         with app.app_context():
@@ -533,7 +989,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIsNone(refreshed.subscription_status)
         self.assertTrue(app_module.user_has_api_access(refreshed))
 
-    def test_stripe_webhook_for_api_buyer_grants_business_plan_and_api_access(self):
+    def test_stripe_webhook_for_api_buyer_does_not_grant_business_plan_or_api_access(self):
         with app.app_context():
             user = User(email="api-webhook@example.com", name="API Webhook", picture="", role="member", plan="free")
             db.session.add(user)
@@ -562,10 +1018,10 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         with app.app_context():
             refreshed = db.session.get(User, user_id)
-        self.assertEqual(refreshed.role, "api_buyer")
-        self.assertEqual(refreshed.plan, "business")
+        self.assertEqual(refreshed.role, "member")
+        self.assertEqual(refreshed.plan, "free")
         self.assertEqual(refreshed.stripe_customer_id, "cus_api_webhook")
-        self.assertTrue(app_module.user_has_api_access(refreshed))
+        self.assertFalse(app_module.user_has_api_access(refreshed))
 
     def test_stripe_subscription_deleted_downgrades_paid_member_to_free(self):
         with app.app_context():
@@ -769,7 +1225,7 @@ class AppSmokeTests(unittest.TestCase):
             refreshed = db.session.get(User, user_id)
         self.assertEqual(refreshed.role, "api_buyer")
         self.assertEqual(refreshed.plan, "business")
-        self.assertTrue(app_module.user_has_api_access(refreshed))
+        self.assertFalse(app_module.user_has_api_access(refreshed))
 
     def test_search_first_load_stays_empty(self):
         with app.app_context():
@@ -788,7 +1244,7 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/search")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Before you search", response.data)
+        self.assertIn(b"Start with a place search", response.data)
         self.assertNotIn(b"First Load Venue", response.data)
 
     def test_search_submitted_empty_fields_stays_empty(self):
@@ -808,8 +1264,124 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/search?submitted=1")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Start with a venue, town, or accessibility filter.", response.data)
+        self.assertIn(b"Add a venue name, town, or accessibility filter to show results.", response.data)
         self.assertNotIn(b"Blank Search Venue", response.data)
+
+    def test_autocomplete_empty_query_returns_empty_list(self):
+        response = self.client.get("/api/autocomplete?q=")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, [])
+
+    def test_autocomplete_is_available_without_login(self):
+        with app.app_context():
+            db.session.add(Place(name="Open Venue", slug="open-venue", town="Northampton"))
+            db.session.commit()
+
+        response = self.client.get("/api/autocomplete?q=Open")
+
+        self.assertEqual(response.status_code, 200)
+        place_group = next(group for group in response.json if group["key"] == "places")
+        self.assertEqual(len(place_group["items"]), 1)
+        self.assertEqual(place_group["items"][0]["name"], "Open Venue")
+        self.assertEqual(place_group["items"][0]["town"], "Northampton")
+
+    def test_autocomplete_selected_place_search_returns_exact_result(self):
+        with app.app_context():
+            user = User(email="railway@example.com", name="Railway User", picture="", role="member", plan="free")
+            place = Place(name="The Railway Inn", slug="the-railway-inn-rushden", town="Rushden")
+            db.session.add_all([user, place])
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session("railway@example.com", "Railway User")
+        autocomplete_response = self.client.get("/api/autocomplete?q=railway")
+
+        self.assertEqual(autocomplete_response.status_code, 200)
+        place_group = next(group for group in autocomplete_response.json if group["key"] == "places")
+        railway_item = next(item for item in place_group["items"] if item["name"] == "The Railway Inn")
+        self.assertEqual(railway_item["town"], "Rushden")
+        self.assertEqual(railway_item["selected_place_id"], place_id)
+
+        search_response = self.client.get(
+            f"/search?q=The+Railway+Inn&town=Rushden&selected_place_id={place_id}&submitted=1"
+        )
+
+        self.assertEqual(search_response.status_code, 200)
+        self.assertIn(b"The Railway Inn", search_response.data)
+        self.assertIn(b"Rushden", search_response.data)
+        self.assertNotIn(b"Nothing matched that search this time.", search_response.data)
+
+    def test_autocomplete_prioritises_name_matches_and_limits_results(self):
+        with app.app_context():
+            for index in range(1, 6):
+                db.session.add(Place(name=f"Alpha Match {index}", slug=f"alpha-match-{index}", town="Elsewhere"))
+            db.session.add(Place(name="Quiet Room", slug="quiet-room", town="Alpha Town"))
+            db.session.add(Place(name="Another Quiet Room", slug="another-quiet-room", town="Alpha Village"))
+            db.session.commit()
+
+        response = self.client.get("/api/autocomplete?q=Alpha")
+
+        self.assertEqual(response.status_code, 200)
+        place_group = next(group for group in response.json if group["key"] == "places")
+        popular_group = next(group for group in response.json if group["key"] == "popular")
+        self.assertEqual(len(place_group["items"]), 4)
+        self.assertEqual([item["name"] for item in place_group["items"]], [f"Alpha Match {index}" for index in range(1, 5)])
+        self.assertTrue(all(item["name"] != place_group["items"][0]["name"] for item in popular_group["items"]))
+
+    def test_autocomplete_recent_searches_do_not_leak_between_users(self):
+        with app.app_context():
+            first_user = User(email="recent-one@example.com", name="Recent One", picture="", role="member", plan="free")
+            second_user = User(email="recent-two@example.com", name="Recent Two", picture="", role="member", plan="free")
+            db.session.add_all([first_user, second_user])
+            db.session.flush()
+            db.session.add_all(
+                [
+                    SearchEvent(user_id=first_user.id, query_text="Railway", town="Rushden", result_count=1),
+                    SearchEvent(user_id=second_user.id, query_text="Railway Secret", town="Hidden Town", result_count=1),
+                ]
+            )
+            db.session.commit()
+
+        self.login_session("recent-one@example.com", "Recent One")
+        response = self.client.get("/api/autocomplete?q=rail")
+
+        self.assertEqual(response.status_code, 200)
+        recent_group = next(group for group in response.json if group["key"] == "recent")
+        recent_titles = [item["title"] for item in recent_group["items"]]
+        recent_towns = [item["town"] for item in recent_group["items"]]
+        self.assertIn("Railway", recent_titles)
+        self.assertIn("Rushden", recent_towns)
+        self.assertNotIn("Railway Secret", recent_titles)
+        self.assertNotIn("Hidden Town", recent_towns)
+
+    def test_autocomplete_badges_only_appear_when_data_exists(self):
+        with app.app_context():
+            clear_place = Place(name="Clear Route", slug="clear-route", town="Northampton")
+            quiet_place = Place(name="Quiet Corner", slug="quiet-corner", town="Northampton")
+            db.session.add_all([clear_place, quiet_place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=clear_place.id,
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    confidence_score=86,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=7),
+                )
+            )
+            db.session.commit()
+
+        response = self.client.get("/api/autocomplete?q=North")
+
+        self.assertEqual(response.status_code, 200)
+        place_group = next(group for group in response.json if group["key"] == "places")
+        items_by_name = {item["name"]: item for item in place_group["items"]}
+        self.assertIn("Verified", items_by_name["Clear Route"]["badges"])
+        self.assertIn("Step-free", items_by_name["Clear Route"]["badges"])
+        self.assertIn("Accessible toilet", items_by_name["Clear Route"]["badges"])
+        self.assertIn("Looks straightforward", items_by_name["Clear Route"]["badges"])
+        self.assertEqual(items_by_name["Quiet Corner"]["badges"], [])
 
     def test_search_results_paginate(self):
         with app.app_context():
@@ -956,8 +1528,8 @@ class AppSmokeTests(unittest.TestCase):
                 db.session.add(admin)
 
             existing = User.query.filter(User.email.like("staff-page-user-%@example.com")).count()
-            if existing < 12:
-                for index in range(existing + 1, 13):
+            if existing < 22:
+                for index in range(existing + 1, 23):
                     db.session.add(
                         User(
                             email=f"staff-page-user-{index}@example.com",
@@ -975,7 +1547,7 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/admin/users?q=Staff+Page+User&page=2")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Showing 11-12 of 12 users.".replace("-", "\u2013").encode(), response.data)
+        self.assertIn("Showing 21-22 of 22 users.".replace("-", "\u2013").encode(), response.data)
         self.assertIn(b"Page 2 of 2", response.data)
         self.assertIn(b"Previous", response.data)
 
@@ -989,8 +1561,8 @@ class AppSmokeTests(unittest.TestCase):
                 db.session.add(admin)
 
             existing = User.query.filter(User.email.like("persisted-query-user-%@example.com")).count()
-            if existing < 11:
-                for index in range(existing + 1, 12):
+            if existing < 21:
+                for index in range(existing + 1, 22):
                     db.session.add(
                         User(
                             email=f"persisted-query-user-{index}@example.com",
@@ -1008,7 +1580,7 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/admin/users?q=Persisted&page=2")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Showing 11-11 of 11 users.".replace("-", "\u2013").encode(), response.data)
+        self.assertIn("Showing 21-21 of 21 users.".replace("-", "\u2013").encode(), response.data)
         self.assertIn(b"q=Persisted", response.data)
         self.assertIn(b"Page 2 of 2", response.data)
 
@@ -1160,7 +1732,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Live preview usage", dashboard_response.data)
         self.assertEqual(users_response.status_code, 200)
         self.assertIn(b"Manage Planira users", users_response.data)
-        self.assertIn(b"Only admins can change member search credits.", users_response.data)
+        self.assertIn(b"Manual override", users_response.data)
 
     def test_admin_staff_demote_uses_member_role_name(self):
         admin_email = "admin-demote@example.com"
@@ -1184,6 +1756,253 @@ class AppSmokeTests(unittest.TestCase):
             refreshed = db.session.get(User, user_id)
         self.assertEqual(refreshed.role, "member")
         self.assertIn(b"is now a member", response.data)
+
+    def test_admin_can_enable_manual_entitlement(self):
+        admin_email = "manual-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Manual Admin", picture="", role="admin", plan="admin")
+            member = User(email="manual-member@example.com", name="Manual Member", picture="", role="member", plan="free")
+            db.session.add_all([admin, member])
+            db.session.commit()
+            admin_id = admin.id
+            member_id = member.id
+
+        self.login_session(admin_email, "Manual Admin")
+        response = self.client.post(
+            f"/admin/users/{member_id}/manual-entitlement",
+            data={
+                "csrf_token": "token123",
+                "manual_entitlement_enabled": "1",
+                "manual_entitlement_plan": "api_20",
+                "access_override_until": "2099-12-31T23:59",
+                "manual_entitlement_note": "Support grant",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Manual access override updated", response.data)
+        self.assertIn(b"Manual active", response.data)
+        with app.app_context():
+            refreshed = db.session.get(User, member_id)
+            audit = AuditLog.query.filter_by(
+                action="user.manual_entitlement.updated",
+                entity_type="user",
+                entity_id=str(member_id),
+            ).first()
+        self.assertTrue(refreshed.manual_entitlement_enabled)
+        self.assertEqual(refreshed.manual_entitlement_plan, "api_20")
+        self.assertEqual(refreshed.manual_entitlement_note, "Support grant")
+        self.assertIsNotNone(refreshed.access_override_until)
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.actor_user_id, admin_id)
+        self.assertEqual(audit.reason, "Support grant")
+
+    def test_non_admin_cannot_enable_manual_entitlement(self):
+        with app.app_context():
+            staff = User(email="manual-staff@example.com", name="Manual Staff", picture="", role="staff", plan="free")
+            member = User(email="manual-target@example.com", name="Manual Target", picture="", role="member", plan="free")
+            db.session.add_all([staff, member])
+            db.session.commit()
+            member_id = member.id
+
+        self.login_session("manual-staff@example.com", "Manual Staff")
+        response = self.client.post(
+            f"/admin/users/{member_id}/manual-entitlement",
+            data={
+                "csrf_token": "token123",
+                "manual_entitlement_enabled": "1",
+                "manual_entitlement_plan": "paid_consumer",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Admin access required.", response.data)
+        with app.app_context():
+            refreshed = db.session.get(User, member_id)
+        self.assertFalse(refreshed.manual_entitlement_enabled)
+
+    def test_manual_entitlement_grants_access_without_fake_stripe_records(self):
+        admin_email = "manual-grant-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Grant Admin", picture="", role="admin", plan="admin")
+            member = User(email="manual-grant@example.com", name="Manual Grant", picture="", role="member", plan="free")
+            db.session.add_all([admin, member])
+            db.session.commit()
+            member_id = member.id
+
+        self.login_session(admin_email, "Grant Admin")
+        response = self.client.post(
+            f"/admin/users/{member_id}/manual-entitlement",
+            data={
+                "csrf_token": "token123",
+                "manual_entitlement_enabled": "1",
+                "manual_entitlement_plan": "business",
+                "manual_entitlement_note": "Manual API access",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            refreshed = db.session.get(User, member_id)
+            has_api_access = app_module.user_has_api_access(refreshed)
+            plan_name = app_module.normalize_billing_plan_name(refreshed)
+        self.assertTrue(has_api_access)
+        self.assertEqual(plan_name, "business")
+        self.assertIsNone(refreshed.stripe_customer_id)
+        self.assertIsNone(refreshed.stripe_subscription_id)
+        self.assertIsNone(refreshed.subscription_status)
+
+    def test_expired_manual_entitlement_does_not_grant_access(self):
+        with app.app_context():
+            user = User(
+                email="manual-expired@example.com",
+                name="Manual Expired",
+                picture="",
+                role="member",
+                plan="free",
+                manual_entitlement_enabled=True,
+                manual_entitlement_plan="business",
+                access_override_until=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(hours=1),
+            )
+            db.session.add(user)
+            db.session.commit()
+
+            self.assertFalse(app_module.manual_entitlement_is_active(user))
+            self.assertFalse(app_module.user_has_api_access(user))
+            self.assertEqual(app_module.normalize_billing_plan_name(user), "free")
+
+    def test_disabling_manual_entitlement_removes_override_access(self):
+        admin_email = "manual-disable-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Disable Admin", picture="", role="admin", plan="admin")
+            member = User(
+                email="manual-disable@example.com",
+                name="Manual Disable",
+                picture="",
+                role="member",
+                plan="free",
+                manual_entitlement_enabled=True,
+                manual_entitlement_plan="paid_consumer",
+                manual_entitlement_note="Temporary",
+            )
+            db.session.add_all([admin, member])
+            db.session.commit()
+            member_id = member.id
+
+        self.login_session(admin_email, "Disable Admin")
+        response = self.client.post(
+            f"/admin/users/{member_id}/manual-entitlement",
+            data={
+                "csrf_token": "token123",
+                "manual_entitlement_plan": "paid_consumer",
+                "manual_entitlement_note": "",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No manual override", response.data)
+        with app.app_context():
+            refreshed = db.session.get(User, member_id)
+        self.assertFalse(refreshed.manual_entitlement_enabled)
+        self.assertIsNone(refreshed.manual_entitlement_plan)
+        self.assertFalse(app_module.user_has_api_access(refreshed))
+
+    def test_invalid_manual_plan_is_rejected(self):
+        admin_email = "manual-invalid-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Invalid Admin", picture="", role="admin", plan="admin")
+            member = User(email="manual-invalid@example.com", name="Manual Invalid", picture="", role="member", plan="free")
+            db.session.add_all([admin, member])
+            db.session.commit()
+            member_id = member.id
+
+        self.login_session(admin_email, "Invalid Admin")
+        response = self.client.post(
+            f"/admin/users/{member_id}/manual-entitlement",
+            data={
+                "csrf_token": "token123",
+                "manual_entitlement_enabled": "1",
+                "manual_entitlement_plan": "admin",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Choose a valid manual access level.", response.data)
+        with app.app_context():
+            refreshed = db.session.get(User, member_id)
+        self.assertFalse(refreshed.manual_entitlement_enabled)
+
+    def test_admin_user_filters_work_for_role_plan_and_manual_override(self):
+        admin_email = "filters-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Filters Admin", picture="", role="admin", plan="admin")
+            staff_user = User(email="filters-staff@example.com", name="Filters Staff", picture="", role="staff", plan="free")
+            business_user = User(
+                email="filters-business@example.com",
+                name="Filters Business",
+                picture="",
+                role="member",
+                plan="free",
+                manual_entitlement_enabled=True,
+                manual_entitlement_plan="business",
+            )
+            free_user = User(email="filters-free@example.com", name="Filters Free", picture="", role="member", plan="free")
+            db.session.add_all([admin, staff_user, business_user, free_user])
+            db.session.commit()
+
+        self.login_session(admin_email, "Filters Admin")
+        response = self.client.get("/admin/users?role=staff&plan=free&manual_override=all&q=Filters")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"filters-staff@example.com", response.data)
+        self.assertNotIn(b"filters-business@example.com", response.data)
+
+        manual_response = self.client.get("/admin/users?manual_override=active&q=Filters")
+        self.assertEqual(manual_response.status_code, 200)
+        self.assertIn(b"filters-business@example.com", manual_response.data)
+        self.assertNotIn(b"filters-free@example.com", manual_response.data)
+
+    def test_admin_user_edit_page_loads(self):
+        admin_email = "edit-admin@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Edit Admin", picture="", role="admin", plan="admin")
+            member = User(email="edit-member@example.com", name="Edit Member", picture="", role="member", plan="free")
+            db.session.add_all([admin, member])
+            db.session.commit()
+            member_id = member.id
+
+        self.login_session(admin_email, "Edit Admin")
+        response = self.client.get(f"/admin/users/{member_id}/edit")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"User editor", response.data)
+        self.assertIn(b"Manual access override", response.data)
+
+    def test_non_staff_cannot_access_admin_users_pages(self):
+        with app.app_context():
+            user = User(email="not-staff-users@example.com", name="Not Staff Users", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+        self.login_session("not-staff-users@example.com", "Not Staff Users")
+        list_response = self.client.get("/admin/users", follow_redirects=True)
+        edit_response = self.client.get(f"/admin/users/{user_id}/edit", follow_redirects=True)
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIn(b"Staff access required.", list_response.data)
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertIn(b"Admin access required.", edit_response.data)
 
     def test_non_staff_cannot_see_staff_only_audit_or_search_activity(self):
         with app.app_context():
@@ -1418,7 +2237,7 @@ class AppSmokeTests(unittest.TestCase):
         self.login_session("api-owner@example.com", "API Owner")
         create_response = self.client.post(
             "/account/api-keys",
-            data={"csrf_token": "token123", "label": "Primary developer key", "scopes": "search:read"},
+            data={"csrf_token": "token123", "label": "Primary developer key", "scopes": "places:read"},
         )
 
         self.assertEqual(create_response.status_code, 201)
@@ -1451,7 +2270,7 @@ class AppSmokeTests(unittest.TestCase):
         self.login_session("blocked-api-owner@example.com", "Blocked Owner")
         response = self.client.post(
             "/account/api-keys",
-            data={"csrf_token": "token123", "label": "Blocked key", "scopes": "search:read"},
+            data={"csrf_token": "token123", "label": "Blocked key", "scopes": "places:read"},
         )
 
         self.assertEqual(response.status_code, 403)
@@ -1473,7 +2292,7 @@ class AppSmokeTests(unittest.TestCase):
             admin = User(email=admin_email, name="API Admin", picture="", role="admin", plan="admin")
             db.session.add_all([owner, admin])
             db.session.commit()
-            api_key, raw_key = app_module.create_api_key_for_user(owner, label="Private key", scopes=["search:read"])
+            api_key, raw_key = app_module.create_api_key_for_user(owner, label="Private key", scopes=["places:read"])
             db.session.commit()
             owner_id = owner.id
             key_hash = api_key.key_hash
@@ -1491,13 +2310,13 @@ class AppSmokeTests(unittest.TestCase):
             user = User(email="lookup@example.com", name="Lookup User", picture="", role="member", plan="business")
             db.session.add(user)
             db.session.commit()
-            api_key, raw_key = app_module.create_api_key_for_user(user, label="Lookup key", scopes=["search:read"])
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Lookup key", scopes=["places:read"])
             db.session.commit()
             key_id = api_key.id
 
             result = app_module.authenticate_api_key(
                 authorization_header=f"Bearer {raw_key}",
-                required_scopes=["search:read"],
+                required_scopes=["places:read"],
                 endpoint="/internal/api/search",
                 query="Blue venue",
                 status_code=200,
@@ -1518,7 +2337,7 @@ class AppSmokeTests(unittest.TestCase):
             user = User(email="lost-access@example.com", name="Lost Access", picture="", role="member", plan="business")
             db.session.add(user)
             db.session.commit()
-            api_key, raw_key = app_module.create_api_key_for_user(user, label="Former access key", scopes=["search:read"])
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Former access key", scopes=["places:read"])
             db.session.commit()
 
             user.plan = "free"
@@ -1596,6 +2415,171 @@ class AppSmokeTests(unittest.TestCase):
             {
                 "error": "api_access_required",
                 "message": "API access requires an active Planira API or Early Access plan.",
+            },
+        )
+
+    def test_staff_api_key_can_create_and_update_place_accessibility_data(self):
+        with app.app_context():
+            staff = User(email="writer-staff@example.com", name="Writer Staff", picture="", role="staff", plan="free")
+            db.session.add(staff)
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(staff, label="Staff write key")
+            db.session.commit()
+
+        create_response = self.client.post(
+            "/api/v1/places",
+            json={
+                "place": {
+                    "name": "Writable Venue",
+                    "town": "Northampton",
+                    "venue_type": "pub",
+                    "status": "needs_call",
+                },
+                "accessibility": {
+                    "accessible_toilet": "yes",
+                    "step_free_entrance": "no",
+                    "source": "phone_verified",
+                    "confidence_score": 74,
+                },
+                "mark_verified": True,
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(create_response.status_code, 201)
+        created_payload = create_response.get_json()["place"]
+        place_id = created_payload["id"]
+        self.assertEqual(created_payload["name"], "Writable Venue")
+        self.assertTrue(created_payload["verified"])
+
+        update_response = self.client.patch(
+            f"/api/v1/places/{place_id}",
+            json={
+                "accessibility": {
+                    "step_free_entrance": "yes",
+                    "public_comments": "Recently verified by staff",
+                    "confidence_score": 91,
+                }
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        with app.app_context():
+            saved_place = db.session.get(Place, place_id)
+            saved_profile = saved_place.accessibility
+        self.assertEqual(saved_place.status, "verified")
+        self.assertEqual(saved_profile.accessible_toilet, "yes")
+        self.assertEqual(saved_profile.step_free_entrance, "yes")
+        self.assertEqual(saved_profile.source, "phone_verified")
+        self.assertEqual(saved_profile.confidence_score, 91)
+        self.assertEqual(saved_profile.public_comments, "Recently verified by staff")
+        self.assertEqual(saved_profile.last_verified_by, "writer-staff@example.com")
+
+    def test_staff_api_key_accepts_nested_verification_payload(self):
+        with app.app_context():
+            staff = User(email="nested-writer@example.com", name="Nested Writer", picture="", role="staff", plan="free")
+            db.session.add(staff)
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(staff, label="Nested staff write key")
+            db.session.commit()
+
+        response = self.client.post(
+            "/api/v1/places",
+            json={
+                "place": {
+                    "name": "Nested Venue",
+                    "town": "Northampton",
+                },
+                "verification": {
+                    "mark_verified": True,
+                    "source": "staff_api",
+                    "confidence_score": 88,
+                },
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        place_id = response.get_json()["place"]["id"]
+        with app.app_context():
+            saved_place = db.session.get(Place, place_id)
+            saved_profile = saved_place.accessibility
+        self.assertEqual(saved_place.status, "verified")
+        self.assertEqual(saved_profile.source, "staff_api")
+        self.assertEqual(saved_profile.confidence_score, 88)
+        self.assertEqual(saved_profile.last_verified_by, "nested-writer@example.com")
+
+    def test_invalid_verification_payload_returns_400(self):
+        with app.app_context():
+            staff = User(email="invalid-verification@example.com", name="Invalid Verification", picture="", role="staff", plan="free")
+            db.session.add(staff)
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(staff, label="Invalid verification key")
+            db.session.commit()
+
+        response = self.client.post(
+            "/api/v1/places",
+            json={
+                "place": {
+                    "name": "Broken Verification Venue",
+                    "town": "Northampton",
+                },
+                "verification": {
+                    "mark_verified": True,
+                    "unexpected": "nope",
+                },
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "invalid_payload",
+                "message": "Unknown verification field(s): unexpected.",
+            },
+        )
+
+    def test_normal_api_key_cannot_write_place_data(self):
+        with app.app_context():
+            user = User(email="readonly-business@example.com", name="Readonly Business", picture="", role="member", plan="business")
+            place = Place(name="Readonly Venue", slug="readonly-venue", town="Northampton")
+            db.session.add_all([user, place])
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Readonly key")
+            db.session.commit()
+            place_id = place.id
+
+        response = self.client.patch(
+            f"/api/v1/places/{place_id}",
+            json={"accessibility": {"accessible_toilet": "yes"}},
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "invalid_api_key",
+                "message": "This API key does not have access to this write endpoint.",
+            },
+        )
+
+    def test_invalid_api_key_is_rejected_for_write_endpoint(self):
+        response = self.client.patch(
+            "/api/v1/places/999",
+            json={"accessibility": {"accessible_toilet": "yes"}},
+            headers={"Authorization": "Bearer plnr_test_abcdefghijklmnopqrstuvwxyz123456"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "error": "invalid_api_key",
+                "message": "The API key could not be verified.",
             },
         )
 
@@ -1698,21 +2682,37 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             self.assertIsNone(APIKey.query.filter_by(label="Blocked dev key").first())
 
-    def test_staff_can_manage_user_api_keys(self):
+    def test_customer_api_key_management_is_admin_only(self):
         with app.app_context():
             owner = User(email="managed@example.com", name="Managed User", picture="", role="member", plan="business")
+            admin = User(email="admin-managed@example.com", name="Admin User", picture="", role="admin", plan="admin")
             staff = User(email="staff@example.com", name="Staff User", picture="", role="staff", plan="free")
-            db.session.add_all([owner, staff])
+            db.session.add_all([owner, admin, staff])
             db.session.commit()
             owner_id = owner.id
 
         self.login_session("staff@example.com", "Staff User")
+        denied_response = self.client.post(
+            f"/admin/users/{owner_id}/api-keys",
+            data={
+                "csrf_token": "token123",
+                "label": "Managed key",
+                "scopes": "places:read",
+                "monthly_lookup_limit": "5",
+                "lookup_credits": "2",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(denied_response.status_code, 200)
+        self.assertIn(b"Admin access required.", denied_response.data)
+
+        self.login_session("admin-managed@example.com", "Admin User")
         create_response = self.client.post(
             f"/admin/users/{owner_id}/api-keys",
             data={
                 "csrf_token": "token123",
                 "label": "Managed key",
-                "scopes": "search:read,places:read",
+                "scopes": "places:read",
                 "monthly_lookup_limit": "5",
                 "lookup_credits": "2",
             },

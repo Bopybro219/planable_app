@@ -25,16 +25,10 @@
               <label for="home-town">Town</label>
               <input id="home-town" name="town" placeholder="Northampton" value="{{ town }}">
             </div>
-            <div class="field-group field-group-secondary">
-              <label for="home-accessible">Accessibility filter</label>
-              <select id="home-accessible" name="accessible">
-                <option value="">Any accessible toilet</option>
-                <option value="yes" {% if accessible == 'yes' %}selected{% endif %}>Show places with an accessible toilet</option>
-              </select>
-            </div>
+
             <div class="field-group field-group-action">
               <span class="field-label-spacer" aria-hidden="true">Action</span>
-              <button class="btn-primary-planira hero-search-button">{{ 'Search places' if current_user else 'Continue with Google' }}</button>
+              <button class="btn-primary-planira hero-search-button">Search places</button>
             </div>
           </div>
         </div>
@@ -46,6 +40,11 @@
           Search starts here, then Google sign-in unlocks results, place pages, and contribution tools.
       {% endif %}
       </div>
+      {% if not current_user %}
+        <div class="page-head-actions">
+          <a class="btn-secondary-planira" href="{{ url_for('login') }}">Continue with Google</a>
+        </div>
+      {% endif %}
     </div>
   </article>
 </section>

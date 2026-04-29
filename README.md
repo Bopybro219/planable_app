@@ -182,6 +182,10 @@ Run the test suite with:
 pytest
 ```
 
+## API docs
+
+The current API documentation lives in [docs/api.md](docs/api.md).
+
 ## Production hardening included
 
 - CSRF protection on app forms

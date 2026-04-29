@@ -1872,26 +1872,28 @@ textarea:focus-visible,
    ================================================== */
 
 :root {
-  --color-canvas: #f5f7f4;
-  --color-canvas-strong: #edf1ec;
-  --color-surface: rgba(255, 255, 255, 0.9);
+  --color-canvas: #f5f7ff;
+  --color-canvas-strong: #eef3ff;
+  --color-surface: rgba(255, 255, 255, 0.92);
   --color-surface-strong: #ffffff;
-  --color-surface-soft: #f8fbf9;
-  --color-text: #183036;
-  --color-text-strong: #102329;
-  --color-muted: #5f7478;
-  --color-border: rgba(24, 48, 54, 0.1);
-  --color-border-strong: rgba(24, 48, 54, 0.18);
-  --color-primary: #2c7a7b;
-  --color-primary-strong: #195b5c;
-  --color-primary-soft: rgba(44, 122, 123, 0.1);
-  --color-secondary-soft: rgba(198, 170, 146, 0.16);
-  --color-success: #1f8f68;
-  --color-success-soft: rgba(31, 143, 104, 0.12);
-  --color-warning: #a56a17;
+  --color-surface-soft: #f8faff;
+  --color-text: #0f172a;
+  --color-text-strong: #020617;
+  --color-muted: #64748b;
+  --color-border: rgba(37, 99, 235, 0.1);
+  --color-border-strong: rgba(124, 58, 237, 0.2);
+  --color-primary: #2563eb;
+  --color-primary-strong: #0f172a;
+  --color-primary-soft: rgba(37, 99, 235, 0.1);
+  --color-secondary-soft: rgba(192, 38, 211, 0.08);
+  --color-success: #22c55b;
+  --color-success-soft: rgba(34, 197, 91, 0.12);
+  --color-warning: #f59e0b;
   --color-warning-soft: rgba(245, 158, 11, 0.14);
-  --color-danger: #b45353;
-  --color-danger-soft: rgba(180, 83, 83, 0.12);
+  --color-danger: #ef4444;
+  --color-danger-soft: rgba(239, 68, 68, 0.12);
+  --gradient-ui: linear-gradient(135deg, #2563eb 0%, #06b6f4 35%, #7c3aed 70%, #c026d3 100%);
+  --gradient-logo: linear-gradient(135deg, #06b6f4 0%, #2563eb 35%, #7c3aed 75%, #c026d3 100%);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -1910,24 +1912,25 @@ textarea:focus-visible,
 
 body.planira-theme-calm {
   background:
-    radial-gradient(circle at top left, rgba(44, 122, 123, 0.08), transparent 24%),
-    radial-gradient(circle at top right, rgba(198, 170, 146, 0.12), transparent 22%),
-    linear-gradient(180deg, #f8faf8 0%, #f4f7f4 44%, #eef3ee 100%);
+    radial-gradient(circle at top left, rgba(6, 182, 244, 0.1), transparent 22%),
+    radial-gradient(circle at top right, rgba(192, 38, 211, 0.1), transparent 20%),
+    radial-gradient(circle at 50% 0%, rgba(124, 58, 237, 0.08), transparent 28%),
+    linear-gradient(180deg, #fbfcff 0%, #f5f7ff 48%, #eef4ff 100%);
   color: var(--color-text);
 }
 
 body.planira-theme-calm .ambient-grid {
   background-image:
-    linear-gradient(rgba(24, 48, 54, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(24, 48, 54, 0.035) 1px, transparent 1px);
+    linear-gradient(rgba(37, 99, 235, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.04) 1px, transparent 1px);
 }
 
 body.planira-theme-calm .ambient-orb-one {
-  background: radial-gradient(circle, rgba(44, 122, 123, 0.12), transparent 70%);
+  background: radial-gradient(circle, rgba(6, 182, 244, 0.16), transparent 70%);
 }
 
 body.planira-theme-calm .ambient-orb-two {
-  background: radial-gradient(circle, rgba(198, 170, 146, 0.18), transparent 72%);
+  background: radial-gradient(circle, rgba(192, 38, 211, 0.14), transparent 72%);
 }
 
 body.planira-theme-calm .muted,
@@ -1989,7 +1992,7 @@ body.planira-theme-calm .admin-search-panel,
 body.planira-theme-calm .admin-stat-card,
 body.planira-theme-calm .stats div,
 body.planira-theme-calm .flash {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(249, 252, 250, 0.94));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 248, 255, 0.97));
   color: var(--color-text);
   border-color: var(--color-border);
   box-shadow: var(--shadow-soft);
@@ -2001,32 +2004,38 @@ body.planira-theme-calm .hero-card,
 body.planira-theme-calm .search-control-panel,
 body.planira-theme-calm .hero-stat-panel {
   background:
-    radial-gradient(circle at top right, rgba(44, 122, 123, 0.12), transparent 34%),
-    radial-gradient(circle at bottom left, rgba(198, 170, 146, 0.14), transparent 30%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 247, 0.98));
+    radial-gradient(circle at top right, rgba(192, 38, 211, 0.12), transparent 32%),
+    radial-gradient(circle at bottom left, rgba(6, 182, 244, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(245, 248, 255, 0.99));
   box-shadow: var(--shadow-panel);
 }
 
 body.planira-theme-calm .planira-topbar,
 body.planira-theme-calm .planira-mobile-menu,
 body.planira-theme-calm .planira-footer {
-  background: rgba(245, 248, 245, 0.84);
-  border-color: rgba(24, 48, 54, 0.08);
+  background: rgba(245, 247, 255, 0.86);
+  border-color: rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(18px);
 }
 
 body.planira-theme-calm .brand-mark,
 body.planira-theme-calm .account-avatar,
 body.planira-theme-calm .profile-avatar {
-  background: linear-gradient(135deg, #2c7a7b, #7db4a4 72%, #d8c2ad 100%);
+  background: var(--gradient-logo);
   color: #ffffff;
-  box-shadow: 0 16px 32px rgba(44, 122, 123, 0.18);
+  box-shadow: 0 16px 32px rgba(37, 99, 235, 0.18);
+}
+
+body.planira-theme-calm .planira-logo .brand-mark {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
 }
 
 body.planira-theme-calm .planira-nav-link,
 body.planira-theme-calm .planira-staff-dropdown-toggle,
 body.planira-theme-calm .nav a {
-  background: rgba(255, 255, 255, 0.64);
+  background: rgba(255, 255, 255, 0.72);
   color: var(--color-muted);
   border-color: transparent;
 }
@@ -2036,18 +2045,18 @@ body.planira-theme-calm .planira-nav-link:not(.planira-nav-link-active):hover,
 body.planira-theme-calm .planira-staff-dropdown-toggle:hover,
 body.planira-theme-calm .nav a:hover {
   background: var(--color-primary-soft);
-  color: var(--color-primary-strong);
-  border-color: rgba(44, 122, 123, 0.16);
+  color: var(--color-primary);
+  border-color: rgba(37, 99, 235, 0.16);
 }
 
 body.planira-theme-calm button,
 body.planira-theme-calm .btn,
 body.planira-theme-calm .btn-primary-planira,
 body.planira-theme-calm .planira-button-primary {
-  background: linear-gradient(135deg, #2c7a7b, #3f8e87);
+  background: var(--gradient-ui);
   color: #ffffff !important;
   border-color: transparent;
-  box-shadow: 0 14px 28px rgba(44, 122, 123, 0.2);
+  box-shadow: 0 16px 32px rgba(37, 99, 235, 0.2);
 }
 
 body.planira-theme-calm .btn-secondary,
@@ -2055,24 +2064,24 @@ body.planira-theme-calm .btn-secondary-planira,
 body.planira-theme-calm .planira-button-secondary,
 body.planira-theme-calm .planira-button-quiet,
 body.planira-theme-calm .planira-mobile-toggle {
-  background: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.9);
   color: var(--color-text);
-  border-color: var(--color-border);
+  border-color: rgba(100, 116, 139, 0.2);
   box-shadow: none;
 }
 
 body.planira-theme-calm .btn-ghost-planira,
 body.planira-theme-calm .planira-button-admin {
-  background: rgba(44, 122, 123, 0.08);
-  color: var(--color-primary-strong);
-  border-color: rgba(44, 122, 123, 0.16);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-primary);
+  border-color: rgba(37, 99, 235, 0.16);
   box-shadow: none;
 }
 
 body.planira-theme-calm .planira-button-danger {
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  border-color: rgba(180, 83, 83, 0.18);
+  border-color: rgba(239, 68, 68, 0.18);
   box-shadow: none;
 }
 
@@ -2102,9 +2111,9 @@ body.planira-theme-calm .admin-user-card-v2:hover {
 body.planira-theme-calm input,
 body.planira-theme-calm select,
 body.planira-theme-calm textarea {
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--color-text);
-  border: 1px solid rgba(24, 48, 54, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.18);
   border-radius: var(--radius-md);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
@@ -2117,27 +2126,27 @@ body.planira-theme-calm textarea::placeholder {
 body.planira-theme-calm input:focus,
 body.planira-theme-calm select:focus,
 body.planira-theme-calm textarea:focus {
-  border-color: rgba(44, 122, 123, 0.44);
-  box-shadow: 0 0 0 4px rgba(44, 122, 123, 0.12);
+  border-color: rgba(37, 99, 235, 0.44);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
   outline: none;
 }
 
 body.planira-theme-calm .planira-search-bar {
-  background: linear-gradient(180deg, rgba(239, 246, 243, 0.92), rgba(230, 238, 234, 0.92));
-  border-color: rgba(44, 122, 123, 0.12);
+  background: linear-gradient(180deg, rgba(244, 247, 255, 0.96), rgba(237, 242, 255, 0.96));
+  border-color: rgba(37, 99, 235, 0.12);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 body.planira-theme-calm .planira-search-bar:focus-within {
-  border-color: rgba(44, 122, 123, 0.26);
+  border-color: rgba(37, 99, 235, 0.26);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    0 0 0 4px rgba(44, 122, 123, 0.08);
+    0 0 0 4px rgba(37, 99, 235, 0.08);
 }
 
 body.planira-theme-calm .search-form-home select,
 body.planira-theme-calm .search-form-inline select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23195b5c' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%232563EB' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 body.planira-theme-calm .planira-chip,
@@ -2151,9 +2160,9 @@ body.planira-theme-calm .callout-chip,
 body.planira-theme-calm .pill,
 body.planira-theme-calm .venue-type,
 body.planira-theme-calm .result-card-timestamp {
-  background: rgba(44, 122, 123, 0.08);
-  color: var(--color-primary-strong);
-  border-color: rgba(44, 122, 123, 0.14);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-primary);
+  border-color: rgba(37, 99, 235, 0.14);
 }
 
 body.planira-theme-calm .badge-verified,
@@ -2163,7 +2172,7 @@ body.planira-theme-calm .ok,
 body.planira-theme-calm .quick-answer-item-positive {
   background: var(--color-success-soft);
   color: var(--color-success);
-  border-color: rgba(31, 143, 104, 0.18);
+  border-color: rgba(34, 197, 91, 0.18);
 }
 
 body.planira-theme-calm .badge-warning,
@@ -2174,14 +2183,14 @@ body.planira-theme-calm .callout-chip-warning,
 body.planira-theme-calm .quick-answer-item-warning {
   background: var(--color-warning-soft);
   color: var(--color-warning);
-  border-color: rgba(165, 106, 23, 0.18);
+  border-color: rgba(245, 158, 11, 0.18);
 }
 
 body.planira-theme-calm .status-difficult,
 body.planira-theme-calm .chip-tricky {
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  border-color: rgba(180, 83, 83, 0.18);
+  border-color: rgba(239, 68, 68, 0.18);
 }
 
 body.planira-theme-calm .chip-neutral,
@@ -2194,9 +2203,9 @@ body.planira-theme-calm .quick-answer-item-neutral {
 body.planira-theme-calm .signal-summary-card-priority,
 body.planira-theme-calm .detail-card-priority {
   background:
-    radial-gradient(circle at top right, rgba(198, 170, 146, 0.12), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 247, 0.98));
-  border-color: rgba(44, 122, 123, 0.16);
+    radial-gradient(circle at top right, rgba(192, 38, 211, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.98));
+  border-color: rgba(37, 99, 235, 0.16);
 }
 
 body.planira-theme-calm .confidence-track,
@@ -2206,7 +2215,7 @@ body.planira-theme-calm .progress-track {
 
 body.planira-theme-calm .confidence-track span,
 body.planira-theme-calm .progress-track span {
-  background: linear-gradient(90deg, #2c7a7b, #7db4a4);
+  background: var(--gradient-ui);
 }
 
 body.planira-theme-calm .metric-card strong,
@@ -2222,7 +2231,7 @@ body.planira-theme-calm .hero-greeting {
 
 body.planira-theme-calm .page-link.active,
 body.planira-theme-calm .tab-button.active {
-  background: var(--color-primary);
+  background: var(--gradient-ui);
   color: #ffffff;
   border-color: transparent;
 }
@@ -2233,11 +2242,11 @@ body.planira-theme-calm .tab-button.danger {
 
 body.planira-theme-calm .planira-footer-links a:hover,
 body.planira-theme-calm .planira-staff-menu-link:hover {
-  color: var(--color-primary-strong);
+  color: var(--color-primary);
 }
 
 body.planira-theme-calm .planira-staff-menu-link:hover {
-  background: rgba(44, 122, 123, 0.08);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 body.planira-theme-calm .table-row,
@@ -2317,23 +2326,23 @@ body.planira-theme-calm .empty-state {
 }
 
 body.planira-theme-calm .search-active-filters span {
-  background: rgba(44, 122, 123, 0.08);
-  color: var(--color-primary-strong);
-  border-color: rgba(44, 122, 123, 0.14);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--color-primary);
+  border-color: rgba(37, 99, 235, 0.14);
 }
 
 body.planira-theme-calm .search-advanced-panel {
-  background: rgba(244, 248, 246, 0.9);
-  border-color: rgba(24, 48, 54, 0.09);
+  background: rgba(247, 249, 255, 0.92);
+  border-color: rgba(37, 99, 235, 0.08);
 }
 
 body.planira-theme-calm .search-filter-group h3 {
-  color: var(--color-primary-strong);
+  color: var(--color-primary);
 }
 
 body.planira-theme-calm .quick-answer-item {
-  background: rgba(248, 251, 250, 0.9);
-  border-color: rgba(24, 48, 54, 0.08);
+  background: rgba(249, 251, 255, 0.92);
+  border-color: rgba(37, 99, 235, 0.08);
 }
 
 body.planira-theme-calm .comment-form textarea {
@@ -2342,11 +2351,11 @@ body.planira-theme-calm .comment-form textarea {
 
 body.planira-theme-calm .admin-search-state,
 body.planira-theme-calm .admin-detail-block {
-  border-color: rgba(24, 48, 54, 0.08);
+  border-color: rgba(37, 99, 235, 0.08);
 }
 
 body.planira-theme-calm .admin-user-card-v2::before {
-  background: linear-gradient(180deg, rgba(44, 122, 123, 0.76), rgba(198, 170, 146, 0.7));
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.76), rgba(192, 38, 211, 0.72));
 }
 
 body.planira-theme-calm .developer-key-panel code,
@@ -2359,8 +2368,8 @@ body.planira-theme-calm pre {
   margin: 0;
   padding: 18px;
   overflow: auto;
-  background: #f3f7f6;
-  border: 1px solid rgba(24, 48, 54, 0.08);
+  background: #f5f7ff;
+  border: 1px solid rgba(37, 99, 235, 0.08);
   border-radius: 18px;
 }
 
@@ -2383,7 +2392,7 @@ body.planira-theme-calm .planira-nav-wrap {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   padding-inline: 0;
 }
 
@@ -2406,16 +2415,26 @@ body.planira-theme-calm .planira-nav-search .btn-primary-planira {
 }
 
 body.planira-theme-calm .planira-nav-secondary {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
 body.planira-theme-calm .planira-user-menu {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
+  min-width: max-content;
 }
 
 body.planira-theme-calm .planira-account-dropdown {
   position: relative;
+}
+
+body.planira-theme-calm .planira-user-menu .planira-staff-dropdown {
+  flex: 0 0 auto;
 }
 
 body.planira-theme-calm .account-chip-button {
@@ -2425,6 +2444,7 @@ body.planira-theme-calm .account-chip-button {
   border-color: var(--color-border);
   box-shadow: none;
   color: var(--color-text) !important;
+  white-space: nowrap;
 }
 
 body.planira-theme-calm .account-chip-button::after {
@@ -2442,9 +2462,19 @@ body.planira-theme-calm .planira-account-menu {
   display: grid;
   gap: 6px;
   min-width: 220px;
+  max-width: 280px;
   padding: 10px;
   border: 1px solid var(--color-border);
   border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-lift);
+  backdrop-filter: blur(14px);
+}
+
+body.planira-theme-calm .planira-staff-menu {
+  min-width: 220px;
+  max-width: 280px;
+  border-color: var(--color-border);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow-lift);
   backdrop-filter: blur(14px);
@@ -2503,7 +2533,7 @@ body.planira-theme-calm .copy-phone-button {
   border: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--color-primary-strong) !important;
+  color: var(--color-primary) !important;
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 0.18em;
@@ -2518,8 +2548,8 @@ body.planira-theme-calm .checkbox-pill {
 
 body.planira-theme-calm .accent-panel {
   background:
-    radial-gradient(circle at top right, rgba(198, 170, 146, 0.14), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 249, 247, 0.97));
+    radial-gradient(circle at top right, rgba(192, 38, 211, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 248, 255, 0.97));
 }
 
 body.planira-theme-calm .centered-panel {
@@ -2567,7 +2597,7 @@ body.planira-theme-calm .planira-nav-link:focus-visible,
 body.planira-theme-calm .tab-button:focus-visible,
 body.planira-theme-calm .page-link:focus-visible,
 body.planira-theme-calm .planira-staff-dropdown-toggle:focus-visible {
-  outline: 3px solid rgba(44, 122, 123, 0.34);
+  outline: 3px solid rgba(37, 99, 235, 0.3);
   outline-offset: 2px;
 }
 
