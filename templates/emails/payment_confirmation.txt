@@ -1,0 +1,10 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+Your Planira access is active
+
+Hello {{ user_name }}.
+
+{{ plan_name }} is now active on your Planira account.
+
+Stripe remains the source of truth for payment records, so if anything looks wrong, contact support and the team can review it safely.
+{% endblock %}

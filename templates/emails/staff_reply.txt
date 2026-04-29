@@ -1,0 +1,10 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+Reply from Planira support
+
+Hello {{ contact_message.name }}.
+
+Planira has reviewed your message about "{{ contact_message.subject }}".
+
+{{ reply_body }}
+{% endblock %}

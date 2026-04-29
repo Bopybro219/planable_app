@@ -1,0 +1,8 @@
+{{ brand_name }}
+Know before you go.
+
+{% block email_content %}{% endblock %}
+
+--
+{{ brand_name }}{% if support_email %} · {{ support_email }}{% endif %}{% if contact_phone %} · {{ contact_phone }}{% endif %}
+{% block email_footer %}{% endblock %}

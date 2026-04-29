@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Support Inbox | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Support inbox</span>
+    <h1>Incoming contact messages</h1>
+    <p class="page-subtitle">Review public support messages, reply carefully, and close the thread only when the team is finished.</p>
+  </div>
+</section>
+
+<section class="metric-grid">
+  <article class="planira-stat-card"><span>New</span><strong>{{ support_stats.new }}</strong></article>
+  <article class="planira-stat-card"><span>Open</span><strong>{{ support_stats.open }}</strong></article>
+  <article class="planira-stat-card"><span>Replied</span><strong>{{ support_stats.replied }}</strong></article>
+  <article class="planira-stat-card"><span>Closed</span><strong>{{ support_stats.closed }}</strong></article>
+</section>
+
+<section class="surface-panel">
+  <form class="admin-search-form admin-search-form-compact" action="{{ url_for('admin_support') }}" method="get">
+    <div class="field-group">
+      <label for="support-status-filter">Status</label>
+      <select id="support-status-filter" name="status">
+        <option value="all" {% if status_filter == 'all' %}selected{% endif %}>All</option>
+        <option value="new" {% if status_filter == 'new' %}selected{% endif %}>New</option>
+        <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+        <option value="replied" {% if status_filter == 'replied' %}selected{% endif %}>Replied</option>
+        <option value="closed" {% if status_filter == 'closed' %}selected{% endif %}>Closed</option>
+      </select>
+    </div>
+    <div class="admin-search-actions">
+      <button class="planira-button-primary" type="submit">Apply</button>
+      <a class="planira-button-quiet" href="{{ url_for('admin_support') }}">Clear</a>
+    </div>
+  </form>
+</section>
+
+<section class="table-shell surface-panel">
+  <div class="table-list">
+    {% for row in support_rows %}
+      <article class="table-row">
+        <div>
+          <strong>{{ row.message.subject }}</strong>
+          <p class="muted">{{ row.message.name }} · {{ row.message.email }}</p>
+        </div>
+        <div>
+          <strong>{{ row.message.status|replace('_', ' ')|title }}</strong>
+          <p class="muted">{{ row.created_at_label }}</p>
+        </div>
+        <div class="row-actions">
+          <a class="btn-primary-planira btn-small" href="{{ url_for('admin_support_detail', message_id=row.message.id) }}">Open</a>
+        </div>
+      </article>
+    {% else %}
+      <article class="empty-state">
+        <span class="eyebrow">Inbox clear</span>
+        <h2>No support messages match that filter.</h2>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

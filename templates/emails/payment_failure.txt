@@ -1,0 +1,10 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+There was a payment update on your account
+
+Hello {{ user_name }}.
+
+Planira received a payment failure update from Stripe. Your access may have changed, and it is worth checking your account when convenient.
+
+If you need help, reply through the support form and the team can review the account safely.
+{% endblock %}

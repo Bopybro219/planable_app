@@ -1,0 +1,7 @@
+{% extends 'emails/base.html' %}
+{% block email_content %}
+<h1 style="margin-top:0;">New support message</h1>
+<p><strong>From:</strong> {{ contact_message.name }} · {{ contact_message.email }}</p>
+<p><strong>Subject:</strong> {{ contact_message.subject }}</p>
+<p>{{ contact_message.message }}</p>
+{% endblock %}

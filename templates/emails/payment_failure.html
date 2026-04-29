@@ -1,0 +1,7 @@
+{% extends 'emails/base.html' %}
+{% block email_content %}
+<h1 style="margin-top:0;">There was a payment update on your account</h1>
+<p>Hello {{ user_name }}.</p>
+<p>Planira received a payment failure update from Stripe. Your access may have changed, and it is worth checking your account when convenient.</p>
+<p>If you need help, reply through the support form and the team can review the account safely.</p>
+{% endblock %}

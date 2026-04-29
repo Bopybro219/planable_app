@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% block title %}Newsletter Admin | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Newsletter admin</span>
+    <h1>Drafts and subscriber overview</h1>
+    <p class="page-subtitle">This workspace is for opt-in newsletter administration only. No bulk sending is exposed here.</p>
+  </div>
+</section>
+
+<section class="metric-grid">
+  <article class="planira-stat-card"><span>Subscribed</span><strong>{{ subscriber_count }}</strong></article>
+  <article class="planira-stat-card"><span>Newsletter sending</span><strong>{{ 'Enabled' if newsletter_enabled else 'Disabled' }}</strong></article>
+  <article class="planira-stat-card"><span>Your status</span><strong>{{ newsletter_status.label }}</strong></article>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <span class="eyebrow">Create draft</span>
+    <h2>Newsletter draft</h2>
+    <form method="post" action="{{ url_for('create_newsletter_draft') }}" class="comment-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-group">
+        <label for="newsletter-draft-subject">Subject</label>
+        <input id="newsletter-draft-subject" name="subject" maxlength="255" required>
+      </div>
+      <div class="field-group">
+        <label for="newsletter-draft-body">Body</label>
+        <textarea id="newsletter-draft-body" name="body_text" maxlength="12000" required></textarea>
+      </div>
+      <button class="btn-primary-planira" type="submit">Save draft</button>
+    </form>
+  </article>
+
+  <article class="surface-panel">
+    <span class="eyebrow">Recent subscribers</span>
+    <h2>Latest opt-ins</h2>
+    <div class="stack-list">
+      {% for subscriber in subscribers %}
+        <div class="stack-row">
+          <strong>{{ subscriber.email }}</strong>
+          <span>{{ subscriber.status|title }} · {{ subscriber.source or 'Unknown source' }}</span>
+        </div>
+      {% else %}
+        <div class="empty-inline">No subscribers yet.</div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="surface-panel">
+  <span class="eyebrow">Drafts</span>
+  <h2>Saved newsletter drafts</h2>
+  <div class="stack-list">
+    {% for row in draft_rows %}
+      <div class="stack-row">
+        <div>
+          <strong>{{ row.draft.subject }}</strong>
+          <p class="muted">{{ row.updated_at_label }} · {{ row.created_by_label }}</p>
+        </div>
+        <form method="post" action="{{ url_for('send_newsletter_test', draft_id=row.draft.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn-secondary-planira" type="submit">Send test to me</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="empty-inline">
+        <strong>No drafts yet</strong>
+        <p class="muted">Save the first draft above to test the newsletter shell.</p>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

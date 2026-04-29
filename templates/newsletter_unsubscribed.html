@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Newsletter preference | Planira{% endblock %}
+{% block content %}
+<section class="empty-state surface-panel centered-panel">
+  <span class="eyebrow">Newsletter</span>
+  {% if state == 'unsubscribed' %}
+    <h1>You’ve been unsubscribed</h1>
+    <p class="page-subtitle">Planira will stop sending newsletter emails to this address.</p>
+  {% elif state == 'already_unsubscribed' %}
+    <h1>This address is already unsubscribed</h1>
+    <p class="page-subtitle">No further action was needed.</p>
+  {% else %}
+    <h1>That unsubscribe link could not be verified</h1>
+    <p class="page-subtitle">If you still want help, use the contact form and the team can review it safely.</p>
+  {% endif %}
+  <div class="page-head-actions">
+    <a class="btn-primary-planira" href="{{ url_for('index') }}">Back home</a>
+    <a class="btn-secondary-planira" href="{{ url_for('contact') }}">Contact Planira</a>
+  </div>
+</section>
+{% endblock %}

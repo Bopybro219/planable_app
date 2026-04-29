@@ -1,0 +1,7 @@
+{% extends 'emails/base.html' %}
+{% block email_content %}
+<h1 style="margin-top:0;">Your Planira access is active</h1>
+<p>Hello {{ user_name }}.</p>
+<p>{{ plan_name }} is now active on your Planira account.</p>
+<p>Stripe remains the source of truth for payment records, so if anything looks wrong, contact support and the team can review it safely.</p>
+{% endblock %}

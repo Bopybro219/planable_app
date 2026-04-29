@@ -182,6 +182,22 @@
         <span class="eyebrow">Privacy and data</span>
         <h2>Important links for account questions</h2>
         <p class="helper-copy">These are the live routes that explain how Planira handles cookies, privacy, account data, and logout.</p>
+        <div class="surface-panel">
+          <span class="eyebrow">Newsletter</span>
+          <h3>Email update preference</h3>
+          <p class="muted">Current status: {{ settings_sections.newsletter.label }}.</p>
+          <p class="helper-copy">{{ settings_sections.newsletter.consent_text }}</p>
+          <form method="post" action="{{ url_for('update_account_newsletter') }}" class="page-head-actions">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if settings_sections.newsletter.status == 'subscribed' %}
+              <input type="hidden" name="action" value="unsubscribe">
+              <button type="submit" class="btn-secondary-planira">Unsubscribe</button>
+            {% else %}
+              <input type="hidden" name="action" value="subscribe">
+              <button type="submit" class="btn-primary-planira">Opt in</button>
+            {% endif %}
+          </form>
+        </div>
         <div class="action-list">
           <a class="action-card action-card-warning" href="{{ url_for('data_rights') }}">
             <span class="status-chip chip-warning">Data request guide</span>

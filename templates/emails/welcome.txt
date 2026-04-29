@@ -1,0 +1,10 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+Welcome to Planira
+
+Hello {{ user_name }}.
+
+Your account is ready. Planira starts with search and helps people gather practical venue context before they travel.
+
+You can sign in any time with the same Google account.
+{% endblock %}

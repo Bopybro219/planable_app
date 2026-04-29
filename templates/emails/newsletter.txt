@@ -1,0 +1,13 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+{{ heading }}
+
+{{ intro }}
+
+{{ body_text }}
+{% endblock %}
+{% block email_footer %}
+{% if unsubscribe_url %}
+Unsubscribe: {{ unsubscribe_url }}
+{% endif %}
+{% endblock %}

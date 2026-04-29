@@ -1,0 +1,9 @@
+{% extends 'emails/base.txt' %}
+{% block email_content %}
+New support message
+
+From: {{ contact_message.name }} · {{ contact_message.email }}
+Subject: {{ contact_message.subject }}
+
+{{ contact_message.message }}
+{% endblock %}

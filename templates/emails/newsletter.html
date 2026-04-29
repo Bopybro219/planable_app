@@ -1,0 +1,11 @@
+{% extends 'emails/base.html' %}
+{% block email_content %}
+<h1 style="margin-top:0;">{{ heading }}</h1>
+<p>{{ intro }}</p>
+{{ body_html|safe }}
+{% endblock %}
+{% block email_footer %}
+{% if unsubscribe_url %}
+<p style="margin:8px 0 0;"><a href="{{ unsubscribe_url }}">Unsubscribe</a></p>
+{% endif %}
+{% endblock %}

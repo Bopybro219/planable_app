@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f5f1ea;font-family:Arial,sans-serif;color:#24323a;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f1ea;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:100%;background:#ffffff;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="padding:28px 32px;background:#eef4f2;">
+                <strong style="font-size:22px;">{{ brand_name }}</strong>
+                <div style="font-size:14px;color:#516069;margin-top:6px;">Know before you go.</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px;">
+                {% block email_content %}{% endblock %}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px;background:#f7faf9;font-size:13px;color:#5e6f77;">
+                <p style="margin:0 0 8px;">{{ brand_name }}{% if support_email %} · {{ support_email }}{% endif %}{% if contact_phone %} · {{ contact_phone }}{% endif %}</p>
+                {% block email_footer %}{% endblock %}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

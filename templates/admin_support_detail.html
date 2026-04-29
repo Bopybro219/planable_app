@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Support Message | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Support message</span>
+    <h1>{{ contact_message.subject }}</h1>
+    <p class="page-subtitle">{{ contact_message.name }} · {{ contact_message.email }}</p>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn-secondary-planira" href="{{ url_for('admin_support') }}">Back to inbox</a>
+  </div>
+</section>
+
+<section class="dashboard-grid">
+  <article class="surface-panel">
+    <div class="stack-list">
+      <div class="stack-row"><strong>Status</strong><span>{{ contact_message.status|replace('_', ' ')|title }}</span></div>
+      <div class="stack-row"><strong>Created</strong><span>{{ contact_message.created_at.strftime('%d %b %Y %H:%M') if contact_message.created_at else 'Recently' }}</span></div>
+      <div class="stack-row"><strong>Handled by</strong><span>{{ contact_message.handled_by_user.email if contact_message.handled_by_user else 'Not assigned' }}</span></div>
+      <div class="stack-row"><strong>Reply sent</strong><span>{{ contact_message.reply_sent_at.strftime('%d %b %Y %H:%M') if contact_message.reply_sent_at else 'Not yet' }}</span></div>
+    </div>
+    <div class="surface-panel">
+      <strong>Message</strong>
+      <p>{{ contact_message.message }}</p>
+    </div>
+  </article>
+
+  <article class="surface-panel">
+    <form method="post" action="{{ url_for('admin_support_reply', message_id=contact_message.id) }}" class="comment-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-group">
+        <label for="support-reply-body">Reply</label>
+        <textarea id="support-reply-body" name="reply_body" maxlength="5000" required></textarea>
+      </div>
+      <button class="btn-primary-planira" type="submit">Send reply</button>
+    </form>
+
+    <form method="post" action="{{ url_for('admin_support_status', message_id=contact_message.id) }}" class="comment-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-group">
+        <label for="support-status">Status</label>
+        <select id="support-status" name="status">
+          <option value="new" {% if contact_message.status == 'new' %}selected{% endif %}>New</option>
+          <option value="open" {% if contact_message.status == 'open' %}selected{% endif %}>Open</option>
+          <option value="replied" {% if contact_message.status == 'replied' %}selected{% endif %}>Replied</option>
+          <option value="closed" {% if contact_message.status == 'closed' %}selected{% endif %}>Closed</option>
+        </select>
+      </div>
+      <button class="btn-secondary-planira" type="submit">Update status</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

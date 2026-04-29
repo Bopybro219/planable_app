@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% import '_turnstile.html' as turnstile %}
+{% block title %}Contact | Planira{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div class="page-title-group">
+    <span class="eyebrow">Contact</span>
+    <h1>Send a message to Planira</h1>
+    <p class="page-subtitle">Use this form for support, corrections, or account questions. Your message is reviewed inside the staff workspace.</p>
+  </div>
+</section>
+
+<section class="content-stack legal-grid">
+  <article class="surface-panel">
+    <form method="post" action="{{ url_for('contact') }}" class="comment-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-group">
+        <label for="contact-name">Name</label>
+        <input id="contact-name" name="name" maxlength="255" value="{{ form_values.name }}" required>
+      </div>
+      <div class="field-group">
+        <label for="contact-email">Email</label>
+        <input id="contact-email" name="email" type="email" maxlength="255" value="{{ form_values.email }}" required>
+      </div>
+      <div class="field-group">
+        <label for="contact-subject">Subject</label>
+        <input id="contact-subject" name="subject" maxlength="255" value="{{ form_values.subject }}" required>
+      </div>
+      <div class="field-group">
+        <label for="contact-message">Message</label>
+        <textarea id="contact-message" name="message" maxlength="5000" required>{{ form_values.message }}</textarea>
+        <p class="helper-copy">Keep it specific and practical so the staff team can respond clearly.</p>
+      </div>
+      {{ turnstile.widget(turnstile_contact, 'Contact anti-abuse check') }}
+      <button class="btn-primary-planira" type="submit">Send message</button>
+    </form>
+  </article>
+</section>
+{% endblock %}
