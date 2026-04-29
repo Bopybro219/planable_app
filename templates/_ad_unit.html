@@ -1,0 +1,19 @@
+{% if ads.enabled and ads.has_marketing_consent and slot and placement %}
+  <section
+    class="planira-ad-shell {% if variant %}planira-ad-shell-{{ variant }}{% endif %}"
+    data-ad-unit
+    data-ad-placement="{{ placement }}"
+    data-ad-slot="{{ slot }}"
+    data-ad-format="{{ ad_format or 'auto' }}"
+    data-ad-layout="{{ ad_layout or '' }}"
+    data-ad-responsive="{{ 'true' if responsive is not sameas(false) else 'false' }}"
+    data-ad-label="{{ label or 'Sponsored' }}"
+    data-ad-min-height="{{ min_height or 280 }}"
+    aria-label="{{ label or 'Sponsored' }}"
+  >
+    <div class="planira-ad-shell-header">
+      <span class="planira-ad-shell-label">{{ label or 'Sponsored' }}</span>
+    </div>
+    <div class="planira-ad-shell-body" data-ad-body></div>
+  </section>
+{% endif %}

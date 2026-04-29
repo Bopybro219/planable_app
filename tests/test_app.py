@@ -59,6 +59,12 @@ class AppSmokeTests(unittest.TestCase):
         self._original_mail_default_sender = app.config.get("MAIL_DEFAULT_SENDER")
         self._original_ga_measurement_id = app.config.get("GA_MEASUREMENT_ID")
         self._original_enable_analytics_in_dev = app.config.get("ENABLE_ANALYTICS_IN_DEV")
+        self._original_adsense_client_id = app.config.get("ADSENSE_CLIENT_ID")
+        self._original_adsense_enabled = app.config.get("ADSENSE_ENABLED")
+        self._original_enable_ads_in_dev = app.config.get("ENABLE_ADS_IN_DEV")
+        self._original_adsense_slot_search_results = app.config.get("ADSENSE_SLOT_SEARCH_RESULTS")
+        self._original_adsense_slot_place_detail = app.config.get("ADSENSE_SLOT_PLACE_DETAIL")
+        self._original_adsense_slot_footer = app.config.get("ADSENSE_SLOT_FOOTER")
         self._db_fd, self._db_path = tempfile.mkstemp(suffix=".sqlite")
         os.close(self._db_fd)
         self._upload_dir = tempfile.mkdtemp(prefix="planira-profile-images-")
@@ -82,6 +88,12 @@ class AppSmokeTests(unittest.TestCase):
         app.config["MAIL_DEFAULT_SENDER"] = "hello@planira.test"
         app.config["GA_MEASUREMENT_ID"] = "G-TEST1234"
         app.config["ENABLE_ANALYTICS_IN_DEV"] = True
+        app.config["ADSENSE_CLIENT_ID"] = "ca-pub-test123456789"
+        app.config["ADSENSE_ENABLED"] = True
+        app.config["ENABLE_ADS_IN_DEV"] = True
+        app.config["ADSENSE_SLOT_SEARCH_RESULTS"] = "1111111111"
+        app.config["ADSENSE_SLOT_PLACE_DETAIL"] = "2222222222"
+        app.config["ADSENSE_SLOT_FOOTER"] = "3333333333"
         app.extensions["email_outbox"] = []
         self.client = app.test_client()
 
@@ -114,6 +126,12 @@ class AppSmokeTests(unittest.TestCase):
         app.config["MAIL_DEFAULT_SENDER"] = self._original_mail_default_sender
         app.config["GA_MEASUREMENT_ID"] = self._original_ga_measurement_id
         app.config["ENABLE_ANALYTICS_IN_DEV"] = self._original_enable_analytics_in_dev
+        app.config["ADSENSE_CLIENT_ID"] = self._original_adsense_client_id
+        app.config["ADSENSE_ENABLED"] = self._original_adsense_enabled
+        app.config["ENABLE_ADS_IN_DEV"] = self._original_enable_ads_in_dev
+        app.config["ADSENSE_SLOT_SEARCH_RESULTS"] = self._original_adsense_slot_search_results
+        app.config["ADSENSE_SLOT_PLACE_DETAIL"] = self._original_adsense_slot_place_detail
+        app.config["ADSENSE_SLOT_FOOTER"] = self._original_adsense_slot_footer
         app.extensions["email_outbox"] = []
 
         with app.app_context():
@@ -167,6 +185,20 @@ class AppSmokeTests(unittest.TestCase):
             ),
         )
 
+    def create_place(self, *, name="Test Place", slug="test-place", town="Test Town"):
+        with app.app_context():
+            place = Place(name=name, slug=slug, town=town, address1="1 Test Street", postcode="NN1 1NN")
+            db.session.add(place)
+            db.session.commit()
+            return place.id
+
+    def create_user_and_login(self, email="member@example.com", name="Member User", role="member", plan="free"):
+        with app.app_context():
+            user = User(email=email, name=name, picture="", role=role, plan=plan)
+            db.session.add(user)
+            db.session.commit()
+        self.login_session(email, name)
+
     def test_health_endpoint(self):
         response = self.client.get("/health")
 
@@ -190,9 +222,10 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertIn(b"Transactional and support emails", privacy_response.data)
         self.assertIn(b"Minimal analytics only after consent", privacy_response.data)
+        self.assertIn(b"Advertising only after consent", privacy_response.data)
         self.assertIn(b"Consent preferences", cookies_response.data)
         self.assertNotIn(b"googletagmanager", privacy_response.data.lower())
-        self.assertIn(b"Google Ads is not active", cookies_response.data)
+        self.assertIn(b"advertising only loads after marketing consent", cookies_response.data)
 
     def test_robots_and_sitemap_routes_render_expected_public_entries(self):
         with app.app_context():
@@ -277,6 +310,117 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"window.track_event = trackEvent;", response.data)
         self.assertNotIn(b"googletagmanager.com/gtag/js", response.data)
+
+    def test_adsense_script_is_not_bootstrapped_before_marketing_consent(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", response.data)
+        self.assertIn(b"window.PlaniraAds = {", response.data)
+
+    def test_adsense_script_is_bootstrapped_after_marketing_consent(self):
+        self.set_consent_cookie(marketing=True)
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-test123456789", response.data)
+        self.assertIn(b'"autoload": true', response.data)
+
+    def test_adsense_does_not_bootstrap_when_client_id_missing(self):
+        app.config["ADSENSE_CLIENT_ID"] = ""
+
+        self.set_consent_cookie(marketing=True)
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", response.data)
+        self.assertIn(b'"enabled": false', response.data)
+
+    def test_admin_pages_do_not_bootstrap_ads_even_with_marketing_consent(self):
+        with app.app_context():
+            admin_user = User(email="admin-ads@example.com", name="Admin Ads", picture="", role="admin", plan="business")
+            db.session.add(admin_user)
+            db.session.commit()
+
+        self.login_session("admin-ads@example.com", "Admin Ads")
+        self.set_consent_cookie(marketing=True)
+
+        response = self.client.get("/admin/moderation")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", response.data)
+        self.assertNotIn(b'data-ad-placement="', response.data)
+
+    def test_search_page_renders_ad_shells_only_after_every_five_results_when_marketing_consented(self):
+        self.create_user_and_login(email="search-ads@example.com", name="Search Ads")
+        with app.app_context():
+            for index in range(6):
+                db.session.add(
+                    Place(
+                        name=f"Ad Search Place {index}",
+                        slug=f"ad-search-place-{index}",
+                        town="Ad Town",
+                        address1=f"{index} Market Street",
+                        postcode=f"NN1 1N{index}",
+                    )
+                )
+            db.session.commit()
+
+        self.set_consent_cookie(marketing=True)
+        response = self.client.get("/search?q=Ad+Search+Place&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'data-ad-placement="search_results"'), 1)
+        self.assertIn(b"planira-ad-shell-inline", response.data)
+        self.assertIn(b'data-ad-body', response.data)
+
+    def test_search_page_does_not_render_ad_shells_without_marketing_consent(self):
+        self.create_user_and_login(email="search-no-ads@example.com", name="Search No Ads")
+        with app.app_context():
+            for index in range(6):
+                db.session.add(
+                    Place(
+                        name=f"No Consent Place {index}",
+                        slug=f"no-consent-place-{index}",
+                        town="Quiet Town",
+                        address1=f"{index} Calm Street",
+                        postcode=f"NN2 2N{index}",
+                    )
+                )
+            db.session.commit()
+
+        response = self.client.get("/search?q=No+Consent+Place&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'data-ad-placement="search_results"', response.data)
+
+    def test_place_page_renders_detail_ad_shell_only_with_marketing_consent(self):
+        self.create_place(name="Accessible Cafe", slug="accessible-cafe", town="Northampton")
+        self.set_consent_cookie(marketing=True)
+
+        response = self.client.get("/place/accessible-cafe")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-ad-placement="place_detail"', response.data)
+        self.assertIn(b"Sponsored", response.data)
+
+    def test_place_page_does_not_render_detail_ad_shell_without_marketing_consent(self):
+        self.create_place(name="Quiet Library", slug="quiet-library", town="Northampton")
+
+        response = self.client.get("/place/quiet-library")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'data-ad-placement="place_detail"', response.data)
+
+    def test_marketing_consent_toggle_disables_future_ad_loads(self):
+        self.set_consent_cookie(marketing=True)
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"clearAdUnits();", response.data)
+        self.assertIn(b"dispatchConsentChanged(normalized);", response.data)
 
     def test_sqlite_fallback_still_works_when_database_url_missing(self):
         self.assertEqual(app_module.normalize_database_url(None), "sqlite:///planable.db")

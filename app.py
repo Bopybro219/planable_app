@@ -138,6 +138,7 @@ SENSITIVE_ANALYTICS_PARAM_KEYS = {
     "subject",
 }
 ANALYTICS_DISABLED_PATH_PREFIXES = ("/admin", "/staff", "/dashboard", "/obs")
+ADS_DISABLED_PATH_PREFIXES = PRIVATE_PATH_PREFIXES + ("/login",)
 
 
 def env_flag(name, default=False):
@@ -223,6 +224,12 @@ app.config["EMAIL_DEV_MODE"] = env_flag(
 app.config["NEWSLETTER_ENABLED"] = env_flag("NEWSLETTER_ENABLED", default=False)
 app.config["GA_MEASUREMENT_ID"] = os.getenv("GA_MEASUREMENT_ID", "").strip()
 app.config["ENABLE_ANALYTICS_IN_DEV"] = env_flag("ENABLE_ANALYTICS_IN_DEV", default=False)
+app.config["ADSENSE_CLIENT_ID"] = os.getenv("ADSENSE_CLIENT_ID", "").strip()
+app.config["ADSENSE_ENABLED"] = env_flag("ADSENSE_ENABLED", default=False)
+app.config["ENABLE_ADS_IN_DEV"] = env_flag("ENABLE_ADS_IN_DEV", default=False)
+app.config["ADSENSE_SLOT_SEARCH_RESULTS"] = os.getenv("ADSENSE_SLOT_SEARCH_RESULTS", "").strip()
+app.config["ADSENSE_SLOT_PLACE_DETAIL"] = os.getenv("ADSENSE_SLOT_PLACE_DETAIL", "").strip()
+app.config["ADSENSE_SLOT_FOOTER"] = os.getenv("ADSENSE_SLOT_FOOTER", "").strip()
 
 trusted_hosts = [host.strip() for host in os.getenv("TRUSTED_HOSTS", "").split(",") if host.strip()]
 if trusted_hosts:
@@ -1184,6 +1191,52 @@ def build_analytics_template_context():
     }
 
 
+def ads_enabled_for_environment():
+    if not app.config.get("ADSENSE_ENABLED"):
+        return False
+    if not app.config.get("ADSENSE_CLIENT_ID"):
+        return False
+    if app.config.get("ENVIRONMENT") == "production":
+        return True
+    return bool(app.config.get("ENABLE_ADS_IN_DEV"))
+
+
+def ads_allowed_on_request_path(path=None):
+    normalized_path = (path or request.path or "/").rstrip("/") or "/"
+    return not any(
+        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
+        for prefix in ADS_DISABLED_PATH_PREFIXES
+    )
+
+
+def ads_enabled_for_request():
+    return ads_enabled_for_environment() and ads_allowed_on_request_path()
+
+
+def build_ads_template_context():
+    consent = consent_cookie_preferences()
+    enabled = ads_enabled_for_request()
+    client_id = app.config.get("ADSENSE_CLIENT_ID", "")
+    has_marketing_consent = bool(enabled and consent.get("marketing"))
+    return {
+        "consent": consent,
+        "enabled": enabled,
+        "has_marketing_consent": has_marketing_consent,
+        "autoload": has_marketing_consent,
+        "client_id": client_id,
+        "script_src": (
+            f"https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={client_id}"
+            if has_marketing_consent and client_id
+            else ""
+        ),
+        "slots": {
+            "search_results": app.config.get("ADSENSE_SLOT_SEARCH_RESULTS", ""),
+            "place_detail": app.config.get("ADSENSE_SLOT_PLACE_DETAIL", ""),
+            "footer": app.config.get("ADSENSE_SLOT_FOOTER", ""),
+        },
+    }
+
+
 @app.context_processor
 def inject_user():
     user = current_user()
@@ -1205,6 +1258,7 @@ def inject_user():
         "turnstile_site_key": app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY", ""),
         "turnstile_enabled": turnstile_is_configured(),
         "analytics": build_analytics_template_context(),
+        "ads": build_ads_template_context(),
     }
 
 

@@ -187,6 +187,18 @@
         {% endfor %}
       </div>
     </article>
+
+    {% if ads.slots.place_detail %}
+      {% with
+        placement='place_detail',
+        slot=ads.slots.place_detail,
+        label='Sponsored',
+        min_height=280,
+        variant='detail'
+      %}
+        {% include '_ad_unit.html' %}
+      {% endwith %}
+    {% endif %}
   </div>
 
   <aside class="supporting-stack">

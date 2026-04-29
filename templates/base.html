@@ -429,7 +429,7 @@
           <div class="planira-consent-copy">
             <span class="eyebrow">Privacy choices</span>
             <h2 id="consent-title">Choose how Planira uses optional cookies</h2>
-            <p class="muted">Necessary cookies stay on for sign-in and security. Analytics stays off unless you say yes. Marketing is reserved for the future and stays off today.</p>
+            <p class="muted">Necessary cookies stay on for sign-in and security. Analytics stays off unless you say yes. Marketing stays off unless you allow advertising cookies.</p>
           </div>
           <div class="planira-consent-actions">
             <button type="button" class="planira-button-secondary btn-secondary-planira" data-consent-customize>Save preferences</button>
@@ -467,7 +467,7 @@
             <label class="planira-consent-option">
               <span>
                 <strong>Marketing</strong>
-                <small>Reserved for future use. Planira does not run ads today.</small>
+                <small>Allows advertising features such as Google AdSense on supported public pages. Ads stay off unless you opt in.</small>
               </span>
               <input type="checkbox" name="marketing" value="yes" data-consent-toggle="marketing">
             </label>
@@ -493,6 +493,7 @@
       }, 8000);
 
       const analyticsConfig = {{ analytics|tojson }};
+      const adsConfig = {{ ads|tojson }};
       const consentBanner = document.querySelector("[data-consent-banner]");
       const consentPanel = document.querySelector("[data-consent-panel]");
       const consentForm = document.querySelector("[data-consent-form]");
@@ -517,6 +518,9 @@
       const gaMeasurementId = analyticsConfig.measurement_id || "";
       const gaScriptSrc = analyticsConfig.script_src || "";
       const analyticsRuntimeEnabled = Boolean(analyticsConfig.enabled && gaMeasurementId);
+      const adsClientId = adsConfig.client_id || "";
+      const adsScriptSrc = adsConfig.script_src || "";
+      const adsRuntimeEnabled = Boolean(adsConfig.enabled && adsClientId);
 
       const normalizeConsent = (value) => ({
         version: value && typeof value.version === "number" ? value.version : 1,
@@ -592,9 +596,17 @@
         });
       };
 
+      const adContainers = () => Array.from(document.querySelectorAll("[data-ad-unit]"));
+
+      const dispatchConsentChanged = (consent) => {
+        window.dispatchEvent(new CustomEvent("planira:consent-changed", { detail: consent }));
+      };
+
       let gaLoaded = false;
+      let adsLoaded = false;
       window.dataLayer = window.dataLayer || [];
       window.gtag = window.gtag || function gtag(){ window.dataLayer.push(arguments); };
+      window.adsbygoogle = window.adsbygoogle || [];
 
       const loadGoogleAnalytics = () => {
         if (!analyticsRuntimeEnabled || gaLoaded || !gaScriptSrc) {
@@ -639,6 +651,81 @@
         deleteGaCookies();
       };
 
+      const loadAdSense = () => {
+        if (!adsRuntimeEnabled || adsLoaded || !adsScriptSrc) {
+          return false;
+        }
+        const existingScript = document.getElementById("planira-adsense-script");
+        if (existingScript) {
+          adsLoaded = true;
+          return true;
+        }
+        const script = document.createElement("script");
+        script.id = "planira-adsense-script";
+        script.async = true;
+        script.crossOrigin = "anonymous";
+        script.src = adsScriptSrc;
+        document.head.appendChild(script);
+        adsLoaded = true;
+        return true;
+      };
+
+      const clearAdUnits = () => {
+        adContainers().forEach((container) => {
+          const body = container.querySelector("[data-ad-body]");
+          if (body) body.replaceChildren();
+          container.dataset.adRendered = "false";
+          container.hidden = true;
+        });
+      };
+
+      const renderAdUnits = () => {
+        const consent = readConsent();
+        if (!adsRuntimeEnabled || !consent.marketing) {
+          clearAdUnits();
+          return false;
+        }
+        loadAdSense();
+        adContainers().forEach((container) => {
+          if (container.dataset.adRendered === "true") {
+            container.hidden = false;
+            return;
+          }
+          const body = container.querySelector("[data-ad-body]");
+          const slot = container.dataset.adSlot || "";
+          if (!body || !slot) {
+            container.hidden = true;
+            return;
+          }
+          const minHeight = parseInt(container.dataset.adMinHeight || "280", 10);
+          const ins = document.createElement("ins");
+          ins.className = "adsbygoogle";
+          ins.style.display = "block";
+          if (Number.isFinite(minHeight) && minHeight > 0) {
+            ins.style.minHeight = `${minHeight}px`;
+          }
+          ins.dataset.adClient = adsClientId;
+          ins.dataset.adSlot = slot;
+          ins.dataset.adFormat = container.dataset.adFormat || "auto";
+          if (container.dataset.adLayout) {
+            ins.dataset.adLayout = container.dataset.adLayout;
+          }
+          if ((container.dataset.adResponsive || "true") === "true") {
+            ins.dataset.fullWidthResponsive = "true";
+          }
+          body.replaceChildren(ins);
+          try {
+            (window.adsbygoogle = window.adsbygoogle || []).push({});
+            container.dataset.adRendered = "true";
+            container.hidden = false;
+          } catch (error) {
+            container.hidden = true;
+            console.warn("Planira ad unit could not be initialised.", error);
+          }
+        });
+        return true;
+      };
+
       const eventQueue = Array.isArray(analyticsConfig.events) ? analyticsConfig.events.slice() : [];
 
       const flushQueuedEvents = () => {
@@ -681,6 +768,10 @@
         trackEvent,
       };
       window.track_event = trackEvent;
+      window.PlaniraAds = {
+        load: renderAdUnits,
+        disable: clearAdUnits,
+      };
 
       const applyConsent = (value, { closePanel = true } = {}) => {
         const normalized = writeConsent(value);
@@ -692,13 +783,19 @@
         } else {
           disableGoogleAnalytics();
         }
+        if (normalized.marketing) {
+          renderAdUnits();
+        } else {
+          clearAdUnits();
+        }
+        dispatchConsentChanged(normalized);
         if (closePanel) closeConsentPanel();
         return normalized;
       };
 
       privacyButtons.forEach((button) => button.addEventListener("click", openConsentPanel));
       if (consentAcceptButton) {
-        consentAcceptButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: true, marketing: false }));
+        consentAcceptButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: true, marketing: true }));
       }
       if (consentRejectButton) {
         consentRejectButton.addEventListener("click", () => applyConsent({ version: 1, necessary: true, analytics: false, marketing: false }));
@@ -730,6 +827,11 @@
       if (analyticsConfig.autoload && initialConsent.analytics) {
         loadGoogleAnalytics();
         flushQueuedEvents();
+      }
+      if (adsConfig.autoload && initialConsent.marketing) {
+        renderAdUnits();
+      } else {
+        clearAdUnits();
       }
 
       const navToggle = document.querySelector("[data-nav-toggle]");

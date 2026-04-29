@@ -41,6 +41,10 @@
         <strong>Optional analytics</strong>
         <span>If Google Analytics 4 is enabled for a live environment, Planira only loads it after you opt in to analytics cookies. It is used for high-level product signals such as search submissions, place views, pricing views, contact submissions, OAuth sign-ins, and API key creation.</span>
       </div>
+      <div class="stack-row">
+        <strong>Optional advertising</strong>
+        <span>If Google AdSense is enabled on supported public pages, Planira only loads it after you opt in to marketing cookies. Planira does not load advertising scripts on admin, staff, account, or similar internal pages.</span>
+      </div>
     </div>
   </article>
 
@@ -75,6 +79,10 @@
         <strong>Minimal analytics only after consent</strong>
         <span>If analytics is enabled, Planira uses it only after you consent and only for aggregated product understanding. Planira does not send names, email addresses, support message content, or exact addresses to Google Analytics.</span>
       </div>
+      <div class="stack-row">
+        <strong>Advertising only after consent</strong>
+        <span>If advertising is enabled, Planira only loads Google AdSense after you consent to marketing cookies. Google may use cookies or similar technologies for personalised or non-personalised ads depending on your settings, location, and Google’s own systems.</span>
+      </div>
     </div>
   </article>
 
@@ -90,7 +98,7 @@
 
   <article class="surface-panel">
     <h2>What Planira does not claim</h2>
-    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. Planira does not run Google Ads today, does not use analytics before consent, and does not send personal details like names, email addresses, support messages, or exact addresses to analytics tools. If that changes later, these pages should be updated first. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
+    <p class="muted">Planira aims to be careful and clear, but this is still an early product. These pages describe the current system as it exists today. They are not meant to sound bigger or more polished than the implementation behind them. Planira does not load analytics or advertising before consent, does not place ads on internal staff or account pages, and does not send personal details like names, email addresses, support messages, or exact addresses to analytics tools. If the advertising setup changes later, these pages should be updated first. If you need help with an account or data question, use the contact details in the footer, including {{ contact_phone }}.</p>
   </article>
 </section>
 {% endblock %}

@@ -215,6 +215,17 @@
       <div class="card-grid">
         {% for card in result_cards %}
           {{ planira.result_card(card) }}
+          {% if loop.index % 5 == 0 and ads.slots.search_results %}
+            {% with
+              placement='search_results',
+              slot=ads.slots.search_results,
+              label='Sponsored',
+              min_height=280,
+              variant='inline'
+            %}
+              {% include '_ad_unit.html' %}
+            {% endwith %}
+          {% endif %}
         {% endfor %}
       </div>
       {% if pagination.pages > 1 %}

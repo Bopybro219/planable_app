@@ -3152,6 +3152,52 @@ body.planira-theme-calm .planira-staff-dropdown-toggle:focus-visible {
   margin: 0;
 }
 
+.planira-ad-shell {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(118, 138, 146, 0.18);
+  border-radius: 20px;
+  background: rgba(250, 246, 241, 0.78);
+  min-height: 0;
+}
+
+.planira-ad-shell[hidden] {
+  display: none;
+}
+
+.planira-ad-shell-inline {
+  grid-column: 1 / -1;
+}
+
+.planira-ad-shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.planira-ad-shell-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(118, 138, 146, 0.12);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.planira-ad-shell-body {
+  min-height: 280px;
+}
+
+.planira-ad-shell-body .adsbygoogle {
+  width: 100%;
+}
+
 @media (max-width: 700px) {
   .planira-consent-actions,
   .planira-consent-panel-actions,
