@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% import '_planira_macros.html' as ui %}
 {% block title %}Settings | Planira{% endblock %}
 {% block content %}
 <section class="page-head">
@@ -22,12 +23,33 @@
     <section class="tab-panel active" data-tab-panel="profile">
       <article class="planira-settings-panel">
         <div class="profile-banner">
-          <div class="profile-avatar">{{ settings_sections.profile.avatar_initials }}</div>
+          {{ ui.avatar(current_user, size='large', class_name='profile-avatar') }}
           <div>
             <span class="eyebrow">Profile</span>
             <h2>{{ settings_sections.profile.name }}</h2>
             <p class="muted">{{ settings_sections.profile.email }}</p>
             <p class="muted">Plan: {{ settings_sections.profile.plan }} · Access: {{ settings_sections.profile.access }}{% if settings_sections.profile.rank_title %} · Rank: {{ settings_sections.profile.rank_title }}{% endif %}</p>
+          </div>
+        </div>
+        <div class="profile-image-card">
+          <div>
+            <strong>Profile picture</strong>
+            <p class="helper-copy">PNG, JPG, WEBP or GIF. Max 2MB.</p>
+          </div>
+          <div class="profile-image-actions">
+            <form class="profile-image-upload-form" action="{{ url_for('update_account_profile_image') }}" method="post" enctype="multipart/form-data">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="profile-upload-label" for="profile-image">Choose image</label>
+              <input id="profile-image" name="profile_image" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif" required>
+              <button class="btn-primary-planira" type="submit">Upload picture</button>
+            </form>
+            {% if current_user.avatar_url %}
+              <form action="{{ url_for('update_account_profile_image') }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="remove">
+                <button class="btn-secondary-planira profile-remove-button" type="submit">Remove picture</button>
+              </form>
+            {% endif %}
           </div>
         </div>
         <div class="form-grid">

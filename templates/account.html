@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% import '_planira_macros.html' as ui %}
 {% block title %}Account | Planira{% endblock %}
 {% block content %}
 <section class="page-head">
@@ -40,9 +41,12 @@
 <section class="dashboard-grid account-shell">
   <article class="planira-settings-panel hero-stat-panel">
     <div class="hero-stat-header">
-      <div>
-        <span class="eyebrow">Profile summary</span>
-        <p class="muted">{{ current_user.email }}</p>
+      <div class="account-summary-head">
+        {{ ui.avatar(current_user, size='medium', class_name='profile-avatar') }}
+        <div>
+          <span class="eyebrow">Profile summary</span>
+          <p class="muted">{{ current_user.email }}</p>
+        </div>
       </div>
       <span class="metric-pill">{{ account_state.plan_label }} · {{ account_state.access_label }}</span>
     </div>

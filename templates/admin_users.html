@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% import '_planira_macros.html' as ui %}
 {% block title %}User Control | Planira{% endblock %}
 
 {% block content %}
@@ -6,35 +7,51 @@
   <div class="page-title-group">
     <span class="eyebrow">User control</span>
     <h1>Manage Planira users</h1>
-    <p class="muted">Search accounts, review usage, and manage access safely.</p>
+    <p class="muted">Scan accounts quickly, filter tightly, and open the full editor only when you need it.</p>
   </div>
 </section>
 
-<section class="admin-search-panel surface-panel">
-  <form class="admin-search-form" action="{{ url_for('admin_users') }}" method="get">
+<section class="admin-search-panel surface-panel admin-users-filter-bar">
+  <form class="admin-search-form admin-search-form-compact" action="{{ url_for('admin_users') }}" method="get">
     <div class="field-group field-group-primary">
-      <label for="user-search">Search by name or email</label>
-      <input id="user-search" name="q" value="{{ query_text or '' }}" placeholder="Ava Patel or ava@example.com">
+      <label for="user-search">Search</label>
+      <input id="user-search" name="q" value="{{ query_text or '' }}" placeholder="Name or email">
     </div>
-    <div class="field-group field-group-secondary">
-      <label for="user-access-filter">Role or plan</label>
-      <select id="user-access-filter" name="access">
-        {% for option in access_filter_options %}
-          <option value="{{ option.value }}" {% if access_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
+    <div class="field-group">
+      <label for="user-role-filter">Role</label>
+      <select id="user-role-filter" name="role">
+        {% for option in role_filter_options %}
+          <option value="{{ option.value }}" {% if role_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-group">
+      <label for="user-plan-filter">Plan</label>
+      <select id="user-plan-filter" name="plan">
+        {% for option in plan_filter_options %}
+          <option value="{{ option.value }}" {% if plan_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-group">
+      <label for="user-manual-filter">Manual override</label>
+      <select id="user-manual-filter" name="manual_override">
+        {% for option in manual_override_filter_options %}
+          <option value="{{ option.value }}" {% if manual_override_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
         {% endfor %}
       </select>
     </div>
     <div class="admin-search-actions">
-      <button class="planira-button-primary" type="submit">Search</button>
-      <a class="planira-button-quiet" href="{{ url_for('admin_users') }}">Reset</a>
+      <button class="planira-button-primary" type="submit">Apply</button>
+      <a class="planira-button-quiet" href="{{ url_for('admin_users') }}">Clear</a>
     </div>
   </form>
 
   <div class="admin-search-state">
-    {% if query_text or access_filter != 'all' %}
-      <p class="muted">Filters active{% if query_text %}: “{{ query_text }}”{% endif %}{% if access_filter != 'all' %} with {{ active_access_label }}{% endif %}.</p>
+    {% if query_text or role_filter != 'all' or plan_filter != 'all' or manual_override_filter != 'all' %}
+      <p class="muted">Filters active. Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users.</p>
     {% else %}
-      <p class="muted">No filters applied. Showing the latest user accounts first.</p>
+      <p class="muted">Showing the newest accounts first. Open a user only when you need the full editor.</p>
     {% endif %}
   </div>
 </section>
@@ -49,335 +66,104 @@
   {% endfor %}
 </section>
 
-<section class="admin-users-layout">
-  <div class="admin-users-main">
-    <header class="admin-results-head">
-      <div>
-        <span class="eyebrow">User directory</span>
-        <h2>{{ pagination.total if pagination else user_rows|length }} users</h2>
-        {% if pagination %}
-          <p class="muted">Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users.</p>
-        {% endif %}
+<section class="admin-users-directory">
+  <header class="admin-results-head surface-panel">
+    <div>
+      <span class="eyebrow">Directory</span>
+      <h2>{{ pagination.total if pagination else user_rows|length }} users</h2>
+      <p class="muted">Page {{ pagination.page if pagination else 1 }} of {{ pagination.pages or 1 }}.</p>
+    </div>
+    <span class="metric-pill">20 per page</span>
+  </header>
+
+  {% if user_rows %}
+    <div class="admin-user-table-shell surface-panel">
+      <div class="admin-user-table-head" role="presentation">
+        <span>User</span>
+        <span>Access</span>
+        <span>Manual override</span>
+        <span>Activity</span>
+        <span>Actions</span>
       </div>
-      {% if pagination %}
-        <span class="metric-pill">Page {{ pagination.page }} of {{ pagination.pages or 1 }}</span>
-      {% endif %}
-    </header>
 
-    {% if user_rows %}
-      <div class="admin-user-list">
+      <div class="admin-user-table-body">
         {% for row in user_rows %}
-          {% set is_selected = selected_user_id == row.user.id %}
-          <article class="admin-user-card-v2 surface-panel{% if is_selected %} is-selected{% endif %}">
-            <div class="admin-user-row">
-              <div class="admin-user-identity">
-                <div class="admin-user-identity-copy">
-                  <h3>{{ row.user.name or 'Planira member' }}</h3>
-                  <a class="admin-user-email" href="mailto:{{ row.user.email }}">{{ row.user.email }}</a>
-                </div>
-                <div class="admin-user-badges">
-                  <span class="metric-pill">{{ row.access_label }}</span>
-                  <span class="metric-pill">{{ row.plan_label }}</span>
-                  {% if is_selected %}
-                    <span class="metric-pill admin-selected-chip">Selected</span>
-                  {% endif %}
-                </div>
+          <article class="admin-user-table-row">
+            <div class="admin-user-table-user">
+              {{ ui.avatar(row.user, size='small', class_name='admin-user-avatar', decorative=False) }}
+              <div class="admin-user-table-user-copy">
+                <strong>{{ row.user.name or 'Planira member' }}</strong>
+                <a class="admin-user-email" href="mailto:{{ row.user.email }}">{{ row.user.email }}</a>
               </div>
+            </div>
 
-              <div class="admin-user-meta">
-                <div>
-                  <span>Joined</span>
-                  <strong>{{ row.joined_date }}</strong>
-                </div>
-                <div>
-                  <span>Contributions</span>
-                  <strong>{{ row.contributions }}</strong>
-                </div>
-                <div>
-                  <span>Search usage</span>
-                  <strong>{{ row.searches_used }} / {{ row.search_limit_label }}</strong>
-                </div>
-                <div>
-                  <span>Credits</span>
-                  <strong>{{ row.search_credits }}</strong>
-                </div>
-                <div>
-                  <span>Flags</span>
-                  <strong>{% if row.flags is not none %}{{ row.flags }}{% else %}Not tracked{% endif %}</strong>
-                </div>
-                <div>
-                  <span>Last activity</span>
-                  <strong>{{ row.activity }}</strong>
-                </div>
-              </div>
+            <div class="admin-user-table-access">
+              <span class="metric-pill">{{ row.access_label }}</span>
+              <span class="metric-pill">{{ row.plan_label }}</span>
+            </div>
 
-              <div class="admin-user-footnote">
-                <p class="muted">{{ row.activity_detail }}</p>
-              </div>
+            <div class="admin-user-table-override">
+              <span class="metric-pill">{{ row.manual_override.label }}</span>
+            </div>
 
-              <div class="admin-action-row" aria-label="Actions for {{ row.user.name or row.user.email }}">
-                <a class="planira-button-secondary btn-small" href="{{ url_for('admin_users', q=query_text or None, access=access_filter if access_filter != 'all' else None, page=pagination.page if pagination else None, selected=row.user.id) }}#user-detail-panel">View details</a>
+            <div class="admin-user-table-activity">
+              <strong>{{ row.primary_date_title }}</strong>
+              <span>{{ row.primary_date_label }}</span>
+            </div>
 
-                {% if account_state.is_admin %}
-                  <a class="planira-button-quiet btn-small" href="{{ url_for('admin_users', q=query_text or None, access=access_filter if access_filter != 'all' else None, page=pagination.page if pagination else None, selected=row.user.id) }}#credit-editor">Adjust credits</a>
-                {% else %}
-                  <button type="button" class="planira-button-quiet btn-small button-disabled" disabled title="Only admins can change member search credits here.">Adjust credits</button>
-                {% endif %}
+            <div class="admin-user-table-actions">
+              <a class="planira-button-secondary btn-small" href="{{ url_for('admin_user_edit', user_id=row.user.id, q=query_text or None, role=role_filter if role_filter != 'all' else None, plan=plan_filter if plan_filter != 'all' else None, manual_override=manual_override_filter if manual_override_filter != 'all' else None, page=pagination.page if pagination else 1) }}">Edit</a>
 
-                {% if account_state.is_admin and row.staff_toggle.enabled %}
-                  <form method="post" action="{{ url_for('update_admin_user_staff', user_id=row.user.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="action" value="{{ row.staff_toggle.action }}">
-                    <input type="hidden" name="return_q" value="{{ query_text or '' }}">
-                    <input type="hidden" name="return_access" value="{{ access_filter }}">
-                    <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-                    <button type="submit" class="planira-button-admin btn-small">{{ row.staff_toggle.label }}</button>
-                  </form>
-                {% else %}
-                  <button type="button" class="planira-button-admin btn-small button-disabled" disabled title="{% if not account_state.is_admin %}Only admins can change staff access.{% else %}{{ row.staff_toggle.title }}{% endif %}">{{ row.staff_toggle.label }}</button>
-                {% endif %}
-
-                <button type="button" class="planira-button-danger btn-small button-disabled" disabled title="{{ row.suspension_action.title }}">{{ row.suspension_action.label }}</button>
-              </div>
+              {% if account_state.is_admin and row.manual_override.active %}
+                <form method="post" action="{{ url_for('update_admin_user_manual_entitlement', user_id=row.user.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+                  <input type="hidden" name="return_role" value="{{ role_filter }}">
+                  <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+                  <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+                  <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
+                  <button type="submit" class="planira-button-quiet btn-small">Remove override</button>
+                </form>
+              {% endif %}
             </div>
           </article>
         {% endfor %}
       </div>
+    </div>
 
-      {% if pagination and pagination.pages > 1 %}
-        <nav class="pagination-nav admin-users-pagination" aria-label="User result pages">
-          <div class="pagination-summary">
-            <strong>Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users</strong>
-            <span class="muted">Search and filter context stays pinned across pages.</span>
-          </div>
-
-          <div class="pagination-links">
-            {% if pagination.has_prev %}
-              <a class="btn-secondary-planira" href="{{ url_for('admin_users', q=query_text or None, access=access_filter if access_filter != 'all' else None, selected=selected_user_id, page=pagination.prev_num) }}">Previous</a>
-            {% endif %}
-
-            {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
-              {% if page_number %}
-                <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('admin_users', q=query_text or None, access=access_filter if access_filter != 'all' else None, selected=selected_user_id, page=page_number) }}">{{ page_number }}</a>
-              {% else %}
-                <span class="page-gap">…</span>
-              {% endif %}
-            {% endfor %}
-
-            {% if pagination.has_next %}
-              <a class="btn-secondary-planira" href="{{ url_for('admin_users', q=query_text or None, access=access_filter if access_filter != 'all' else None, selected=selected_user_id, page=pagination.next_num) }}">Next</a>
-            {% endif %}
-          </div>
-        </nav>
-      {% endif %}
-    {% else %}
-      <article class="empty-state admin-users-empty">
-        {% if query_text or access_filter != 'all' %}
-          <span class="eyebrow">No users found</span>
-          <h2>No users matched that search.</h2>
-          <p class="muted">Try a broader name, a different email fragment, or reset the filter.</p>
-          <a class="planira-button-secondary" href="{{ url_for('admin_users') }}">Clear search</a>
-        {% else %}
-          <span class="eyebrow">No users yet</span>
-          <h2>User accounts will appear here once sign-ins begin.</h2>
-          <p class="muted">There are no records to manage in this environment yet.</p>
-        {% endif %}
-      </article>
-    {% endif %}
-  </div>
-
-  <aside class="admin-users-side">
-    <article class="admin-user-detail-panel surface-panel" id="user-detail-panel">
-      <div class="admin-user-detail-head">
-        <span class="eyebrow">User detail</span>
-        <p class="muted">Review usage, plan state, and available management actions before changing access.</p>
-      </div>
-
-      {% if selected_row %}
-        <div class="admin-user-detail-summary">
-          <div>
-            <h2>{{ selected_row.user.name or 'Planira member' }}</h2>
-            <p>{{ selected_row.user.email }}</p>
-          </div>
-          <div class="admin-user-badges">
-            <span class="metric-pill">{{ selected_row.access_label }}</span>
-            <span class="metric-pill">{{ selected_row.plan_label }}</span>
-          </div>
+    {% if pagination and pagination.pages > 1 %}
+      <nav class="pagination-nav admin-users-pagination" aria-label="User result pages">
+        <div class="pagination-summary">
+          <strong>Showing {{ showing_start }}–{{ showing_end }} of {{ pagination.total }} users</strong>
+          <span class="muted">Filters stay applied across pages.</span>
         </div>
 
-        <div class="stack-list">
-          <div class="stack-row">
-            <strong>Joined</strong>
-            <span>{{ selected_row.joined_at_label }}</span>
-          </div>
-          <div class="stack-row">
-            <strong>Last login</strong>
-            <span>{{ selected_row.last_login_label or 'No login recorded yet' }}</span>
-          </div>
-          <div class="stack-row">
-            <strong>Search usage</strong>
-            <span>{{ selected_row.search_usage_label }}</span>
-          </div>
-          <div class="stack-row">
-            <strong>Search credits</strong>
-            <span>{{ selected_row.search_credits }} available now.</span>
-          </div>
-          <div class="stack-row">
-            <strong>Contributions</strong>
-            <span>{{ selected_row.contributions }} recorded comments or call logs.</span>
-          </div>
-          <div class="stack-row">
-            <strong>Flags</strong>
-            <span>{% if selected_row.flags is not none %}{{ selected_row.flags }} current flags.{% else %}Not tracked yet.{% endif %}</span>
-          </div>
-          <div class="stack-row">
-            <strong>Status</strong>
-            <span>{{ selected_row.status_label }}</span>
-          </div>
-          <div class="stack-row">
-            <strong>Activity</strong>
-            <span>{% if selected_row.last_activity_label %}{{ selected_row.activity }}. {{ selected_row.activity_detail }}{% else %}No activity recorded yet.{% endif %}</span>
-          </div>
-        </div>
+        <div class="pagination-links">
+          {% if pagination.has_prev %}
+            <a class="btn-secondary-planira" href="{{ url_for('admin_users', q=query_text or None, role=role_filter if role_filter != 'all' else None, plan=plan_filter if plan_filter != 'all' else None, manual_override=manual_override_filter if manual_override_filter != 'all' else None, page=pagination.prev_num) }}">Previous</a>
+          {% endif %}
 
-        {% if account_state.is_admin %}
-          <section class="admin-detail-block" id="credit-editor">
-            <div class="admin-detail-block-head">
-              <h3>Adjust search credits</h3>
-              <p class="muted">Use positive or negative whole numbers. Credit totals never drop below zero.</p>
-            </div>
-            <form class="admin-inline-form" method="post" action="{{ url_for('update_admin_user_credits', user_id=selected_row.user.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="return_q" value="{{ query_text or '' }}">
-              <input type="hidden" name="return_access" value="{{ access_filter }}">
-              <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-              <div class="field-group">
-                <label for="credit-delta">Credit change</label>
-                <input id="credit-delta" name="credit_delta" type="number" step="1" min="-500" max="500" placeholder="+5 or -2" required>
-              </div>
-              <div class="field-group">
-                <label for="credit-reason">Reason</label>
-                <input id="credit-reason" name="reason" maxlength="200" placeholder="Optional note for the audit log">
-              </div>
-              <button type="submit" class="planira-button-primary">Apply credit change</button>
-            </form>
-          </section>
-        {% else %}
-          <section class="admin-detail-block">
-            <div class="admin-detail-block-head">
-              <h3>Search credits</h3>
-              <p class="muted">Visible for support context. Only admins can change member search credits.</p>
-            </div>
-            <p class="muted admin-inline-note">{{ selected_row.search_credits }} search credits currently available.</p>
-          </section>
-        {% endif %}
-
-        <section class="admin-detail-block">
-          <div class="admin-detail-block-head">
-            <h3>Access management</h3>
-            <p class="muted">Only actions backed by real routes are enabled here.</p>
-          </div>
-          <div class="admin-detail-actions">
-            {% if account_state.is_admin and selected_row.staff_toggle.enabled %}
-              <form method="post" action="{{ url_for('update_admin_user_staff', user_id=selected_row.user.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="{{ selected_row.staff_toggle.action }}">
-                <input type="hidden" name="return_q" value="{{ query_text or '' }}">
-                <input type="hidden" name="return_access" value="{{ access_filter }}">
-                <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-                <button type="submit" class="planira-button-admin">{{ selected_row.staff_toggle.label }}</button>
-              </form>
+          {% for page_number in pagination.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+            {% if page_number %}
+              <a class="page-link {% if page_number == pagination.page %}active{% endif %}" href="{{ url_for('admin_users', q=query_text or None, role=role_filter if role_filter != 'all' else None, plan=plan_filter if plan_filter != 'all' else None, manual_override=manual_override_filter if manual_override_filter != 'all' else None, page=page_number) }}">{{ page_number }}</a>
             {% else %}
-              <button type="button" class="planira-button-admin button-disabled" disabled title="{% if not account_state.is_admin %}Only admins can change staff access.{% else %}{{ selected_row.staff_toggle.title }}{% endif %}">{{ selected_row.staff_toggle.label }}</button>
+              <span class="page-gap">…</span>
             {% endif %}
+          {% endfor %}
 
-            <button type="button" class="planira-button-danger button-disabled" disabled title="{{ selected_row.suspension_action.title }}">{{ selected_row.suspension_action.label }}</button>
-          </div>
-          <p class="muted admin-inline-note">{{ selected_row.status_note }}</p>
-        </section>
-
-        <section class="admin-detail-block">
-          <div class="admin-detail-block-head">
-            <h3>API key visibility</h3>
-            <p class="muted">Masked keys only. Staff can review usage, recent events, credits, and revoke access safely.</p>
-          </div>
-          {% if selected_api_keys %}
-            <div class="stack-list">
-              {% for api_key in selected_api_keys %}
-                <div class="stack-row">
-                  <div>
-                    <strong>{{ api_key.label }}</strong>
-                    <span>{{ api_key.key_hint }} • {{ api_key.status_label }} • Created {{ api_key.created_at_label }}</span>
-                    <p class="muted">{{ api_key.lookups_used }} lookups this month · {{ api_key.total_lookups }} total · {{ api_key.lookup_credits }} API credits remaining{% if api_key.last_used_at_label %} · Last used {{ api_key.last_used_at_label }}{% endif %}</p>
-                  </div>
-                  <div class="admin-detail-actions">
-                    {% if api_key.is_active %}
-                      <form method="post" action="{{ url_for('revoke_admin_user_api_key', user_id=selected_row.user.id, key_id=api_key.id) }}" onsubmit="return confirm('Revoke this API key? This cannot be undone from the staff area.')">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="return_q" value="{{ query_text or '' }}">
-                        <input type="hidden" name="return_access" value="{{ access_filter }}">
-                        <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-                        <button type="submit" class="planira-button-danger btn-small">Revoke key</button>
-                      </form>
-                    {% else %}
-                      <button type="button" class="planira-button-danger btn-small button-disabled" disabled>Revoked</button>
-                    {% endif %}
-                  </div>
-                </div>
-                <form class="admin-inline-form" method="post" action="{{ url_for('update_admin_user_api_key_credits', user_id=selected_row.user.id, key_id=api_key.id) }}">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <input type="hidden" name="return_q" value="{{ query_text or '' }}">
-                  <input type="hidden" name="return_access" value="{{ access_filter }}">
-                  <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-                  <div class="field-group">
-                    <label for="api-credit-delta-{{ api_key.id }}">API credit change</label>
-                    <input id="api-credit-delta-{{ api_key.id }}" name="credit_delta" type="number" step="1" min="-500" max="500" placeholder="+10 or -5" required>
-                  </div>
-                  <div class="field-group">
-                    <label for="api-credit-reason-{{ api_key.id }}">Reason</label>
-                    <input id="api-credit-reason-{{ api_key.id }}" name="reason" maxlength="200" placeholder="Optional note for the audit log">
-                  </div>
-                  <button type="submit" class="planira-button-secondary btn-small">Adjust API credits</button>
-                </form>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="empty-inline">
-              <strong>No API keys recorded</strong>
-              <p class="muted">No API key activity is attached to this account yet.</p>
-            </div>
+          {% if pagination.has_next %}
+            <a class="btn-secondary-planira" href="{{ url_for('admin_users', q=query_text or None, role=role_filter if role_filter != 'all' else None, plan=plan_filter if plan_filter != 'all' else None, manual_override=manual_override_filter if manual_override_filter != 'all' else None, page=pagination.next_num) }}">Next</a>
           {% endif %}
-        </section>
-
-        <section class="admin-detail-block">
-          <div class="admin-detail-block-head">
-            <h3>Recent API lookups</h3>
-            <p class="muted">A light activity view for support and abuse checks. Raw keys are never shown here.</p>
-          </div>
-          {% if selected_api_events %}
-            <div class="stack-list">
-              {% for event in selected_api_events %}
-                <div class="stack-row">
-                  <strong>{{ event.key_label }} · {{ event.status_code or 'No status' }}</strong>
-                  <span>{{ event.endpoint }}{% if event.query %} · {{ event.query }}{% endif %} · {{ event.created_at_label }}</span>
-                </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="empty-inline">
-              <strong>No API lookups recorded</strong>
-              <p class="muted">This user has not generated any tracked API lookup events yet.</p>
-            </div>
-          {% endif %}
-        </section>
-      {% else %}
-        <div class="empty-state admin-user-detail-empty">
-          <span class="eyebrow">No profile selected</span>
-          <h2>Select a user.</h2>
-          <p class="muted">Choose a user from the list to review account details and available controls.</p>
         </div>
-      {% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <article class="empty-state admin-users-empty surface-panel">
+      <span class="eyebrow">No users found</span>
+      <h2>No users matched those filters.</h2>
+      <p class="muted">Try a broader search or clear the filters.</p>
+      <a class="planira-button-secondary" href="{{ url_for('admin_users') }}">Clear filters</a>
     </article>
-  </aside>
+  {% endif %}
 </section>
 {% endblock %}

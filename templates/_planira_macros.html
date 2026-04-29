@@ -21,6 +21,17 @@
   </div>
 {%- endmacro %}
 
+{% macro avatar(user, size='medium', class_name='', decorative=True) -%}
+  {% set label = user.name or user.email or 'Planira member' %}
+  <span class="planira-avatar planira-avatar-{{ size }} {{ class_name }}{% if not user.avatar_url %} planira-avatar-fallback{% endif %}" {% if decorative %}aria-hidden="true"{% else %}role="img" aria-label="{{ label }} avatar"{% endif %}>
+    {% if user.avatar_url %}
+      <img src="{{ user.avatar_url }}" alt="{% if decorative %}{% else %}{{ label }} avatar{% endif %}">
+    {% else %}
+      <span class="planira-avatar-initials">{{ user.avatar_initials }}</span>
+    {% endif %}
+  </span>
+{%- endmacro %}
+
 {% macro result_card(card, detail_url=None, link_text='Open place details') -%}
   {% set href = detail_url or url_for('place_detail', slug=card.place.slug) %}
   <a class="result-card planira-card interactive-panel" href="{{ href }}">

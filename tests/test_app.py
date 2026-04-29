@@ -361,6 +361,17 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Turnstile is bypassed in this non-production environment", response.data)
         self.assertIn(b"Continue with Google", response.data)
 
+    def test_turnstile_script_only_loads_on_pages_that_enable_it(self):
+        login_response = self.client.get("/auth/login")
+        homepage_response = self.client.get("/")
+        plans_response = self.client.get("/plans")
+        privacy_response = self.client.get("/privacy")
+
+        self.assertIn(b"challenges.cloudflare.com/turnstile/v0/api.js", login_response.data)
+        self.assertNotIn(b"challenges.cloudflare.com/turnstile/v0/api.js", homepage_response.data)
+        self.assertNotIn(b"challenges.cloudflare.com/turnstile/v0/api.js", plans_response.data)
+        self.assertNotIn(b"challenges.cloudflare.com/turnstile/v0/api.js", privacy_response.data)
+
     def test_login_post_redirects_to_google_when_turnstile_is_bypassed_in_testing(self):
         fake_google = SimpleNamespace(authorize_redirect=unittest.mock.Mock(return_value=app.response_class(status=302)))
 
@@ -522,6 +533,13 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_404_response_is_noindex(self):
+        response = self.client.get("/missing-page")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers.get("X-Robots-Tag"), "noindex, nofollow")
+        self.assertNotIn(b'<link rel="canonical"', response.data)
+
     def test_search_page_sets_noindex_robots_headers(self):
         with app.app_context():
             user = User(email="robots@example.com", name="Robots User", picture="", role="member", plan="free")
@@ -610,6 +628,36 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(event.accessible, "yes")
         self.assertEqual(event.filters_json["accessible"], "yes")
         self.assertEqual(event.result_count, 0)
+
+    def test_search_pagination_does_not_duplicate_usage_or_preserve_submitted_flag(self):
+        with app.app_context():
+            user = User(email="page-usage@example.com", name="Page Usage", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.flush()
+            for index in range(1, 16):
+                db.session.add(
+                    Place(
+                        name=f"Usage Pager {index}",
+                        slug=f"usage-pager-{index}",
+                        town="Usage Town",
+                    )
+                )
+            db.session.commit()
+            start_count = SearchEvent.query.filter_by(user_id=user.id).count()
+
+        self.login_session("page-usage@example.com", "Page Usage")
+        first_response = self.client.get("/search?q=Usage+Pager&town=Usage+Town&submitted=1")
+        second_response = self.client.get("/search?q=Usage+Pager&town=Usage+Town&page=2")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertIn(b"/search?q=Usage+Pager&amp;town=Usage+Town&amp;page=2", first_response.data)
+        self.assertNotIn(b"submitted=1&amp;page=2", first_response.data)
+        with app.app_context():
+            user = User.query.filter_by(email="page-usage@example.com").first()
+            events = SearchEvent.query.filter_by(user_id=user.id).order_by(SearchEvent.id.asc()).all()
+        self.assertEqual(len(events), start_count + 1)
+        self.assertEqual(events[-1].query_text, "Usage Pager")
 
     def test_free_user_limit_blocks_additional_searches(self):
         with app.app_context():
@@ -864,6 +912,69 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             self.assertEqual(PlaceImage.query.count(), 0)
 
+    def test_expired_comment_post_redirects_to_login_with_safe_place_next(self):
+        with app.app_context():
+            place = Place(name="Expired Comment Place", slug="expired-comment-place", town="Calm Town")
+            db.session.add(place)
+            db.session.commit()
+
+        response = self.client.post(
+            "/place/expired-comment-place/comment",
+            data={"body": "Late note"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/auth/login?next=/place/expired-comment-place")
+
+        login_response = self.client.get(response.headers["Location"], follow_redirects=True)
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn(b"Your session expired. Please sign in again before continuing.", login_response.data)
+        self.assertNotIn(b"Bad request", login_response.data)
+
+    def test_expired_image_upload_redirects_to_login_with_safe_place_next(self):
+        with app.app_context():
+            user = User(email="paid-expired@example.com", name="Paid Expired", picture="", role="member", plan="paid")
+            place = Place(name="Expired Upload Place", slug="expired-upload-place", town="Upload Town")
+            db.session.add_all([user, place])
+            db.session.commit()
+            place_id = place.id
+
+        response = self.client.post(
+            f"/place/{place_id}/images/upload",
+            data={
+                "caption": "Late upload",
+                "place_image": (io.BytesIO(self.png_bytes()), "late.png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/auth/login?next=/place/expired-upload-place")
+
+        login_response = self.client.get(response.headers["Location"], follow_redirects=True)
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn(b"Your session expired. Please sign in again before continuing.", login_response.data)
+        self.assertNotIn(b"Bad request", login_response.data)
+
+    def test_login_does_not_store_post_only_next_destinations(self):
+        with app.app_context():
+            place = Place(name="Safe Next Place", slug="safe-next-place", town="Next Town")
+            db.session.add(place)
+            db.session.commit()
+            place_id = place.id
+
+        comment_response = self.client.get("/auth/login?next=/place/safe-next-place/comment")
+        with self.client.session_transaction() as session:
+            self.assertEqual(session["next_url"], "/place/safe-next-place")
+        upload_response = self.client.get(f"/auth/login?next=/place/{place_id}/images/upload")
+
+        self.assertEqual(comment_response.status_code, 200)
+        self.assertEqual(upload_response.status_code, 200)
+        with self.client.session_transaction() as session:
+            self.assertEqual(session["next_url"], "/place/safe-next-place")
+
     def test_paid_user_can_upload_place_image_and_place_page_renders_it(self):
         with app.app_context():
             user = User(email="paid-photo@example.com", name="Paid Photo", picture="", role="member", plan="paid")
@@ -1084,6 +1195,35 @@ class AppSmokeTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             flashes = session.get("_flashes", [])
         self.assertTrue(any("temporarily disabled" in message for _, message in flashes))
+
+    def test_google_callback_exception_does_not_expose_raw_error_text(self):
+        fake_google = SimpleNamespace(authorize_access_token=unittest.mock.Mock(side_effect=RuntimeError("provider raw details")))
+
+        with patch.object(app_module, "google", fake_google):
+            response = self.client.get("/auth/google/callback", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Sign-in could not be completed. Please try again.", response.data)
+        self.assertNotIn(b"provider raw details", response.data)
+
+    def test_checkout_creation_exception_does_not_expose_raw_error_text(self):
+        with app.app_context():
+            user = User(email="stripe-error@example.com", name="Stripe Error", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.login_session("stripe-error@example.com", "Stripe Error")
+        session_create = unittest.mock.Mock(side_effect=RuntimeError("stripe raw details"))
+        fake_stripe = SimpleNamespace(checkout=SimpleNamespace(Session=SimpleNamespace(create=session_create)))
+
+        with patch.dict(os.environ, {"STRIPE_PRICE_PAID_CONSUMER": "price_paid_test"}, clear=False):
+            with patch.object(app_module, "stripe", fake_stripe):
+                with patch.dict(app.config, {"STRIPE_SECRET_KEY": "sk_test_123"}, clear=False):
+                    response = self.client.post("/billing/checkout/paid_consumer", data={"csrf_token": "token123"}, follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Checkout could not be started. Please try again in a moment.", response.data)
+        self.assertNotIn(b"stripe raw details", response.data)
 
     def test_subscription_checkout_includes_subscription_metadata(self):
         with app.app_context():

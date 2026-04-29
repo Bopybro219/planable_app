@@ -22,6 +22,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import Integer, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
+from werkzeug.exceptions import MethodNotAllowed, NotFound
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -857,10 +858,65 @@ def is_safe_redirect_target(target):
     return test_url.scheme in {"http", "https"} and ref_url.netloc == test_url.netloc
 
 
+def safe_next_target_for_endpoint(endpoint, view_args=None, default_endpoint="search"):
+    view_args = view_args or {}
+    if endpoint == "add_comment":
+        return url_for("place_detail", slug=view_args.get("slug"))
+    if endpoint == "upload_place_image":
+        place = db.session.get(Place, view_args.get("place_id"))
+        if place and place.slug:
+            return url_for("place_detail", slug=place.slug)
+    if endpoint == "delete_place_image":
+        place_image = db.session.get(PlaceImage, view_args.get("image_id"))
+        if place_image and place_image.place and place_image.place.slug:
+            return url_for("place_detail", slug=place_image.place.slug)
+    if endpoint == "update_account_profile_image":
+        return url_for("account_settings")
+    if endpoint in {"create_developer_api_key", "update_developer_api_key"}:
+        return url_for("developers")
+    if endpoint == "create_checkout":
+        return url_for("plans")
+    return url_for(default_endpoint)
+
+
+def normalize_next_target(target, default_endpoint="search"):
+    if not is_safe_redirect_target(target):
+        return url_for(default_endpoint)
+
+    parsed_target = urlparse(urljoin(request.host_url, target))
+    adapter = app.url_map.bind(urlparse(request.host_url).netloc)
+    safe_target = parsed_target.path
+    if parsed_target.query:
+        safe_target = f"{safe_target}?{parsed_target.query}"
+
+    try:
+        adapter.match(parsed_target.path, method="GET")
+        return safe_target
+    except NotFound:
+        return url_for(default_endpoint)
+    except MethodNotAllowed:
+        try:
+            endpoint, view_args = adapter.match(parsed_target.path, method="POST")
+        except Exception:
+            return url_for(default_endpoint)
+        return safe_next_target_for_endpoint(endpoint, view_args=view_args, default_endpoint=default_endpoint)
+
+
+def safe_next_target_for_request(default_endpoint="search"):
+    if request.method != "POST":
+        return normalize_next_target(request.full_path, default_endpoint=default_endpoint)
+
+    return safe_next_target_for_endpoint(
+        request.endpoint or "",
+        view_args=request.view_args or {},
+        default_endpoint=default_endpoint,
+    )
+
+
 def redirect_to_next(default_endpoint="search"):
     target = session.pop("next_url", None)
-    if target and is_safe_redirect_target(target):
-        return redirect(target)
+    if target:
+        return redirect(normalize_next_target(target, default_endpoint=default_endpoint))
     return redirect(url_for(default_endpoint))
 
 
@@ -1111,12 +1167,12 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("user"):
-            flash("Please log in with Google to view results.", "info")
-            return redirect(url_for("login", next=request.path))
+            flash("Please sign in before continuing.", "info")
+            return redirect(url_for("login", next=safe_next_target_for_request()))
         if not current_user():
             session.clear()
-            flash("Your session expired, so please sign in again.", "info")
-            return redirect(url_for("login", next=request.path))
+            flash("Your session expired. Please sign in again before continuing.", "info")
+            return redirect(url_for("login", next=safe_next_target_for_request()))
         return fn(*args, **kwargs)
 
     return wrapper
@@ -3554,8 +3610,11 @@ def build_search_pagination_args(filters, submitted):
         "sensory_notes": filters["sensory_notes"] or None,
         "public_comments": filters["public_comments"] or None,
         "source": filters["source"] or None,
-        "submitted": "1" if submitted else None,
     }
+
+
+def is_new_search_submission(*, submitted, page):
+    return submitted and page <= 1
 
 
 def parse_selected_place_id(raw_value):
@@ -4116,6 +4175,12 @@ def ensure_database_ready():
 def protect_forms():
     if request.method != "POST":
         return None
+    if request.endpoint in {"add_comment", "upload_place_image", "delete_place_image"} and (
+        not session.get("user") or not current_user()
+    ):
+        session.clear()
+        flash("Your session expired. Please sign in again before continuing.", "info")
+        return redirect(url_for("login", next=safe_next_target_for_request()))
     if request.endpoint in CSRF_EXEMPT_ENDPOINTS:
         return None
     if request.path.startswith("/api/"):
@@ -4133,7 +4198,10 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    response.headers.setdefault("X-Robots-Tag", robots_directive_for_request())
+    if response.status_code >= 400:
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    else:
+        response.headers.setdefault("X-Robots-Tag", robots_directive_for_request())
     if request.is_secure:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
@@ -4566,6 +4634,7 @@ def developers():
         canonical_url=build_absolute_url("developers"),
     )
     page_context["turnstile_create_api_key"] = build_turnstile_context("create_api_key")
+    page_context["enable_turnstile"] = bool(user and page_context.get("has_api_access"))
     return render_template("developers.html", **page_context)
 
 
@@ -4655,9 +4724,9 @@ def create_checkout(plan_key):
 
     try:
         session_checkout = stripe.checkout.Session.create(**checkout_kwargs)
-    except Exception as exc:  # pragma: no cover - third-party API path
+    except Exception:  # pragma: no cover - third-party API path
         app.logger.exception("Stripe checkout creation failed")
-        flash(f"Stripe could not start checkout: {exc}", "error")
+        flash("Checkout could not be started. Please try again in a moment.", "error")
         return redirect(url_for("plans"))
     return redirect(session_checkout.url, code=303)
 
@@ -4676,9 +4745,9 @@ def billing_success():
 
     try:
         checkout_session = stripe.checkout.Session.retrieve(checkout_session_id)
-    except Exception as exc:  # pragma: no cover - third-party API path
+    except Exception:  # pragma: no cover - third-party API path
         app.logger.exception("Stripe checkout confirmation failed")
-        flash(f"Stripe could not confirm the checkout session: {exc}", "error")
+        flash("Checkout confirmation could not be completed right now. Please try again in a moment.", "error")
         return redirect(url_for("plans"))
 
     plan_key = (checkout_session.metadata or {}).get("plan_key")
@@ -4945,13 +5014,13 @@ def api_update_place(place_id):
 def search():
     if not session.get("user"):
         flash("Search results are available after Google login.", "info")
-        return redirect(url_for("login", next=request.full_path))
+        return redirect(url_for("login", next=safe_next_target_for_request()))
 
     user = current_user()
     if not user:
         session.clear()
         flash("Your session expired, so please sign in again.", "info")
-        return redirect(url_for("login", next=request.full_path))
+        return redirect(url_for("login", next=safe_next_target_for_request()))
 
     filters = build_search_filter_state(request.args)
     public_filter_options = build_public_search_filter_options()
@@ -4978,6 +5047,7 @@ def search():
     except ValueError:
         page = 1
     per_page = 12
+    is_counted_submission = is_new_search_submission(submitted=submitted, page=page)
 
     has_filters = any(
         [
@@ -5001,7 +5071,7 @@ def search():
         ]
     )
     should_search = has_filters
-    if submitted and has_filters:
+    if is_counted_submission and has_filters:
         enforce_rate_limit("search_submit", limit=20, window_seconds=300)
     limit_context = search_limit_context(user)
     filters_payload = build_search_filter_payload(filters)
@@ -5013,7 +5083,7 @@ def search():
     results = []
     result_cards = []
     if should_search:
-        if submitted and has_filters and limit_context["limit_reached"]:
+        if is_counted_submission and has_filters and limit_context["limit_reached"]:
             limit_message = build_quota_copy(user, limit_context)["blocked_message"]
             flash(limit_message, "info")
             should_search = False
@@ -5144,7 +5214,7 @@ def search():
         pagination = query.order_by(Place.name.asc()).paginate(page=page, per_page=per_page, error_out=False)
         results = pagination.items
         result_cards = [build_place_card(place) for place in results]
-        if submitted and has_filters:
+        if is_counted_submission and has_filters:
             consume_search_credit_if_needed(user, limit_context)
             track_search_event(
                 user,
@@ -5250,6 +5320,7 @@ def place_detail(slug):
         ),
         turnstile_comment=build_turnstile_context("comment_submission"),
         turnstile_place_image=build_turnstile_context("place_image_upload"),
+        enable_turnstile=bool(user),
     )
 
 
@@ -6146,18 +6217,19 @@ def login():
         if not os.getenv("GOOGLE_CLIENT_ID"):
             flash("Google OAuth is not configured yet. Add your keys to .env.", "error")
             return redirect(url_for("index"))
-        next_url = request.form.get("next") or session.get("next_url") or url_for("search")
-        session["next_url"] = next_url if is_safe_redirect_target(next_url) else url_for("search")
+        next_url = request.form.get("next") or session.get("next_url") or safe_next_target_for_request()
+        session["next_url"] = normalize_next_target(next_url, default_endpoint="search")
         if not protect_with_turnstile("login"):
             return redirect(url_for("login", next=session["next_url"]))
         return google.authorize_redirect(url_for("auth_callback", _external=True))
 
-    next_url = request.args.get("next") or url_for("search")
-    session["next_url"] = next_url if is_safe_redirect_target(next_url) else url_for("search")
+    next_url = request.args.get("next") or safe_next_target_for_request()
+    session["next_url"] = normalize_next_target(next_url, default_endpoint="search")
     return render_template(
         "login.html",
         next_url=session["next_url"],
         turnstile_login=build_turnstile_context("login"),
+        enable_turnstile=True,
         seo=build_seo_payload(
             title=f"Continue with Google | {APP_NAME}",
             description="Continue to Planira with Google sign-in and a server-verified anti-abuse check.",
@@ -6172,9 +6244,9 @@ def auth_callback():
     try:
         token = google.authorize_access_token()
         info = token.get("userinfo") or google.parse_id_token(token)
-    except Exception as exc:
+    except Exception:
         app.logger.exception("Google OAuth callback failed")
-        flash(f"Google sign-in could not be completed: {exc}", "error")
+        flash("Sign-in could not be completed. Please try again.", "error")
         return redirect(url_for("index"))
 
     google_sub = (info or {}).get("sub", "").strip()

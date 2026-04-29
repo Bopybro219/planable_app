@@ -7,7 +7,10 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>{% block title %}{{ seo.title }}{% endblock %}</title>
     <meta name="description" content="{% block description %}{{ seo.description }}{% endblock %}">
-    <link rel="canonical" href="{% block canonical_url %}{{ seo.canonical_url }}{% endblock %}">
+    {% set canonical_href %}{% block canonical_url %}{{ seo.canonical_url }}{% endblock %}{% endset %}
+    {% if canonical_href|trim %}
+      <link rel="canonical" href="{{ canonical_href|trim }}">
+    {% endif %}
     <meta name="robots" content="{% block robots %}{{ seo.robots }}{% endblock %}">
     <meta property="og:site_name" content="{{ brand_name }}">
     <meta property="og:type" content="website">
@@ -24,7 +27,7 @@
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='mapicon.svg') }}?v=1">
-    {% if turnstile_enabled %}
+    {% if enable_turnstile %}
       <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     {% endif %}
     {% block structured_data %}

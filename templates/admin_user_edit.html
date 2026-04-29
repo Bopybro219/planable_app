@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+{% import '_planira_macros.html' as ui %}
+{% block title %}Edit User | Planira{% endblock %}
+
+{% block content %}
+<section class="admin-control-header surface-panel">
+  <div class="page-title-group">
+    <span class="eyebrow">User editor</span>
+    <h1>{{ selected_row.user.name or 'Planira member' }}</h1>
+    <p class="muted">{{ selected_row.user.email }}</p>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn-secondary-planira" href="{{ url_for('admin_users', q=query_text or None, role=role_filter if role_filter != 'all' else None, plan=plan_filter if plan_filter != 'all' else None, manual_override=manual_override_filter if manual_override_filter != 'all' else None, page=return_page) }}">Back to users</a>
+  </div>
+</section>
+
+<section class="admin-user-edit-layout">
+  <article class="surface-panel admin-user-edit-summary">
+    <div class="admin-user-table-user">
+      {{ ui.avatar(selected_row.user, size='medium', class_name='admin-user-avatar', decorative=False) }}
+      <div class="admin-user-table-user-copy">
+        <strong>{{ selected_row.user.name or 'Planira member' }}</strong>
+        <span>{{ selected_row.user.email }}</span>
+      </div>
+    </div>
+
+    <div class="admin-user-badges">
+      <span class="metric-pill">{{ selected_row.access_label }}</span>
+      <span class="metric-pill">{{ selected_row.plan_label }}</span>
+      <span class="metric-pill">{{ selected_row.manual_override.label }}</span>
+    </div>
+
+    <div class="stack-list">
+      <div class="stack-row">
+        <strong>Joined</strong>
+        <span>{{ selected_row.joined_at_label }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Last login</strong>
+        <span>{{ selected_row.last_login_label or 'No login recorded yet' }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Search usage</strong>
+        <span>{{ selected_row.search_usage_label }}</span>
+      </div>
+      <div class="stack-row">
+        <strong>Manual override</strong>
+        <span>{{ selected_row.manual_override.detail }}</span>
+      </div>
+    </div>
+  </article>
+
+  <div class="admin-user-edit-stack">
+    {% if account_state.is_admin %}
+      <section class="admin-detail-block surface-panel" id="credit-editor">
+        <div class="admin-detail-block-head">
+          <h3>Adjust search credits</h3>
+          <p class="muted">Use positive or negative whole numbers. Credit totals never drop below zero.</p>
+        </div>
+        <form class="admin-inline-form" method="post" action="{{ url_for('update_admin_user_credits', user_id=selected_row.user.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_view" value="edit">
+          <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+          <input type="hidden" name="return_role" value="{{ role_filter }}">
+          <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+          <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+          <input type="hidden" name="return_page" value="{{ return_page }}">
+          <div class="field-group">
+            <label for="credit-delta">Credit change</label>
+            <input id="credit-delta" name="credit_delta" type="number" step="1" min="-500" max="500" placeholder="+5 or -2" required>
+          </div>
+          <div class="field-group">
+            <label for="credit-reason">Reason</label>
+            <input id="credit-reason" name="reason" maxlength="200" placeholder="Optional note for the audit log">
+          </div>
+          <button type="submit" class="planira-button-primary">Apply credit change</button>
+        </form>
+      </section>
+    {% endif %}
+
+    <section class="admin-detail-block surface-panel">
+      <div class="admin-detail-block-head">
+        <h3>Access management</h3>
+        <p class="muted">Staff changes remain deliberate and separate from manual entitlement overrides.</p>
+      </div>
+      <div class="admin-detail-actions">
+        {% if account_state.is_admin and selected_row.staff_toggle.enabled %}
+          <form method="post" action="{{ url_for('update_admin_user_staff', user_id=selected_row.user.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="{{ selected_row.staff_toggle.action }}">
+            <input type="hidden" name="return_view" value="edit">
+            <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+            <input type="hidden" name="return_role" value="{{ role_filter }}">
+            <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+            <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+            <input type="hidden" name="return_page" value="{{ return_page }}">
+            <button type="submit" class="planira-button-admin">{{ selected_row.staff_toggle.label }}</button>
+          </form>
+        {% else %}
+          <button type="button" class="planira-button-admin button-disabled" disabled title="{% if not account_state.is_admin %}Only admins can change staff access.{% else %}{{ selected_row.staff_toggle.title }}{% endif %}">{{ selected_row.staff_toggle.label }}</button>
+        {% endif %}
+
+        <button type="button" class="planira-button-danger button-disabled" disabled title="{{ selected_row.suspension_action.title }}">{{ selected_row.suspension_action.label }}</button>
+      </div>
+    </section>
+
+    <section class="admin-detail-block surface-panel" id="manual-entitlement-editor">
+      <div class="admin-detail-block-head">
+        <h3>Manual access override</h3>
+        <p class="muted">Use this when Planira should grant access manually without creating or implying a Stripe payment.</p>
+      </div>
+      <p class="muted admin-inline-note">{{ selected_row.manual_override.label }}. {{ selected_row.manual_override.detail }}</p>
+
+      {% if account_state.is_admin %}
+        <form class="admin-inline-form" method="post" action="{{ url_for('update_admin_user_manual_entitlement', user_id=selected_row.user.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_view" value="edit">
+          <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+          <input type="hidden" name="return_role" value="{{ role_filter }}">
+          <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+          <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+          <input type="hidden" name="return_page" value="{{ return_page }}">
+          <div class="field-group">
+            <label class="checkbox-label" for="manual-entitlement-enabled">
+              <input id="manual-entitlement-enabled" type="checkbox" name="manual_entitlement_enabled" value="1" {% if selected_row.manual_override_enabled %}checked{% endif %}>
+              <span>Enable manual entitlement</span>
+            </label>
+          </div>
+          <div class="field-group">
+            <label for="manual-entitlement-plan">Manual plan/access level</label>
+            <select id="manual-entitlement-plan" name="manual_entitlement_plan">
+              <option value="">Choose an access level</option>
+              {% for option in manual_entitlement_options %}
+                <option value="{{ option.value }}" {% if selected_row.manual_override_plan == option.value %}selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="manual-entitlement-until">Expiry date and time</label>
+            <input id="manual-entitlement-until" name="access_override_until" type="datetime-local" value="{{ selected_row.manual_override_until_value }}">
+          </div>
+          <div class="field-group">
+            <label for="manual-entitlement-note">Internal note</label>
+            <input id="manual-entitlement-note" name="manual_entitlement_note" maxlength="255" value="{{ selected_row.manual_override_note }}" placeholder="Why this override exists">
+          </div>
+          <button type="submit" class="planira-button-primary">Save manual override</button>
+        </form>
+      {% else %}
+        <div class="empty-inline">
+          <strong>Admin only</strong>
+          <p class="muted">Staff can review manual override status here, but only admins can change it.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="admin-detail-block surface-panel">
+      <div class="admin-detail-block-head">
+        <h3>API key visibility</h3>
+        <p class="muted">Masked keys only. Staff can review usage, credits, and revoke access safely.</p>
+      </div>
+      {% if selected_api_keys %}
+        <div class="stack-list">
+          {% for api_key in selected_api_keys %}
+            <div class="stack-row">
+              <div>
+                <strong>{{ api_key.label }}</strong>
+                <span>{{ api_key.key_hint }} • {{ api_key.status_label }} • Created {{ api_key.created_at_label }}</span>
+                <p class="muted">{{ api_key.lookups_used }} lookups this month · {{ api_key.total_lookups }} total · {{ api_key.lookup_credits }} API credits remaining{% if api_key.last_used_at_label %} · Last used {{ api_key.last_used_at_label }}{% endif %}</p>
+              </div>
+              <div class="admin-detail-actions">
+                {% if api_key.is_active %}
+                  <form method="post" action="{{ url_for('revoke_admin_user_api_key', user_id=selected_row.user.id, key_id=api_key.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="return_view" value="edit">
+                    <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+                    <input type="hidden" name="return_role" value="{{ role_filter }}">
+                    <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+                    <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+                    <input type="hidden" name="return_page" value="{{ return_page }}">
+                    <button type="submit" class="planira-button-danger btn-small">Revoke key</button>
+                  </form>
+                {% else %}
+                  <button type="button" class="planira-button-danger btn-small button-disabled" disabled>Revoked</button>
+                {% endif %}
+              </div>
+            </div>
+            <form class="admin-inline-form" method="post" action="{{ url_for('update_admin_user_api_key_credits', user_id=selected_row.user.id, key_id=api_key.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="return_view" value="edit">
+              <input type="hidden" name="return_q" value="{{ query_text or '' }}">
+              <input type="hidden" name="return_role" value="{{ role_filter }}">
+              <input type="hidden" name="return_plan" value="{{ plan_filter }}">
+              <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
+              <input type="hidden" name="return_page" value="{{ return_page }}">
+              <div class="field-group">
+                <label for="api-credit-delta-{{ api_key.id }}">API credit change</label>
+                <input id="api-credit-delta-{{ api_key.id }}" name="credit_delta" type="number" step="1" min="-500" max="500" placeholder="+10 or -5" required>
+              </div>
+              <div class="field-group">
+                <label for="api-credit-reason-{{ api_key.id }}">Reason</label>
+                <input id="api-credit-reason-{{ api_key.id }}" name="reason" maxlength="200" placeholder="Optional note for the audit log">
+              </div>
+              <button type="submit" class="planira-button-secondary btn-small">Adjust API credits</button>
+            </form>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-inline">
+          <strong>No API keys recorded</strong>
+          <p class="muted">No API key activity is attached to this account yet.</p>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="admin-detail-block surface-panel">
+      <div class="admin-detail-block-head">
+        <h3>Recent API lookups</h3>
+        <p class="muted">A light activity view for support and abuse checks.</p>
+      </div>
+      {% if selected_api_events %}
+        <div class="stack-list">
+          {% for event in selected_api_events %}
+            <div class="stack-row">
+              <strong>{{ event.key_label }} · {{ event.status_code or 'No status' }}</strong>
+              <span>{{ event.endpoint }}{% if event.query %} · {{ event.query }}{% endif %} · {{ event.created_at_label }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-inline">
+          <strong>No API lookups recorded</strong>
+          <p class="muted">This user has not generated any tracked API lookup events yet.</p>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+</section>
+{% endblock %}
