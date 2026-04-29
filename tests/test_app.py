@@ -352,6 +352,29 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"googletagmanager.com/gtag/js", response.data)
 
+    def test_auth_and_account_surfaces_do_not_bootstrap_analytics_even_with_consent(self):
+        with app.app_context():
+            user = User(email="member-analytics@example.com", name="Member Analytics", picture="", role="member", plan="free")
+            db.session.add(user)
+            db.session.commit()
+
+        self.set_consent_cookie(analytics=True)
+        auth_response = self.client.get("/auth/login")
+
+        self.assertEqual(auth_response.status_code, 200)
+        self.assertNotIn(b"googletagmanager.com/gtag/js", auth_response.data)
+
+        self.login_session("member-analytics@example.com", "Member Analytics")
+        account_response = self.client.get("/account/settings")
+
+        self.assertEqual(account_response.status_code, 200)
+        self.assertNotIn(b"googletagmanager.com/gtag/js", account_response.data)
+
+    def test_private_billing_and_auth_paths_are_analytics_excluded(self):
+        self.assertFalse(app_module.analytics_allowed_on_request_path("/auth/login"))
+        self.assertFalse(app_module.analytics_allowed_on_request_path("/account"))
+        self.assertFalse(app_module.analytics_allowed_on_request_path("/billing/cancel"))
+
     def test_track_event_helper_is_defined_when_analytics_is_disabled(self):
         app.config["GA_MEASUREMENT_ID"] = ""
 
@@ -462,6 +485,14 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b'data-ad-placement="place_detail"', response.data)
+
+    def test_auth_login_page_does_not_bootstrap_ads_even_with_marketing_consent(self):
+        self.set_consent_cookie(marketing=True)
+
+        response = self.client.get("/auth/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", response.data)
 
     def test_marketing_consent_toggle_disables_future_ad_loads(self):
         self.set_consent_cookie(marketing=True)
@@ -2683,6 +2714,79 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Quick answer", place_response.data)
         self.assertIn(b"Last checked 2 weeks ago", place_response.data)
         self.assertIn(b"Accessible toilet confirmed", place_response.data)
+
+    def test_anonymous_search_hides_advanced_filters_and_verification_context(self):
+        with app.app_context():
+            place = Place(
+                name="Anonymous Filter Cafe",
+                slug="anonymous-filter-cafe",
+                address1="4 Market Square",
+                town="Northampton",
+                postcode="NN1 2AB",
+            )
+            db.session.add(place)
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    public_comments="Staff verified this entrance last month.",
+                    confidence_score=92,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=7),
+                    source="phone_verified",
+                )
+            )
+            db.session.commit()
+
+        response = self.client.get("/search?q=Anonymous+Filter&confidence=95&verification=recent&public_comments=has&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Anonymous Filter Cafe", response.data)
+        self.assertIn(b"Advanced filters are for signed-in members.", response.data)
+        self.assertNotIn(b"Last checked", response.data)
+        self.assertNotIn(b"Recently verified", response.data)
+        self.assertNotIn(b"Public comments", response.data)
+
+    def test_anonymous_place_page_hides_comments_and_verification_metadata(self):
+        with app.app_context():
+            place = Place(
+                name="Quiet Signals",
+                slug="quiet-signals",
+                address1="18 Station Road",
+                town="Northampton",
+                postcode="NN1 3CD",
+            )
+            db.session.add(place)
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    public_comments="Rear entrance has the easiest route.",
+                    confidence_score=88,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=10),
+                )
+            )
+            db.session.add(
+                Comment(
+                    place_id=place.id,
+                    user_email="member@example.com",
+                    body="The accessible toilet is near the back corridor.",
+                    is_public=True,
+                    status="approved",
+                )
+            )
+            db.session.commit()
+
+        response = self.client.get("/place/quiet-signals")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Sign in to unlock comments and verification detail.", response.data)
+        self.assertNotIn(b"Last checked", response.data)
+        self.assertNotIn(b"Rear entrance has the easiest route.", response.data)
+        self.assertNotIn(b"The accessible toilet is near the back corridor.", response.data)
 
     def test_developers_page_shows_upgrade_message_without_api_access(self):
         with app.app_context():

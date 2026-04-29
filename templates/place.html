@@ -47,28 +47,39 @@
           </div>
         {% endfor %}
       </div>
-      <div class="verification-inline">
-        <span class="{{ signal.verification.badge_class }}">{{ signal.verification.badge_label }}</span>
-        <span class="muted">{{ signal.verification.last_checked_copy }}</span>
-      </div>
-      {{ planira.signal_badges(signal, signal.key_facts[:2]) }}
+      {% if show_member_place_details %}
+        <div class="verification-inline">
+          <span class="{{ signal.verification.badge_class }}">{{ signal.verification.badge_label }}</span>
+          <span class="muted">{{ signal.verification.last_checked_copy }}</span>
+        </div>
+        {{ planira.signal_badges(signal, signal.key_facts[:2]) }}
+      {% else %}
+        <div class="tag-row">
+          <span class="status-badge status-{{ signal.tone }}">{{ signal.label }}</span>
+          {% for item in signal.key_facts[:2] %}
+            <span>{{ item }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
       <div class="signal-summary-grid">
         <article class="signal-summary-card signal-summary-card-priority">
           <strong>Toilet distance from bar</strong>
           <span>{{ signal.distance.value }}</span>
           <small>{{ signal.distance.highlight or 'This is one of the most useful planning signals for this page.' }}</small>
         </article>
-        <article class="signal-summary-card">
-          <strong>Verification</strong>
-          <span>{{ signal.verification.badge_label }}</span>
-          <small>
-            {% if signal.verification.date %}
-              Last checked {{ signal.verification.date }}
-            {% else %}
-              {{ signal.verification.last_checked_copy }}
-            {% endif %}
-          </small>
-        </article>
+        {% if show_member_place_details %}
+          <article class="signal-summary-card">
+            <strong>Verification</strong>
+            <span>{{ signal.verification.badge_label }}</span>
+            <small>
+              {% if signal.verification.date %}
+                Last checked {{ signal.verification.date }}
+              {% else %}
+                {{ signal.verification.last_checked_copy }}
+              {% endif %}
+            </small>
+          </article>
+        {% endif %}
       </div>
       {% if signal.warnings %}
         <div class="callout-list">
@@ -182,36 +193,43 @@
           <h2>Helpful notes from other Planira members</h2>
         </div>
       </div>
-      {% if current_user %}
-        <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="field-group">
-            <label for="comment-body">Add a note</label>
-            <textarea id="comment-body" name="body" placeholder="Add a useful note that could help someone plan ahead"></textarea>
-            <p class="helper-copy">Short, specific context is usually more useful than a long review.</p>
-          </div>
-          {{ turnstile.widget(turnstile_comment, 'Comment anti-abuse check') }}
-          <button>Share note</button>
-        </form>
-      {% else %}
-        <div class="empty-inline">
-          <strong>Sign in to add a note</strong>
-          <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> if you want to share practical context for this place.</p>
-        </div>
-      {% endif %}
-      <div class="comment-list">
-        {% for c in comments %}
-          <article class="comment-card">
-            <strong>{{ c.public_label }}</strong>
-            <p>{{ c.body }}</p>
-          </article>
+      {% if show_member_place_details %}
+        {% if current_user %}
+          <form method="post" action="{{ url_for('add_comment', slug=place.slug) }}" class="comment-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="field-group">
+              <label for="comment-body">Add a note</label>
+              <textarea id="comment-body" name="body" placeholder="Add a useful note that could help someone plan ahead"></textarea>
+              <p class="helper-copy">Short, specific context is usually more useful than a long review.</p>
+            </div>
+            {{ turnstile.widget(turnstile_comment, 'Comment anti-abuse check') }}
+            <button>Share note</button>
+          </form>
         {% else %}
           <div class="empty-inline">
-            <strong>No notes yet</strong>
-            <p class="muted">A short practical detail from the next visitor could make this page much more useful.</p>
+            <strong>Sign in to add a note</strong>
+            <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> if you want to share practical context for this place.</p>
           </div>
-        {% endfor %}
-      </div>
+        {% endif %}
+        <div class="comment-list">
+          {% for c in comments %}
+            <article class="comment-card">
+              <strong>{{ c.public_label }}</strong>
+              <p>{{ c.body }}</p>
+            </article>
+          {% else %}
+            <div class="empty-inline">
+              <strong>No notes yet</strong>
+              <p class="muted">A short practical detail from the next visitor could make this page much more useful.</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-inline">
+          <strong>Sign in to unlock comments and verification detail.</strong>
+          <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> for community notes and richer confidence context on this page.</p>
+        </div>
+      {% endif %}
     </article>
 
     {% if ads.slots.place_detail %}
@@ -232,14 +250,16 @@
       <span class="eyebrow">Before you go</span>
       <h2>Extra context</h2>
       <div class="stack-list">
-        <div class="stack-row">
-          <strong>Verification</strong>
-          <span>{{ signal.verification.badge_label }}{% if signal.verification.date %} · {{ signal.verification.date }}{% endif %}</span>
-        </div>
-        <div class="stack-row">
-          <strong>Public notes</strong>
-          <span>{{ profile.public_comments or 'No public notes yet. A short update from a future visitor could make this page much more helpful.' }}</span>
-        </div>
+        {% if show_member_place_details %}
+          <div class="stack-row">
+            <strong>Verification</strong>
+            <span>{{ signal.verification.badge_label }}{% if signal.verification.date %} · {{ signal.verification.date }}{% endif %}</span>
+          </div>
+          <div class="stack-row">
+            <strong>Public notes</strong>
+            <span>{{ profile.public_comments or 'No public notes yet. A short update from a future visitor could make this page much more helpful.' }}</span>
+          </div>
+        {% endif %}
         <div class="stack-row">
           <strong>Sensory notes</strong>
           <span>{{ profile.sensory_notes or 'We don’t have sensory notes on this place yet.' }}</span>

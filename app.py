@@ -144,7 +144,7 @@ SENSITIVE_ANALYTICS_PARAM_KEYS = {
     "postcode",
     "subject",
 }
-ANALYTICS_DISABLED_PATH_PREFIXES = ("/admin", "/staff", "/dashboard", "/obs")
+ANALYTICS_DISABLED_PATH_PREFIXES = PRIVATE_PATH_PREFIXES + ("/login",)
 ADS_DISABLED_PATH_PREFIXES = PRIVATE_PATH_PREFIXES + ("/login",)
 
 
@@ -157,6 +157,14 @@ def env_flag(name, default=False):
 
 def support_email_address():
     return (app.config.get("SUPPORT_EMAIL") or app.config.get("MAIL_DEFAULT_SENDER") or "").strip()
+
+
+def path_matches_prefix(path, prefix):
+    normalized_path = (path or "/").rstrip("/") or "/"
+    normalized_prefix = (prefix or "/").rstrip("/") or "/"
+    if normalized_prefix == "/":
+        return normalized_path == "/"
+    return normalized_path == normalized_prefix or normalized_path.startswith(f"{normalized_prefix}/")
 
 
 def secret_key_issues(secret_key):
@@ -1277,10 +1285,7 @@ def ads_enabled_for_environment():
 
 def ads_allowed_on_request_path(path=None):
     normalized_path = (path or request.path or "/").rstrip("/") or "/"
-    return not any(
-        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
-        for prefix in ADS_DISABLED_PATH_PREFIXES
-    )
+    return not any(path_matches_prefix(normalized_path, prefix) for prefix in ADS_DISABLED_PATH_PREFIXES)
 
 
 def ads_enabled_for_request():
@@ -1583,10 +1588,7 @@ def analytics_enabled_for_environment():
 
 def analytics_allowed_on_request_path(path=None):
     normalized_path = (path or request.path or "/").rstrip("/") or "/"
-    return not any(
-        normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
-        for prefix in ANALYTICS_DISABLED_PATH_PREFIXES
-    )
+    return not any(path_matches_prefix(normalized_path, prefix) for prefix in ANALYTICS_DISABLED_PATH_PREFIXES)
 
 
 def analytics_enabled_for_request():
@@ -2808,6 +2810,10 @@ def can_upload_place_images(user):
     if is_staff_user(user):
         return True
     return normalize_billing_plan_name(user) in {"paid", "business"}
+
+
+def can_view_member_place_details(user):
+    return bool(user)
 
 
 def can_delete_place_image(user, place_image):
@@ -4503,6 +4509,31 @@ def build_search_filter_state(args):
         "public_comments": normalize_search_choice(args.get("public_comments"), SEARCH_TEXT_PRESENCE_FILTERS),
         "source": normalize_search_choice(args.get("source"), {"", *SEARCH_PUBLIC_SOURCE_FILTERS}),
     }
+
+
+ANONYMOUS_SEARCH_FILTER_KEYS = (
+    "accessible",
+    "venue_type",
+    "toilets_available",
+    "step_free",
+    "stairs_inside",
+    "baby_changing",
+    "lift_available",
+    "disabled_parking",
+    "confidence",
+    "verification",
+    "toilet_distance",
+    "sensory_notes",
+    "public_comments",
+    "source",
+)
+
+
+def hide_anonymous_search_filters(filters):
+    sanitized_filters = dict(filters)
+    for key in ANONYMOUS_SEARCH_FILTER_KEYS:
+        sanitized_filters[key] = ""
+    return sanitized_filters
 
 
 def build_search_filter_payload(filters):
@@ -6252,7 +6283,10 @@ def search():
         user = None
 
     filters = build_search_filter_state(request.args)
+    if not user:
+        filters = hide_anonymous_search_filters(filters)
     public_filter_options = build_public_search_filter_options()
+    show_advanced_filters = bool(user)
     q = filters["q"]
     town = filters["town"]
     accessible = filters["accessible"]
@@ -6352,6 +6386,8 @@ def search():
                 pagination_args=pagination_args,
                 venue_type_options=public_filter_options["venue_type_options"],
                 source_options=public_filter_options["source_options"],
+                show_advanced_filters=show_advanced_filters,
+                show_premium_result_context=bool(user),
                 search_usage=search_usage,
                 show_search_usage=bool(user),
                 anonymous_feature_hint=not user,
@@ -6500,6 +6536,8 @@ def search():
         pagination_args=pagination_args,
         venue_type_options=public_filter_options["venue_type_options"],
         source_options=public_filter_options["source_options"],
+        show_advanced_filters=show_advanced_filters,
+        show_premium_result_context=bool(user),
         search_usage=search_usage,
         show_search_usage=bool(user),
         anonymous_feature_hint=not user,
@@ -6534,10 +6572,13 @@ def place_detail(slug):
     place = Place.query.filter_by(slug=slug).first_or_404()
     profile = get_or_create_profile(place)
     user = current_user_for_optional_request()
-    comment_query = Comment.query.filter_by(place_id=place.id, is_public=True)
-    if not is_staff_user(user):
-        comment_query = comment_query.filter_by(status="approved")
-    comments = comment_query.order_by(Comment.created_at.desc()).all()
+    show_member_place_details = can_view_member_place_details(user)
+    comments = []
+    if show_member_place_details:
+        comment_query = Comment.query.filter_by(place_id=place.id, is_public=True)
+        if not is_staff_user(user):
+            comment_query = comment_query.filter_by(status="approved")
+        comments = comment_query.order_by(Comment.created_at.desc()).all()
     place_images = (
         PlaceImage.query.filter_by(place_id=place.id, is_approved=True)
         .order_by(PlaceImage.created_at.desc())
@@ -6550,13 +6591,15 @@ def place_detail(slug):
             pending_place_images = pending_query.all()
         else:
             pending_place_images = pending_query.filter_by(user_id=user.id).all()
-    comment_rows = [
-        {
-            "public_label": build_public_author_label(comment.user_email),
-            "body": comment.body,
-        }
-        for comment in comments
-    ]
+    comment_rows = []
+    if show_member_place_details:
+        comment_rows = [
+            {
+                "public_label": build_public_author_label(comment.user_email),
+                "body": comment.body,
+            }
+            for comment in comments
+        ]
     signal = build_access_signal(profile)
     add_page_analytics_event(
         "place_viewed",
@@ -6575,6 +6618,7 @@ def place_detail(slug):
         can_upload_place_images=can_upload_place_images(user),
         get_place_image_url=get_place_image_url,
         signal=signal,
+        show_member_place_details=show_member_place_details,
         anonymous_feature_hint=not user,
         seo=build_seo_payload(
             title=f"{place.name} | {APP_NAME}",

@@ -41,147 +41,154 @@
           <button class="btn-primary-planira">Show places</button>
         </div>
 
-        <details class="search-advanced-panel" {% if venue_type or toilets_available or step_free or stairs_inside or baby_changing or lift_available or disabled_parking or confidence or verification or toilet_distance or sensory_notes or public_comments or source %}open{% endif %}>
-          <summary>Advanced filters</summary>
-          <div class="search-advanced-groups">
-            <section class="search-filter-group">
-              <h3>Access needs</h3>
-              <div class="search-advanced-grid">
-                <div class="field-group">
-                  <label for="search-toilets-available">Toilets available</label>
-                  <select id="search-toilets-available" name="toilets_available">
-                    <option value="" {% if toilets_available == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if toilets_available == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if toilets_available == 'no' %}selected{% endif %}>No</option>
-                    <option value="unknown" {% if toilets_available == 'unknown' %}selected{% endif %}>Unknown</option>
-                  </select>
+        {% if show_advanced_filters %}
+          <details class="search-advanced-panel" {% if venue_type or toilets_available or step_free or stairs_inside or baby_changing or lift_available or disabled_parking or confidence or verification or toilet_distance or sensory_notes or public_comments or source %}open{% endif %}>
+            <summary>Advanced filters</summary>
+            <div class="search-advanced-groups">
+              <section class="search-filter-group">
+                <h3>Access needs</h3>
+                <div class="search-advanced-grid">
+                  <div class="field-group">
+                    <label for="search-toilets-available">Toilets available</label>
+                    <select id="search-toilets-available" name="toilets_available">
+                      <option value="" {% if toilets_available == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if toilets_available == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if toilets_available == 'no' %}selected{% endif %}>No</option>
+                      <option value="unknown" {% if toilets_available == 'unknown' %}selected{% endif %}>Unknown</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-step-free">Step-free entrance</label>
+                    <select id="search-step-free" name="step_free">
+                      <option value="" {% if step_free == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if step_free == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if step_free == 'no' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-stairs-inside">Stairs inside</label>
+                    <select id="search-stairs-inside" name="stairs_inside">
+                      <option value="" {% if stairs_inside == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if stairs_inside == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if stairs_inside == 'no' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-baby-changing">Baby changing</label>
+                    <select id="search-baby-changing" name="baby_changing">
+                      <option value="" {% if baby_changing == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if baby_changing == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if baby_changing == 'no' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-lift-available">Lift available</label>
+                    <select id="search-lift-available" name="lift_available">
+                      <option value="" {% if lift_available == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if lift_available == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if lift_available == 'no' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-disabled-parking">Disabled parking</label>
+                    <select id="search-disabled-parking" name="disabled_parking">
+                      <option value="" {% if disabled_parking == '' %}selected{% endif %}>Any</option>
+                      <option value="yes" {% if disabled_parking == 'yes' %}selected{% endif %}>Yes</option>
+                      <option value="no" {% if disabled_parking == 'no' %}selected{% endif %}>No</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field-group">
-                  <label for="search-step-free">Step-free entrance</label>
-                  <select id="search-step-free" name="step_free">
-                    <option value="" {% if step_free == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if step_free == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if step_free == 'no' %}selected{% endif %}>No</option>
-                  </select>
-                </div>
-                <div class="field-group">
-                  <label for="search-stairs-inside">Stairs inside</label>
-                  <select id="search-stairs-inside" name="stairs_inside">
-                    <option value="" {% if stairs_inside == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if stairs_inside == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if stairs_inside == 'no' %}selected{% endif %}>No</option>
-                  </select>
-                </div>
-                <div class="field-group">
-                  <label for="search-baby-changing">Baby changing</label>
-                  <select id="search-baby-changing" name="baby_changing">
-                    <option value="" {% if baby_changing == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if baby_changing == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if baby_changing == 'no' %}selected{% endif %}>No</option>
-                  </select>
-                </div>
-                <div class="field-group">
-                  <label for="search-lift-available">Lift available</label>
-                  <select id="search-lift-available" name="lift_available">
-                    <option value="" {% if lift_available == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if lift_available == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if lift_available == 'no' %}selected{% endif %}>No</option>
-                  </select>
-                </div>
-                <div class="field-group">
-                  <label for="search-disabled-parking">Disabled parking</label>
-                  <select id="search-disabled-parking" name="disabled_parking">
-                    <option value="" {% if disabled_parking == '' %}selected{% endif %}>Any</option>
-                    <option value="yes" {% if disabled_parking == 'yes' %}selected{% endif %}>Yes</option>
-                    <option value="no" {% if disabled_parking == 'no' %}selected{% endif %}>No</option>
-                  </select>
-                </div>
-              </div>
-            </section>
+              </section>
 
-            <section class="search-filter-group">
-              <h3>Visit confidence</h3>
-              <div class="search-advanced-grid">
-                <div class="field-group">
-                  <label for="search-confidence">Confidence</label>
-                  <select id="search-confidence" name="confidence">
-                    <option value="" {% if confidence == '' %}selected{% endif %}>Any</option>
-                    <option value="70" {% if confidence == '70' %}selected{% endif %}>70+</option>
-                    <option value="85" {% if confidence == '85' %}selected{% endif %}>85+</option>
-                    <option value="95" {% if confidence == '95' %}selected{% endif %}>95+</option>
-                  </select>
+              <section class="search-filter-group">
+                <h3>Visit confidence</h3>
+                <div class="search-advanced-grid">
+                  <div class="field-group">
+                    <label for="search-confidence">Confidence</label>
+                    <select id="search-confidence" name="confidence">
+                      <option value="" {% if confidence == '' %}selected{% endif %}>Any</option>
+                      <option value="70" {% if confidence == '70' %}selected{% endif %}>70+</option>
+                      <option value="85" {% if confidence == '85' %}selected{% endif %}>85+</option>
+                      <option value="95" {% if confidence == '95' %}selected{% endif %}>95+</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-verification">Verification</label>
+                    <select id="search-verification" name="verification">
+                      <option value="" {% if verification == '' %}selected{% endif %}>Any</option>
+                      <option value="recent" {% if verification == 'recent' %}selected{% endif %}>Recently verified</option>
+                      <option value="needs_verification" {% if verification == 'needs_verification' %}selected{% endif %}>Needs verification</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-source">Source</label>
+                    <select id="search-source" name="source">
+                      <option value="" {% if source == '' %}selected{% endif %}>Any</option>
+                      {% for option in source_options %}
+                        <option value="{{ option.value }}" {% if source == option.value %}selected{% endif %}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
                 </div>
-                <div class="field-group">
-                  <label for="search-verification">Verification</label>
-                  <select id="search-verification" name="verification">
-                    <option value="" {% if verification == '' %}selected{% endif %}>Any</option>
-                    <option value="recent" {% if verification == 'recent' %}selected{% endif %}>Recently verified</option>
-                    <option value="needs_verification" {% if verification == 'needs_verification' %}selected{% endif %}>Needs verification</option>
-                  </select>
-                </div>
-                <div class="field-group">
-                  <label for="search-source">Source</label>
-                  <select id="search-source" name="source">
-                    <option value="" {% if source == '' %}selected{% endif %}>Any</option>
-                    {% for option in source_options %}
-                      <option value="{{ option.value }}" {% if source == option.value %}selected{% endif %}>{{ option.label }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-              </div>
-            </section>
+              </section>
 
-            <section class="search-filter-group">
-              <h3>Place details</h3>
-              <div class="search-advanced-grid">
-                <div class="field-group">
-                  <label for="search-venue-type">Venue type</label>
-                  <select id="search-venue-type" name="venue_type">
-                    <option value="" {% if venue_type == '' %}selected{% endif %}>Any</option>
-                    {% for option in venue_type_options %}
-                      <option value="{{ option.value }}" {% if venue_type == option.value %}selected{% endif %}>{{ option.label }}</option>
-                    {% endfor %}
-                  </select>
+              <section class="search-filter-group">
+                <h3>Place details</h3>
+                <div class="search-advanced-grid">
+                  <div class="field-group">
+                    <label for="search-venue-type">Venue type</label>
+                    <select id="search-venue-type" name="venue_type">
+                      <option value="" {% if venue_type == '' %}selected{% endif %}>Any</option>
+                      {% for option in venue_type_options %}
+                        <option value="{{ option.value }}" {% if venue_type == option.value %}selected{% endif %}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-toilet-distance">Toilet distance from bar</label>
+                    <select id="search-toilet-distance" name="toilet_distance">
+                      <option value="" {% if toilet_distance == '' %}selected{% endif %}>Any</option>
+                      <option value="recorded" {% if toilet_distance == 'recorded' %}selected{% endif %}>Recorded</option>
+                      <option value="short" {% if toilet_distance == 'short' %}selected{% endif %}>Short distance</option>
+                      <option value="unknown" {% if toilet_distance == 'unknown' %}selected{% endif %}>Unknown or missing</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field-group">
-                  <label for="search-toilet-distance">Toilet distance from bar</label>
-                  <select id="search-toilet-distance" name="toilet_distance">
-                    <option value="" {% if toilet_distance == '' %}selected{% endif %}>Any</option>
-                    <option value="recorded" {% if toilet_distance == 'recorded' %}selected{% endif %}>Recorded</option>
-                    <option value="short" {% if toilet_distance == 'short' %}selected{% endif %}>Short distance</option>
-                    <option value="unknown" {% if toilet_distance == 'unknown' %}selected{% endif %}>Unknown or missing</option>
-                  </select>
-                </div>
-              </div>
-            </section>
+              </section>
 
-            <section class="search-filter-group">
-              <h3>Extra information</h3>
-              <div class="search-advanced-grid">
-                <div class="field-group">
-                  <label for="search-sensory-notes">Sensory notes</label>
-                  <select id="search-sensory-notes" name="sensory_notes">
-                    <option value="" {% if sensory_notes == '' %}selected{% endif %}>Any</option>
-                    <option value="has" {% if sensory_notes == 'has' %}selected{% endif %}>Has notes</option>
-                    <option value="missing" {% if sensory_notes == 'missing' %}selected{% endif %}>Missing</option>
-                  </select>
+              <section class="search-filter-group">
+                <h3>Extra information</h3>
+                <div class="search-advanced-grid">
+                  <div class="field-group">
+                    <label for="search-sensory-notes">Sensory notes</label>
+                    <select id="search-sensory-notes" name="sensory_notes">
+                      <option value="" {% if sensory_notes == '' %}selected{% endif %}>Any</option>
+                      <option value="has" {% if sensory_notes == 'has' %}selected{% endif %}>Has notes</option>
+                      <option value="missing" {% if sensory_notes == 'missing' %}selected{% endif %}>Missing</option>
+                    </select>
+                  </div>
+                  <div class="field-group">
+                    <label for="search-public-comments">Public comments</label>
+                    <select id="search-public-comments" name="public_comments">
+                      <option value="" {% if public_comments == '' %}selected{% endif %}>Any</option>
+                      <option value="has" {% if public_comments == 'has' %}selected{% endif %}>Has comments</option>
+                      <option value="missing" {% if public_comments == 'missing' %}selected{% endif %}>Missing</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field-group">
-                  <label for="search-public-comments">Public comments</label>
-                  <select id="search-public-comments" name="public_comments">
-                    <option value="" {% if public_comments == '' %}selected{% endif %}>Any</option>
-                    <option value="has" {% if public_comments == 'has' %}selected{% endif %}>Has comments</option>
-                    <option value="missing" {% if public_comments == 'missing' %}selected{% endif %}>Missing</option>
-                  </select>
-                </div>
-              </div>
-            </section>
+              </section>
+            </div>
+            <div class="search-advanced-actions">
+              <span class="muted">Use advanced filters when you want tighter control without dumping the whole venue list.</span>
+              <a class="planira-button-quiet search-filter-reset" href="{{ url_for('search') }}">Clear filters</a>
+            </div>
+          </details>
+        {% else %}
+          <div class="empty-inline">
+            <strong>Advanced filters are for signed-in members.</strong>
+            <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> to unlock richer filters and verification context.</p>
           </div>
-          <div class="search-advanced-actions">
-            <span class="muted">Use advanced filters when you want tighter control without dumping the whole venue list.</span>
-            <a class="planira-button-quiet search-filter-reset" href="{{ url_for('search') }}">Clear filters</a>
-          </div>
-        </details>
+        {% endif %}
       </form>
       <p class="helper-copy">Search by venue name first, then narrow by town or accessibility detail if you need to. Results only appear after a deliberate search so the workspace stays calm and intentional.</p>
     </article>
@@ -223,7 +230,7 @@
     {% if result_cards %}
       <div class="card-grid">
         {% for card in result_cards %}
-          {{ planira.result_card(card) }}
+          {{ planira.result_card(card, show_premium_context=show_premium_result_context) }}
           {% if loop.index % 5 == 0 and ads.slots.search_results %}
             {% with
               placement='search_results',

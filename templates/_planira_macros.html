@@ -32,19 +32,26 @@
   </span>
 {%- endmacro %}
 
-{% macro result_card(card, detail_url=None, link_text='Open place details') -%}
+{% macro result_card(card, detail_url=None, link_text='Open place details', show_premium_context=True) -%}
   {% set href = detail_url or url_for('place_detail', slug=card.place.slug) %}
   <a class="result-card planira-card interactive-panel" href="{{ href }}">
     <div class="result-topline result-topline-compact">
       <span class="venue-type">{{ card.place.venue_type or 'place' }}</span>
-      {% if card.signal.verification.relative_time %}
+      {% if show_premium_context and card.signal.verification.relative_time %}
         <span class="result-card-timestamp">Last checked {{ card.signal.verification.relative_time }}</span>
       {% endif %}
     </div>
     <h3>{{ card.place.name }}</h3>
     <p class="muted">{{ card.place.address1 }} {{ card.place.town }} {{ card.place.postcode }}</p>
-    {{ signal_badges(card.signal) }}
-    <p class="result-meta muted">Open the place page for the full signal, notes, and recent verification context.</p>
+    {% if show_premium_context %}
+      {{ signal_badges(card.signal) }}
+      <p class="result-meta muted">Open the place page for the full signal, notes, and recent verification context.</p>
+    {% else %}
+      <div class="tag-row">
+        <span class="status-badge status-{{ card.signal.tone }}">{{ card.signal.label }}</span>
+      </div>
+      <p class="result-meta muted">Sign in to unlock comments, verification context, and richer place detail.</p>
+    {% endif %}
     <div class="tag-row result-fact-row">
       {% for item in card.key_bits %}
         <span>{{ item }}</span>
