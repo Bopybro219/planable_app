@@ -2,7 +2,7 @@
 
 Planira is a Flask app for:
 
-- Google-login-gated venue search
+- anonymous read-only venue search and place browsing
 - accessibility profiles with verification metadata
 - admin calling workflows
 - OBS browser-source widgets
@@ -206,12 +206,12 @@ Public:
 
 - `/`
 - `/plans`
+- `/search`
+- `/place/<slug>`
 - `/health`
 
 Authenticated:
 
-- `/search`
-- `/place/<slug>`
 - `/account`
 
 Admin:

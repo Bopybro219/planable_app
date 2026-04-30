@@ -5,7 +5,7 @@
   <div class="page-title-group">
     <span class="eyebrow">Plans and access</span>
     <h1>Plans</h1>
-    <p class="page-subtitle">Choose the level of search and access context that fits how often you rely on Planira.</p>
+    <p class="page-subtitle">Know before you go with confidence. Free search stays useful; Planira Plus adds the deeper signals for decisions that need more certainty.</p>
   </div>
 </section>
 
@@ -33,7 +33,7 @@
 <section class="pricing-grid">
   {% for tier in tiers %}
     {% set is_active = tier.key == active_key %}
-    <article class="planira-pricing-card pricing-card {% if tier.name == 'Paid consumer' %}featured{% endif %} {% if is_active %}active-plan{% endif %}">
+    <article id="{{ tier.key|replace('_', '-') }}" class="planira-pricing-card pricing-card {% if tier.key == 'paid_consumer' %}featured{% endif %} {% if is_active %}active-plan{% endif %}">
       <div class="pricing-card-head">
         <div>
           <span class="eyebrow">{{ tier.key|replace('_', ' ') }}</span>
@@ -45,7 +45,7 @@
       <p class="helper-copy">{{ tier.limit_label }}: {{ tier.search_limit_copy }}</p>
       <ul class="feature-list">
         {% for feature in tier.features %}
-          <li>{{ feature }}</li>
+          <li>&#10003; {{ feature }}</li>
         {% endfor %}
       </ul>
       <p class="helper-copy">{{ tier.credits_copy }}</p>
@@ -69,6 +69,56 @@
       </div>
     </article>
   {% endfor %}
+</section>
+
+<section class="planira-card planira-card-soft">
+  <div class="section-head">
+    <div>
+      <span class="eyebrow">Free vs paid</span>
+      <h2>Clear boundaries, no surprises</h2>
+    </div>
+  </div>
+  <div class="comparison-table-wrap">
+    <table class="comparison-table">
+      <thead>
+        <tr>
+          <th>Benefit</th>
+          <th>Free</th>
+          <th>Planira Plus</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Basic search and place info</td>
+          <td>&#10003; included</td>
+          <td>&#10003; included</td>
+        </tr>
+        <tr>
+          <td>Advanced accessibility filter combinations</td>
+          <td>&mdash; not included</td>
+          <td>&#10003; included</td>
+        </tr>
+        <tr>
+          <td>Verified-only results</td>
+          <td>&mdash; not included</td>
+          <td>&#10003; included</td>
+        </tr>
+        <tr>
+          <td>Confidence scores and richer visit insights</td>
+          <td>&mdash; not included</td>
+          <td>&#10003; included</td>
+        </tr>
+        <tr>
+          <td>Developer API allowance</td>
+          <td>Small or unavailable allowance</td>
+          <td>Higher limits where enabled</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pricing-card-footer">
+    <a class="btn-primary-planira" href="#paid-consumer">Upgrade to Planira Plus</a>
+  </div>
 </section>
 
 <section class="insight-grid">

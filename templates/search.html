@@ -20,6 +20,12 @@
         <p class="muted">Sign in to save places, contribute, and access more features.</p>
       </article>
     {% endif %}
+    {% if premium_upgrade_message %}
+      <article class="planira-card planira-card-soft">
+        <strong>{{ premium_upgrade_message }}</strong>
+        <p class="muted"><a href="{{ url_for('plans') }}">Upgrade to Planira Plus</a> to combine accessibility filters, verified-only results, and confidence scores.</p>
+      </article>
+    {% endif %}
     <article class="planira-card planira-card-primary search-control-panel">
       <div class="section-head">
         <div>
@@ -116,6 +122,7 @@
                     <label for="search-verification">Verification</label>
                     <select id="search-verification" name="verification">
                       <option value="" {% if verification == '' %}selected{% endif %}>Any</option>
+                      <option value="verified_only" {% if verification == 'verified_only' %}selected{% endif %}>Verified only</option>
                       <option value="recent" {% if verification == 'recent' %}selected{% endif %}>Recently verified</option>
                       <option value="needs_verification" {% if verification == 'needs_verification' %}selected{% endif %}>Needs verification</option>
                     </select>
@@ -185,8 +192,8 @@
           </details>
         {% else %}
           <div class="empty-inline">
-            <strong>Advanced filters are for signed-in members.</strong>
-            <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> to unlock richer filters and verification context.</p>
+            <strong>Advanced filters are available with Planira Plus.</strong>
+            <p class="muted">Use basic search for free, or <a href="{{ url_for('plans') }}">upgrade to Planira Plus</a> for accessibility combinations, verified-only results, and confidence scores.</p>
           </div>
         {% endif %}
       </form>
@@ -279,12 +286,13 @@
         </div>
       </article>
     {% elif submitted %}
-      
+
     {% else %}
-     
+
     {% endif %}
   </div>
 
+  <aside class="supporting-stack">
     <article class="planira-card planira-card-soft">
       {% if show_search_usage %}
         <span class="eyebrow">Your plan</span>

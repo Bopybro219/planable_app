@@ -81,7 +81,7 @@
           </article>
         {% endif %}
       </div>
-      {% if signal.warnings %}
+      {% if show_member_place_details and signal.warnings %}
         <div class="callout-list">
           {% for item in signal.warnings %}
             <div class="callout-chip callout-chip-warning">{{ item }}</div>
@@ -226,8 +226,8 @@
         </div>
       {% else %}
         <div class="empty-inline">
-          <strong>Sign in to unlock comments and verification detail.</strong>
-          <p class="muted"><a href="{{ url_for('login', next=request.path) }}">Log in with Google</a> for community notes and richer confidence context on this page.</p>
+          <strong>{{ premium_place_unlock_message }}</strong>
+          <p class="muted"><a href="{{ url_for('plans') }}">Upgrade to Planira Plus</a> for community notes, confidence scores, and recent verification context.</p>
         </div>
       {% endif %}
     </article>
@@ -259,15 +259,21 @@
             <strong>Public notes</strong>
             <span>{{ profile.public_comments or 'No public notes yet. A short update from a future visitor could make this page much more helpful.' }}</span>
           </div>
-        {% endif %}
-        <div class="stack-row">
-          <strong>Sensory notes</strong>
-          <span>{{ profile.sensory_notes or 'We don’t have sensory notes on this place yet.' }}</span>
-        </div>
-        {% if signal.highlights %}
           <div class="stack-row">
-            <strong>Quick highlights</strong>
-            <span>{{ signal.highlights|join(' • ') }}</span>
+            <strong>Sensory notes</strong>
+            <span>{{ profile.sensory_notes or 'We don’t have sensory notes on this place yet.' }}</span>
+          </div>
+          {% if signal.highlights %}
+            <div class="stack-row">
+              <strong>Quick highlights</strong>
+              <span>{{ signal.highlights|join(' • ') }}</span>
+            </div>
+          {% endif %}
+        {% else %}
+          {# Anonymous visitors get the basic venue/accessibility summary only; notes, comments, confidence, and verification metadata are member detail. #}
+          <div class="stack-row">
+            <strong>{{ premium_place_unlock_message }}</strong>
+            <span><a href="{{ url_for('plans') }}">Upgrade to Planira Plus</a> for notes, confidence scores, and recent verification context.</span>
           </div>
         {% endif %}
       </div>

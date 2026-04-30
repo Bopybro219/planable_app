@@ -152,6 +152,8 @@ Planira uses two separate limiting concepts. Clients should handle them differen
 
 These are product/account limits tied to the API key and the key owner's access.
 
+- free tier: a small or unavailable API allowance, depending on whether API access has been provisioned for the account
+- paid tiers: higher monthly lookup allowances, extra lookup credits, or business/API access where enabled
 - monthly lookup allowance
 - extra lookup credits
 - purchased or provisioned API access
@@ -161,7 +163,14 @@ When this limit is exhausted, the request is valid but the key has no remaining 
 ```json
 {
   "error": "limit_reached",
-  "message": "This API key has used its available lookup allowance."
+  "message": "This API key has used its available lookup allowance.",
+  "limit_type": "quota",
+  "quota": {
+    "lookups_used": 100,
+    "lookup_limit": 100,
+    "lookup_credits_remaining": 0
+  },
+  "upgrade_url": "https://planira.example/plans"
 }
 ```
 
@@ -173,6 +182,7 @@ These are short-term protective limits designed to slow scraping, bursts, and ac
 
 - repeated authentication failures are throttled
 - `/api/v1/places/search` has additional request-rate throttling
+- write endpoints have additional per-key and per-IP request throttling
 - throttling is separate from monthly/API-pack usage accounting
 
 Abuse throttling returns `429 Too Many Requests` with a `rate_limited` error.
@@ -194,7 +204,17 @@ Content-Type: application/json
 
 {
   "error": "rate_limited",
-  "message": "Too many API search requests. Please wait and try again."
+  "message": "Too many API search requests. Please wait and try again.",
+  "limit_type": "abuse_throttle"
+}
+```
+
+Write throttling uses the same `rate_limited` error shape with a write-specific message:
+
+```json
+{
+  "error": "rate_limited",
+  "message": "Too many API write requests. Please wait and try again."
 }
 ```
 
@@ -673,7 +693,7 @@ Conflicting verification values:
 
 ## Current implementation notes
 
-- The API is defined in [app.py](/home/bopybro/Desktop/planable_app/app.py).
+- The API is defined in the Flask application module.
 - Read endpoint: `api_places_search`
 - Write endpoints: `api_create_place`, `api_update_place`
 - Auth helper: `authenticate_api_key`
