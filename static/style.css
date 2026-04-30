@@ -104,7 +104,7 @@ textarea { min-height:110px; }
   min-width:220px;
 }
 
-.btn, button {
+.btn {
   background:var(--primary);
   color:white!important;
   border:0;
@@ -1854,7 +1854,6 @@ body {
 }
 
 /* Buttons */
-button,
 .btn,
 .btn-primary-planira,
 .planira-button-primary {
@@ -2277,7 +2276,6 @@ body.planira-theme-calm .planira-staff-menu-link[aria-current="page"] {
   border-color: rgba(37, 99, 235, 0.16);
 }
 
-body.planira-theme-calm button,
 body.planira-theme-calm .btn,
 body.planira-theme-calm .btn-primary-planira,
 body.planira-theme-calm .planira-button-primary {
@@ -3271,5 +3269,225 @@ body.planira-theme-calm .planira-staff-dropdown-toggle:focus-visible {
     width: 24px;
     height: 24px;
     justify-self: end;
+  }
+}
+
+/* Focused consistency fixes for the calm UI layer. */
+body.planira-theme-calm .toast-close,
+body.planira-theme-calm .planira-footer-link-button,
+body.planira-theme-calm .copy-phone-button,
+body.planira-theme-calm .place-image-delete-form button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+body.planira-theme-calm .toast-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  color: var(--color-muted) !important;
+  line-height: 1;
+}
+
+body.planira-theme-calm .toast-close:hover {
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--color-text) !important;
+  box-shadow: none;
+}
+
+body.planira-theme-calm .planira-footer-link-button {
+  display: inline;
+  color: inherit !important;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+body.planira-theme-calm .planira-footer-link-button:hover {
+  color: var(--color-primary) !important;
+  box-shadow: none;
+}
+
+body.planira-theme-calm .toast {
+  border-left: 4px solid rgba(100, 116, 139, 0.26);
+}
+
+body.planira-theme-calm .toast-success {
+  border-left-color: var(--color-success);
+  background: linear-gradient(180deg, rgba(246, 254, 249, 0.98), rgba(241, 253, 246, 0.98));
+}
+
+body.planira-theme-calm .toast-error,
+body.planira-theme-calm .toast-danger {
+  border-left-color: var(--color-danger);
+  background: linear-gradient(180deg, rgba(255, 247, 247, 0.98), rgba(254, 242, 242, 0.98));
+}
+
+body.planira-theme-calm .toast-warning {
+  border-left-color: var(--color-warning);
+  background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(254, 249, 231, 0.98));
+}
+
+body.planira-theme-calm .toast-info,
+body.planira-theme-calm .toast-message {
+  border-left-color: var(--color-primary);
+}
+
+body.planira-theme-calm .planira-consent-option {
+  background: rgba(248, 250, 252, 0.92);
+  border-color: rgba(37, 99, 235, 0.12);
+  color: var(--color-text);
+}
+
+body.planira-theme-calm .planira-consent-option small,
+body.planira-theme-calm .planira-consent-card .muted,
+body.planira-theme-calm .planira-consent-card small {
+  color: var(--color-muted);
+}
+
+body.planira-theme-calm .planira-ad-shell {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(245, 248, 255, 0.92));
+  border-color: rgba(100, 116, 139, 0.18);
+  box-shadow: var(--shadow-soft);
+}
+
+body.planira-theme-calm .planira-ad-shell-label {
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--color-muted);
+  border: 1px solid rgba(100, 116, 139, 0.14);
+}
+
+body.planira-theme-calm input[readonly],
+body.planira-theme-calm textarea[readonly] {
+  background: rgba(241, 245, 249, 0.82);
+  color: var(--color-text);
+  border-style: dashed;
+  border-color: rgba(100, 116, 139, 0.28);
+  box-shadow: none;
+  cursor: default;
+}
+
+body.planira-theme-calm input[readonly]:focus,
+body.planira-theme-calm textarea[readonly]:focus {
+  border-color: rgba(100, 116, 139, 0.36);
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.1);
+}
+
+body.planira-theme-calm input[readonly]::selection,
+body.planira-theme-calm textarea[readonly]::selection {
+  background: rgba(37, 99, 235, 0.16);
+}
+
+body.planira-theme-calm .action-card:focus-visible,
+body.planira-theme-calm .planira-staff-menu-link:focus-visible,
+body.planira-theme-calm .planira-footer-link-button:focus-visible,
+body.planira-theme-calm .planira-button-quiet:focus-visible,
+body.planira-theme-calm .planira-button-admin:focus-visible,
+body.planira-theme-calm .planira-button-danger:focus-visible,
+body.planira-theme-calm .planira-button-secondary:focus-visible,
+body.planira-theme-calm .btn-secondary-planira:focus-visible,
+body.planira-theme-calm .row-actions a:focus-visible,
+body.planira-theme-calm .row-actions button:focus-visible,
+body.planira-theme-calm .admin-user-table-actions a:focus-visible,
+body.planira-theme-calm .admin-user-table-actions button:focus-visible,
+body.planira-theme-calm .toast-close:focus-visible,
+body.planira-theme-calm .copy-phone-button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: 2px;
+}
+
+body.planira-theme-calm .action-card:focus-visible,
+body.planira-theme-calm .row-actions a:focus-visible,
+body.planira-theme-calm .row-actions button:focus-visible,
+body.planira-theme-calm .admin-user-table-actions a:focus-visible,
+body.planira-theme-calm .admin-user-table-actions button:focus-visible {
+  border-color: rgba(37, 99, 235, 0.28);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+body.planira-theme-calm .table-row {
+  grid-template-columns: minmax(0, 1.35fr) minmax(160px, 0.8fr) minmax(120px, auto) minmax(220px, max-content);
+}
+
+body.planira-theme-calm .row-actions {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+body.planira-theme-calm .table-row > .row-actions:last-child {
+  grid-column: -2 / -1;
+}
+
+body.planira-theme-calm .row-actions form {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+body.planira-theme-calm .admin-user-table-actions {
+  gap: 8px;
+}
+
+body.planira-theme-calm .admin-user-table-actions a,
+body.planira-theme-calm .admin-user-table-actions button {
+  min-height: 38px;
+}
+
+body.planira-theme-calm .row-actions .planira-button-danger,
+body.planira-theme-calm .row-actions .button-disabled.planira-button-danger,
+body.planira-theme-calm .admin-detail-actions .planira-button-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.22);
+  box-shadow: none;
+}
+
+body.planira-theme-calm .row-actions .planira-button-quiet,
+body.planira-theme-calm .admin-detail-actions .planira-button-quiet {
+  background: rgba(100, 116, 139, 0.08);
+  color: var(--color-text);
+  border-color: rgba(100, 116, 139, 0.16);
+}
+
+body.planira-theme-calm .button-disabled,
+body.planira-theme-calm .button-disabled:hover,
+body.planira-theme-calm .button-disabled:focus {
+  opacity: 0.62;
+  transform: none;
+  box-shadow: none;
+}
+
+@media (max-width: 980px) {
+  body.planira-theme-calm .table-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.planira-theme-calm .table-row > .row-actions:last-child {
+    grid-column: auto;
+  }
+
+  body.planira-theme-calm .row-actions {
+    justify-content: stretch;
+  }
+}
+
+@media (max-width: 720px) {
+  body.planira-theme-calm .row-actions form {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  body.planira-theme-calm .row-actions a,
+  body.planira-theme-calm .row-actions button {
+    width: 100%;
+    justify-content: center;
   }
 }
