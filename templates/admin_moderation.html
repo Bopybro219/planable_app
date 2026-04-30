@@ -13,7 +13,7 @@
   <div class="table-header">
     <div>
       <span class="eyebrow">Queue</span>
-      <h2>{{ moderation_items|length }} items awaiting review</h2>
+      <h2>{{ moderation_total }} items awaiting review</h2>
     </div>
     <span class="helper-copy">Approve, reject, or edit before approval.</span>
   </div>
@@ -42,14 +42,14 @@
             <input id="approve-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
             <button type="submit" class="btn-primary-planira btn-small">Approve</button>
           </form>
-          <form method="post" action="{% if item.kind == 'image' %}{{ url_for('moderate_place_image', image_id=item.id) }}{% else %}{{ url_for('moderate_comment', comment_id=item.id) }}{% endif %}">
+          <form method="post" action="{% if item.kind == 'image' %}{{ url_for('moderate_place_image', image_id=item.id) }}{% else %}{{ url_for('moderate_comment', comment_id=item.id) }}{% endif %}" {% if item.kind == 'image' %}onsubmit="return confirm('Reject this image and delete the uploaded file?');"{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="reject">
             <label class="sr-only" for="reject-reason-{{ item.id }}">Optional reason for rejection</label>
             <input id="reject-reason-{{ item.id }}" type="text" name="moderation_reason" placeholder="Optional reason">
             <button type="submit" class="btn-secondary-planira btn-small">Reject</button>
           </form>
-          <a class="btn-secondary-planira btn-small" href="{{ item.edit_url }}">{% if item.kind == 'image' %}Open place{% else %}Edit before approve{% endif %}</a>
+          <a class="btn-secondary-planira btn-small" href="{{ item.edit_url }}">Open public page</a>
         </div>
       </article>
     {% else %}
@@ -60,5 +60,21 @@
       </article>
     {% endfor %}
   </div>
+  {% if moderation_prev_page or moderation_has_more %}
+    <nav class="pagination-nav" aria-label="Moderation pages">
+      <div class="pagination-summary">
+        <strong>Page {{ moderation_page }}</strong>
+        <span class="muted">Older pending items stay available as the queue grows.</span>
+      </div>
+      <div class="pagination-links">
+        {% if moderation_prev_page %}
+          <a class="btn-secondary-planira" href="{{ url_for('admin_moderation', page=moderation_prev_page) }}">Previous</a>
+        {% endif %}
+        {% if moderation_has_more %}
+          <a class="btn-secondary-planira" href="{{ url_for('admin_moderation', page=moderation_next_page) }}">View more</a>
+        {% endif %}
+      </div>
+    </nav>
+  {% endif %}
 </section>
 {% endblock %}

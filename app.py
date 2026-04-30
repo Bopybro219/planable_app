@@ -112,6 +112,9 @@ API_PACK_DISABLED_MESSAGE = (
 API_PACK_ACCESS_DISABLED_MESSAGE = (
     "API pack access is temporarily unavailable while lookup-credit accounting is being finished."
 )
+PREMIUM_FILTER_UPGRADE_MESSAGE = "Advanced filters are available with Planira Plus."
+PREMIUM_PLACE_UNLOCK_MESSAGE = "Unlock community insights and confidence scores"
+FREE_USAGE_LIMIT_MESSAGE = "You've reached your free usage limit. Upgrade for more."
 RATE_LIMIT_ERROR_MESSAGE = "Too many requests. Please wait a moment and try again."
 _RATE_LIMIT_STATE = defaultdict(deque)
 _RATE_LIMIT_LOCK = threading.Lock()
@@ -267,6 +270,10 @@ API_KEY_TEST_PREFIX = "plnr_test_"
 API_KEY_LIVE_PREFIX = "plnr_live_"
 API_KEY_PATTERN = re.compile(r"^plnr_(?:live|test)_[A-Za-z0-9_-]{24,}$")
 CONTACT_PHONE = os.getenv("PUBLIC_CONTACT_PHONE", "01604 289096").strip() or "01604 289096"
+PUBLIC_SEARCH_RATE_LIMIT = int(os.getenv("PUBLIC_SEARCH_RATE_LIMIT", "30"))
+PUBLIC_SEARCH_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("PUBLIC_SEARCH_RATE_LIMIT_WINDOW_SECONDS", "3600"))
+API_WRITE_RATE_LIMIT_BURST = int(os.getenv("API_WRITE_RATE_LIMIT_BURST", "30"))
+API_WRITE_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("API_WRITE_RATE_LIMIT_WINDOW_SECONDS", "3600"))
 API_ACCESS_REQUIRED_MESSAGE = "API access requires an active Planira API or Early Access plan."
 DEFAULT_MEMBER_ROLE = "member"
 PLACE_WRITE_STATUS_VALUES = {"needs_call", "calling", "callback", "verified"}
@@ -593,6 +600,11 @@ def missing_config_keys():
         missing.append(f"SECRET_KEY ({', '.join(secret_issues)})")
 
     if is_production():
+        configured_database_url = (app.config.get("SQLALCHEMY_DATABASE_URI") or "").strip()
+        if not os.getenv("DATABASE_URL", "").strip():
+            missing.append("DATABASE_URL")
+        elif is_sqlite_database_uri(configured_database_url) or not is_postgresql_database_uri(configured_database_url):
+            missing.append("DATABASE_URL must be PostgreSQL in production")
         if not os.getenv("GOOGLE_CLIENT_ID", "").strip():
             missing.append("GOOGLE_CLIENT_ID")
         if not os.getenv("GOOGLE_CLIENT_SECRET", "").strip():
@@ -619,7 +631,17 @@ def missing_config_keys():
             missing.append("CLOUDFLARE_TURNSTILE_SITE_KEY")
         if not app.config.get("CLOUDFLARE_TURNSTILE_SECRET_KEY"):
             missing.append("CLOUDFLARE_TURNSTILE_SECRET_KEY")
+        if not app.config.get("STRIPE_SECRET_KEY"):
+            missing.append("STRIPE_SECRET_KEY")
+        if not app.config.get("STRIPE_PUBLISHABLE_KEY"):
+            missing.append("STRIPE_PUBLISHABLE_KEY")
+        if not app.config.get("STRIPE_WEBHOOK_SECRET"):
+            missing.append("STRIPE_WEBHOOK_SECRET")
+        if not os.getenv("STRIPE_PRICE_PAID_CONSUMER", "").strip():
+            missing.append("STRIPE_PRICE_PAID_CONSUMER")
         if app.config.get("EMAIL_ENABLED"):
+            if app.config.get("EMAIL_DEV_MODE"):
+                missing.append("EMAIL_DEV_MODE=false")
             if not app.config.get("MAIL_SERVER"):
                 missing.append("MAIL_SERVER")
             if not app.config.get("MAIL_DEFAULT_SENDER"):
@@ -1294,7 +1316,8 @@ def ads_enabled_for_request():
 
 def build_ads_template_context():
     consent = consent_cookie_preferences()
-    enabled = ads_enabled_for_request()
+    user = current_user_for_optional_request()
+    enabled = ads_enabled_for_request() and not can_access_paid_features(user)
     client_id = app.config.get("ADSENSE_CLIENT_ID", "")
     has_marketing_consent = bool(enabled and consent.get("marketing"))
     return {
@@ -1320,6 +1343,7 @@ def build_ads_template_context():
 def inject_user():
     user = current_user()
     staff_navigation = build_staff_navigation(user)
+    admin_navigation = build_admin_navigation(user)
     account_state = build_account_state(user)
     return {
         "brand_name": APP_NAME,
@@ -1332,7 +1356,8 @@ def inject_user():
         "account_state": account_state,
         "shell_navigation": build_shell_navigation(user),
         "staff_navigation": staff_navigation,
-        "staff_nav_active": bool(request.endpoint and any(item["endpoint"] == request.endpoint for item in staff_navigation)),
+        "admin_navigation": admin_navigation,
+        "staff_nav_active": bool(request.endpoint and any(item["endpoint"] == request.endpoint for item in [*staff_navigation, *admin_navigation])),
         "seo": build_seo_payload(),
         "turnstile_site_key": app.config.get("CLOUDFLARE_TURNSTILE_SITE_KEY", ""),
         "turnstile_enabled": turnstile_is_configured(),
@@ -2224,11 +2249,11 @@ def build_plan_catalog():
         },
         {
             "key": "paid_consumer",
-            "name": "Paid consumer",
+            "name": "Planira Plus",
             "tag": "Most useful",
             "price": "PS9/mo idea",
-            "summary": "For people who want confidence, memory, and stronger filters.",
-            "description": "The premium experience for users who need confidence before leaving home.",
+            "summary": "Know before you go with confidence.",
+            "description": "For people who need stronger filters and clearer visit confidence before leaving home.",
             "features": [
                 "More searches",
                 "Richer place detail",
@@ -2239,7 +2264,7 @@ def build_plan_catalog():
             "checkout_mode": "subscription",
             "price_id": os.getenv("STRIPE_PRICE_PAID_CONSUMER", "").strip(),
             "role": "paid_consumer",
-            "cta": "Start subscription",
+            "cta": "Upgrade to Planira Plus",
         },
         {
             "key": "api_20",
@@ -2804,6 +2829,14 @@ def user_has_api_access(user):
     return allowed
 
 
+def can_access_paid_features(user):
+    if not user:
+        return False
+    if is_staff_user(user):
+        return True
+    return normalize_billing_plan_name(user) in {"paid", "business"}
+
+
 def can_upload_place_images(user):
     if not user:
         return False
@@ -2813,7 +2846,7 @@ def can_upload_place_images(user):
 
 
 def can_view_member_place_details(user):
-    return bool(user)
+    return can_access_paid_features(user)
 
 
 def can_delete_place_image(user, place_image):
@@ -2924,14 +2957,14 @@ def serialize_api_key(api_key, raw_key=None):
 
 def owner_allowed_api_scopes(user):
     allowed = {"places:read", "api:usage"}
-    if is_staff_user(user):
+    if get_access_label(user) == "Admin":
         allowed.update({"places:write", "admin:read"})
     return allowed
 
 
 def default_api_scopes_for_user(user):
     scopes = list(DEFAULT_API_KEY_SCOPES)
-    if is_staff_user(user):
+    if get_access_label(user) == "Admin":
         scopes.append("places:write")
     return scopes
 
@@ -2978,6 +3011,30 @@ def create_api_key_for_user(user, label=None, scopes=None, monthly_lookup_limit=
             db.session.flush()
             return api_key, raw_key
     raise RuntimeError("Could not generate a unique API key.")
+
+
+def log_api_key_created(actor_user, api_key, *, target_user=None, surface=None, reason=None):
+    if not api_key:
+        return None
+    scopes = api_key.scopes_json or []
+    log_audit(
+        actor_user_id=actor_user.id if actor_user else None,
+        action="api_key.created",
+        entity_type="api_key",
+        entity_id=api_key.id,
+        after={
+            "user_id": api_key.user_id,
+            "target_user_id": target_user.id if target_user else api_key.user_id,
+            "label": api_key.label,
+            "scopes": scopes,
+            "monthly_lookup_limit": api_key.monthly_lookup_limit,
+            "lookup_credits": api_key.lookup_credits,
+            "is_active": api_key.is_active,
+            "write_scope": "places:write" in scopes,
+            "surface": surface,
+        },
+        reason=reason or ("Write-capable API key created." if "places:write" in scopes else "API key created."),
+    )
 
 
 def extract_bearer_api_key(authorization_header):
@@ -3103,6 +3160,13 @@ def authenticate_api_key(raw_key=None, authorization_header=None, request_obj=No
 
     limit_context = api_key_limit_context(matched_key)
     if limit_context["limit_reached"]:
+        track_monetization_event(
+            "limit_hit",
+            user=matched_key.user,
+            surface="api",
+            feature="monthly_lookup_quota",
+            metadata={"api_key_id": matched_key.id},
+        )
         return {
             "ok": False,
             "error": "monthly_lookup_limit_reached",
@@ -3203,7 +3267,21 @@ def api_auth_error_response(auth_result, *, write=False):
     headers = {}
     if auth_result.get("retry_after"):
         headers["Retry-After"] = auth_result["retry_after"]
-    return api_error_response(error_key, message, status_code, headers=headers)
+    extra = {}
+    if auth_result["error"] == "monthly_lookup_limit_reached":
+        limit_context = auth_result.get("limit_context") or {}
+        extra = {
+            "limit_type": "quota",
+            "quota": {
+                "lookups_used": limit_context.get("lookups_used"),
+                "lookup_limit": limit_context.get("monthly_limit"),
+                "lookup_credits_remaining": limit_context.get("lookup_credits"),
+            },
+            "upgrade_url": url_for("plans", _external=True),
+        }
+    elif auth_result["error"] == "rate_limited":
+        extra = {"limit_type": "abuse_throttle"}
+    return api_error_response(error_key, message, status_code, headers=headers, **extra)
 
 
 def enforce_api_search_rate_limits(api_key, client_identifier):
@@ -3226,6 +3304,29 @@ def enforce_api_search_rate_limits(api_key, client_identifier):
                 "Too many API search requests. Please wait and try again.",
                 429,
                 headers={"Retry-After": state.get("retry_after") or window_seconds},
+                limit_type="abuse_throttle",
+            )
+    return None
+
+
+def enforce_api_write_rate_limits(api_key, client_identifier):
+    if not rate_limit_enabled():
+        return None
+    burst_limit = max(API_WRITE_RATE_LIMIT_BURST, 1)
+    burst_window = max(API_WRITE_RATE_LIMIT_WINDOW_SECONDS, 1)
+    rules = [
+        ("api_write_key_burst", f"key:{api_key.id}", burst_limit, burst_window),
+        ("api_write_ip_burst", f"ip:{client_identifier}", burst_limit, burst_window),
+    ]
+    for scope, identifier, limit_value, window_seconds in rules:
+        state = perform_rate_limit_hit(scope, identifier, limit=limit_value, window_seconds=window_seconds)
+        if not state.get("allowed", True):
+            return api_error_response(
+                "rate_limited",
+                "Too many API write requests. Please wait and try again.",
+                429,
+                headers={"Retry-After": state.get("retry_after") or window_seconds},
+                limit_type="abuse_throttle",
             )
     return None
 
@@ -3470,6 +3571,9 @@ def authenticate_api_write_request(endpoint, *, query=None):
         return None, api_auth_error_response(auth_result, write=True)
     if not is_staff_user(auth_result["user"]):
         return None, api_error_response("write_access_forbidden", "This API key can read data but does not have permission to edit it.", 403)
+    rate_limit_response = enforce_api_write_rate_limits(auth_result["api_key"], request_client_identifier())
+    if rate_limit_response is not None:
+        return None, rate_limit_response
     return auth_result, None
 
 
@@ -3492,8 +3596,9 @@ def build_quota_copy(user, limit_context=None):
             else "Staff access is not blocked by member quotas, but searches are still tracked for visibility."
         ),
         "blocked_message": (
-            f"You've used all {plan_label.lower()} plan searches for this month. "
-            "Use an extra search credit or upgrade your plan to keep going."
+            FREE_USAGE_LIMIT_MESSAGE
+            if plan_name == "free"
+            else f"You've used all {plan_label.lower()} plan searches for this month. Upgrade for more."
         ),
         "plans_cta_copy": (
             f"{plan_label} plan includes {format_search_limit_copy(search_limit, bypass=bypass).lower()}."
@@ -3762,6 +3867,32 @@ def log_audit(actor_user_id, action, entity_type, entity_id, before=None, after=
     )
 
 
+def track_monetization_event(event_name, *, user=None, surface=None, feature=None, metadata=None, commit=True):
+    event = build_analytics_event(event_name, metadata or {})
+    if not event:
+        return None
+
+    payload = {
+        "event": event["name"],
+        "surface": surface,
+        "feature": feature,
+        "plan": normalize_billing_plan_name(user) if user else "visitor",
+        "signed_in": bool(user),
+    }
+    payload.update(event["params"])
+    log_audit(
+        actor_user_id=user.id if user else None,
+        action=f"monetization.{event['name']}",
+        entity_type="monetization_event",
+        entity_id=event["name"],
+        after=payload,
+        reason="Internal monetization conversion hook.",
+    )
+    if commit:
+        db.session.commit()
+    return payload
+
+
 def build_shell_navigation(user):
     nav = [
         {"label": "Home", "endpoint": "index", "icon": "home"},
@@ -3785,17 +3916,24 @@ def build_staff_navigation(user):
         navigation.append({"label": "Moderation", "endpoint": "admin_moderation"})
     if can_access_support_inbox(user):
         navigation.append({"label": "Support", "endpoint": "admin_support"})
-    if can_access_user_directory(user):
-        navigation.append({"label": "Users", "endpoint": "admin_users"})
     navigation.extend(
         [
-            {"label": "Legacy data view", "endpoint": "admin_data"},
+            {"label": "Data tools", "endpoint": "admin_data"},
             {"label": "Add venue", "endpoint": "new_place"},
         ]
     )
-    if can_manage_newsletter(user):
-        navigation.append({"label": "Newsletter", "endpoint": "admin_newsletter"})
     return navigation
+
+
+def build_admin_navigation(user):
+    if not user or get_access_label(user) != "Admin":
+        return []
+    return [
+        {"label": "Users", "endpoint": "admin_users"},
+        {"label": "Newsletter", "endpoint": "admin_newsletter"},
+        {"label": "API keys", "endpoint": "admin_users"},
+        {"label": "Audit logs", "endpoint": "dashboard"},
+    ]
 
 
 def current_month_range():
@@ -4054,12 +4192,12 @@ def build_api_operations_summary(limit=6):
     }
 
 
-def build_moderation_items(limit=8):
-    comments = Comment.query.filter_by(status="pending").order_by(Comment.created_at.desc()).limit(limit).all()
+def build_moderation_items(limit=8, page=1):
+    page = max(int(page or 1), 1)
+    comments = Comment.query.filter_by(status="pending").order_by(Comment.created_at.desc()).all()
     pending_images = (
         PlaceImage.query.filter_by(is_approved=False)
         .order_by(PlaceImage.created_at.desc())
-        .limit(limit)
         .all()
     )
     items = []
@@ -4093,7 +4231,12 @@ def build_moderation_items(limit=8):
             }
         )
     items.sort(key=lambda item: item["created_at"], reverse=True)
-    return items[: limit * 2]
+    start = (page - 1) * limit
+    return items[start : start + limit]
+
+
+def pending_moderation_count():
+    return Comment.query.filter_by(status="pending").count() + PlaceImage.query.filter_by(is_approved=False).count()
 
 
 def build_support_rows(messages):
@@ -4118,6 +4261,43 @@ def build_support_stats():
         "replied": ContactMessage.query.filter_by(status="replied").count(),
         "closed": ContactMessage.query.filter_by(status="closed").count(),
     }
+
+
+WORKSHEET_AUDIT_FIELDS = (
+    "toilets_available",
+    "toilet_location",
+    "accessible_toilet",
+    "baby_changing",
+    "baby_changing_location",
+    "step_free_entrance",
+    "stairs_inside",
+    "lift_available",
+    "disabled_parking",
+    "sensory_notes",
+    "toilet_distance_from_bar",
+    "toilet_distance_from_bar_m",
+    "public_comments",
+    "internal_notes",
+    "source",
+    "confidence_score",
+    "last_verified_at",
+    "last_verified_by",
+    "verified_by_user_id",
+)
+
+
+def build_worksheet_audit_snapshot(place, profile):
+    snapshot = {
+        "place_status": place.status if place else None,
+    }
+    for field in WORKSHEET_AUDIT_FIELDS:
+        snapshot[field] = getattr(profile, field, None) if profile else None
+    return snapshot
+
+
+def changed_snapshot_fields(before, after):
+    keys = sorted(set(before or {}) | set(after or {}))
+    return [key for key in keys if audit_payload((before or {}).get(key)) != audit_payload((after or {}).get(key))]
 
 
 def build_newsletter_draft_rows():
@@ -4303,11 +4483,6 @@ def build_user_rows(users):
                         else None
                     ),
                 },
-                "suspension_action": {
-                    "enabled": False,
-                    "label": "Suspend user",
-                    "title": "Not wired yet",
-                },
             }
         )
     return rows
@@ -4444,7 +4619,7 @@ def admin_user_return_url(*, user_id=None, fallback_endpoint="admin_users"):
 
 SEARCH_BINARY_FILTER_VALUES = {"", "yes", "no"}
 SEARCH_CONFIDENCE_FILTERS = {"", "70", "85", "95"}
-SEARCH_VERIFICATION_FILTERS = {"", "recent", "needs_verification"}
+SEARCH_VERIFICATION_FILTERS = {"", "verified_only", "recent", "needs_verification"}
 SEARCH_TOILET_DISTANCE_FILTERS = {"", "recorded", "short", "unknown"}
 SEARCH_TEXT_PRESENCE_FILTERS = {"", "has", "missing"}
 SEARCH_PUBLIC_SOURCE_FILTERS = ("phone_verified", "owner_verified", "user_submitted", "not_verified")
@@ -4528,6 +4703,12 @@ ANONYMOUS_SEARCH_FILTER_KEYS = (
     "source",
 )
 
+PREMIUM_SEARCH_FILTER_KEYS = ANONYMOUS_SEARCH_FILTER_KEYS
+
+
+def search_filters_requested(filters, keys=PREMIUM_SEARCH_FILTER_KEYS):
+    return any(filters.get(key) for key in keys)
+
 
 def hide_anonymous_search_filters(filters):
     sanitized_filters = dict(filters)
@@ -4582,6 +4763,8 @@ def build_search_active_filters(filters):
         active_filters.append({"label": "Confidence", "value": f"{filters['confidence']}+"})
     if filters["verification"] == "recent":
         active_filters.append({"label": "Verification", "value": "Recently verified"})
+    elif filters["verification"] == "verified_only":
+        active_filters.append({"label": "Verification", "value": "Verified only"})
     elif filters["verification"] == "needs_verification":
         active_filters.append({"label": "Verification", "value": "Needs verification"})
     if filters["source"]:
@@ -5608,6 +5791,12 @@ def newsletter_unsubscribe(token):
 def plans():
     user = current_user()
     account_state = build_account_state(user)
+    track_monetization_event(
+        "upgrade_viewed",
+        user=user,
+        surface="plans",
+        feature="plan_comparison",
+    )
     add_page_analytics_event("pricing_viewed", {"signed_in": bool(user)})
     active_key = current_plan_catalog_key(user) if user else "free_visitor"
     account_summary = build_user_summary(user) if user else None
@@ -5802,6 +5991,7 @@ def create_account_api_key():
         api_key, raw_key = create_api_key_for_user(user, label=label, scopes=scopes)
     except ValueError as exc:
         return jsonify({"error": "invalid_scope", "message": str(exc)}), 400
+    log_api_key_created(user, api_key, target_user=user, surface="account")
     db.session.commit()
     queue_analytics_event("api_key_created", {"surface": "account"})
     return (
@@ -5869,6 +6059,7 @@ def create_developer_api_key():
     except ValueError as exc:
         flash(str(exc), "error")
         return redirect(url_for("developers"))
+    log_api_key_created(user, api_key, target_user=user, surface="developers")
     db.session.commit()
     add_page_analytics_event("api_key_created", {"surface": "developers"})
     flash("API key created. Copy it now because it will not be shown again.", "success")
@@ -5923,6 +6114,12 @@ def create_checkout(plan_key):
         flash(f"You already have {plan['name']} on this account.", "info")
         return redirect(url_for("plans"))
 
+    track_monetization_event(
+        "upgrade_clicked",
+        user=user,
+        surface="plans",
+        feature=plan["key"],
+    )
     metadata = build_checkout_metadata(user, plan)
     checkout_kwargs = {
         "mode": plan["checkout_mode"],
@@ -6282,11 +6479,23 @@ def search():
         session.clear()
         user = None
 
-    filters = build_search_filter_state(request.args)
-    if not user:
+    requested_filters = build_search_filter_state(request.args)
+    premium_filter_attempt = search_filters_requested(requested_filters)
+    premium_access = can_access_paid_features(user)
+    filters = requested_filters
+    premium_upgrade_message = None
+    if not premium_access:
         filters = hide_anonymous_search_filters(filters)
+        if premium_filter_attempt:
+            premium_upgrade_message = PREMIUM_FILTER_UPGRADE_MESSAGE
+            track_monetization_event(
+                "premium_feature_attempt",
+                user=user,
+                surface="search",
+                feature="advanced_filters",
+            )
     public_filter_options = build_public_search_filter_options()
-    show_advanced_filters = bool(user)
+    show_advanced_filters = premium_access
     q = filters["q"]
     town = filters["town"]
     accessible = filters["accessible"]
@@ -6334,7 +6543,15 @@ def search():
         ]
     )
     should_search = has_filters
-    if is_counted_submission and has_filters:
+    if not user and has_filters:
+        enforce_rate_limit(
+            "anonymous_search",
+            limit=max(PUBLIC_SEARCH_RATE_LIMIT, 1),
+            window_seconds=max(PUBLIC_SEARCH_RATE_LIMIT_WINDOW_SECONDS, 1),
+            identifier=f"ip:{request_client_identifier()}",
+            description="You have submitted several searches recently. Please wait a little while and try again.",
+        )
+    elif is_counted_submission and has_filters:
         enforce_rate_limit(
             "search_submit",
             limit=30,
@@ -6354,6 +6571,12 @@ def search():
     if should_search:
         if user and is_counted_submission and has_filters and limit_context["limit_reached"]:
             limit_message = build_quota_copy(user, limit_context)["blocked_message"]
+            track_monetization_event(
+                "limit_hit",
+                user=user,
+                surface="search",
+                feature="search_quota",
+            )
             flash(limit_message, "info")
             should_search = False
         if not should_search:
@@ -6387,7 +6610,8 @@ def search():
                 venue_type_options=public_filter_options["venue_type_options"],
                 source_options=public_filter_options["source_options"],
                 show_advanced_filters=show_advanced_filters,
-                show_premium_result_context=bool(user),
+                show_premium_result_context=premium_access,
+                premium_upgrade_message=premium_upgrade_message,
                 search_usage=search_usage,
                 show_search_usage=bool(user),
                 anonymous_feature_hint=not user,
@@ -6439,6 +6663,8 @@ def search():
                 AccessibilityProfile.last_verified_at.isnot(None),
                 AccessibilityProfile.last_verified_at >= recent_cutoff,
             )
+        elif verification == "verified_only":
+            query = query.filter(AccessibilityProfile.last_verified_at.isnot(None))
         elif verification == "needs_verification":
             query = query.filter(AccessibilityProfile.last_verified_at.is_(None))
         if toilet_distance == "recorded":
@@ -6537,8 +6763,9 @@ def search():
         venue_type_options=public_filter_options["venue_type_options"],
         source_options=public_filter_options["source_options"],
         show_advanced_filters=show_advanced_filters,
-        show_premium_result_context=bool(user),
-        search_usage=search_usage,
+                show_premium_result_context=premium_access,
+                premium_upgrade_message=premium_upgrade_message,
+                search_usage=search_usage,
         show_search_usage=bool(user),
         anonymous_feature_hint=not user,
         signal_examples=build_signal_examples(),
@@ -6573,6 +6800,13 @@ def place_detail(slug):
     profile = get_or_create_profile(place)
     user = current_user_for_optional_request()
     show_member_place_details = can_view_member_place_details(user)
+    if not show_member_place_details:
+        track_monetization_event(
+            "premium_feature_attempt",
+            user=user,
+            surface="place",
+            feature="community_insights",
+        )
     comments = []
     if show_member_place_details:
         comment_query = Comment.query.filter_by(place_id=place.id, is_public=True)
@@ -6619,6 +6853,7 @@ def place_detail(slug):
         get_place_image_url=get_place_image_url,
         signal=signal,
         show_member_place_details=show_member_place_details,
+        premium_place_unlock_message=PREMIUM_PLACE_UNLOCK_MESSAGE,
         anonymous_feature_hint=not user,
         seo=build_seo_payload(
             title=f"{place.name} | {APP_NAME}",
@@ -6741,6 +6976,7 @@ def add_comment(slug):
 @staff_required
 def dashboard():
     user = current_user()
+    show_admin_dashboard_widgets = get_access_label(user) == "Admin"
     mission_page = parse_int_field(request.args.get("mission_page"), "Mission page", minimum=1, default=1)
     mission_per_page = 12
     quality_queues = build_dashboard_quality_queues(limit=4)
@@ -6771,11 +7007,15 @@ def dashboard():
         )
         .count()
     )
-    user_stats = {
-        "all_users": User.query.count(),
-        "free_users": User.query.filter(User.plan == "free").count(),
-        "staff_users": User.query.filter(User.role.in_(["admin", "staff"])).count(),
-    }
+    user_stats = (
+        {
+            "all_users": User.query.count(),
+            "free_users": User.query.filter(User.plan == "free").count(),
+            "staff_users": User.query.filter(User.role.in_(["admin", "staff"])).count(),
+        }
+        if show_admin_dashboard_widgets
+        else {}
+    )
     pending_submission_count = Comment.query.filter_by(status="pending").count() + PlaceImage.query.filter_by(is_approved=False).count()
     monetisation_stats = {
         "premium_ready": premium_ready,
@@ -6797,9 +7037,9 @@ def dashboard():
         {"name": "Inspector", "rule": "High-trust verifier status"},
     ]
     recent_activity = build_recent_activity()
-    recent_search_activity = build_recent_search_activity()
-    recent_audit_entries = build_recent_audit_entries()
-    api_operations = build_api_operations_summary()
+    recent_search_activity = build_recent_search_activity() if show_admin_dashboard_widgets else []
+    recent_audit_entries = build_recent_audit_entries() if show_admin_dashboard_widgets else []
+    api_operations = build_api_operations_summary() if show_admin_dashboard_widgets else None
     quick_actions = [
         {"label": "Venue workspace", "href": url_for("admin_venues")},
         {"label": "Streaming control room", "href": url_for("staff_streaming_control_room")},
@@ -6809,7 +7049,7 @@ def dashboard():
         quick_actions.append({"label": "Open moderation", "href": url_for("admin_moderation")})
     if can_access_support_inbox(user):
         quick_actions.append({"label": "Support inbox", "href": url_for("admin_support")})
-    if can_access_user_directory(user):
+    if show_admin_dashboard_widgets:
         quick_actions.append({"label": "Manage users", "href": url_for("admin_users")})
     return render_template(
         "dashboard.html",
@@ -6826,6 +7066,7 @@ def dashboard():
         recent_search_activity=recent_search_activity,
         recent_audit_entries=recent_audit_entries,
         api_operations=api_operations,
+        show_admin_dashboard_widgets=show_admin_dashboard_widgets,
         quick_actions=quick_actions,
     )
 
@@ -7057,10 +7298,18 @@ def staff_streaming_control_room():
 @login_required
 @permission_required(can_moderate_content, "Moderation access required.")
 def admin_moderation():
-    moderation_items = build_moderation_items()
+    page = parse_int_field(request.args.get("page"), "Page", minimum=1, default=1)
+    per_page = 8
+    moderation_items = build_moderation_items(limit=per_page, page=page)
+    moderation_total = pending_moderation_count()
     return render_template(
         "admin_moderation.html",
         moderation_items=moderation_items,
+        moderation_page=page,
+        moderation_total=moderation_total,
+        moderation_has_more=moderation_total > page * per_page,
+        moderation_prev_page=page - 1 if page > 1 else None,
+        moderation_next_page=page + 1,
     )
 
 
@@ -7430,21 +7679,7 @@ def create_admin_user_api_key(user_id):
     except ValueError as exc:
         return jsonify({"error": "invalid_scope", "message": str(exc)}), 400
     actor = current_user()
-    log_audit(
-        actor_user_id=actor.id if actor else None,
-        action="api_key.created",
-        entity_type="api_key",
-        entity_id=api_key.id,
-        after={
-            "user_id": user.id,
-            "label": api_key.label,
-            "scopes": api_key.scopes_json or [],
-            "monthly_lookup_limit": api_key.monthly_lookup_limit,
-            "lookup_credits": api_key.lookup_credits,
-            "is_active": api_key.is_active,
-        },
-        reason="Staff-created API key",
-    )
+    log_api_key_created(actor, api_key, target_user=user, surface="admin_user_edit", reason="Admin-created API key.")
     db.session.commit()
     return (
         jsonify(
@@ -7691,6 +7926,7 @@ def call_place(place_id):
     verification = verification_status(profile)
     quality = quality_queue_for_profile(profile)
     if request.method == "POST":
+        before_state = build_worksheet_audit_snapshot(place, profile)
         fields = [
             "toilets_available",
             "toilet_location",
@@ -7748,6 +7984,19 @@ def call_place(place_id):
             notes=request.form.get("call_notes"),
         )
         db.session.add(log)
+        after_state = build_worksheet_audit_snapshot(place, profile)
+        changed_fields = changed_snapshot_fields(before_state, after_state)
+        if changed_fields:
+            actor = current_user()
+            log_audit(
+                actor_user_id=actor.id if actor else None,
+                action="place.updated",
+                entity_type="place",
+                entity_id=place.id,
+                before=before_state,
+                after={**after_state, "changed_fields": changed_fields},
+                reason="Staff worksheet saved.",
+            )
         db.session.commit()
         flash("Worksheet saved.", "success")
         return redirect(url_for("dashboard"))

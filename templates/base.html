@@ -268,10 +268,27 @@
                   <a class="planira-staff-menu-link {% if request.endpoint == 'developers' %}active{% endif %}" href="{{ url_for('developers') }}" {% if request.endpoint == 'developers' %}aria-current="page"{% endif %}>Developers</a>
 
                   {% if staff_navigation %}
-                    <div class="planira-account-menu-section" aria-label="Staff tools">
-                      <span class="planira-account-menu-label">Staff tools</span>
+                    <div class="planira-account-menu-section" aria-label="Staff workspace">
+                      <span class="planira-account-menu-label">Staff workspace</span>
                       <div class="planira-account-menu-group">
                         {% for item in staff_navigation %}
+                          <a
+                            class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
+                            href="{{ url_for(item.endpoint) }}"
+                            {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}
+                          >
+                            {{ item.label }}
+                          </a>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  {% endif %}
+
+                  {% if admin_navigation %}
+                    <div class="planira-account-menu-section" aria-label="Admin controls">
+                      <span class="planira-account-menu-label">Admin controls</span>
+                      <div class="planira-account-menu-group">
+                        {% for item in admin_navigation %}
                           <a
                             class="planira-staff-menu-link {% if request.endpoint == item.endpoint %}active{% endif %}"
                             href="{{ url_for(item.endpoint) }}"
@@ -343,6 +360,19 @@
                 <span class="eyebrow">Staff workspace</span>
                 <nav class="planira-mobile-nav" aria-label="Mobile staff navigation">
                   {% for item in staff_navigation %}
+                    <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}" href="{{ url_for(item.endpoint) }}" {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
+                      <span>{{ item.label }}</span>
+                    </a>
+                  {% endfor %}
+                </nav>
+              </div>
+            {% endif %}
+
+            {% if admin_navigation %}
+              <div class="planira-mobile-staff">
+                <span class="eyebrow">Admin controls</span>
+                <nav class="planira-mobile-nav" aria-label="Mobile admin navigation">
+                  {% for item in admin_navigation %}
                     <a class="planira-nav-link {% if request.endpoint == item.endpoint %}planira-nav-link-active{% endif %}" href="{{ url_for(item.endpoint) }}" {% if request.endpoint == item.endpoint %}aria-current="page"{% endif %}>
                       <span>{{ item.label }}</span>
                     </a>

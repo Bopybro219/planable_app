@@ -122,7 +122,7 @@
                   <input type="hidden" name="return_plan" value="{{ plan_filter }}">
                   <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
                   <input type="hidden" name="return_page" value="{{ pagination.page if pagination else 1 }}">
-                  <button type="submit" class="planira-button-quiet btn-small">Remove override</button>
+                  <button type="submit" class="planira-button-quiet btn-small" onclick="return confirm('Remove this manual entitlement override?');">Remove override</button>
                 </form>
               {% endif %}
             </div>

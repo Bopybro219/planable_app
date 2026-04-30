@@ -94,13 +94,11 @@
             <input type="hidden" name="return_plan" value="{{ plan_filter }}">
             <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
             <input type="hidden" name="return_page" value="{{ return_page }}">
-            <button type="submit" class="planira-button-admin">{{ selected_row.staff_toggle.label }}</button>
+            <button type="submit" class="planira-button-admin" onclick="return confirm('Apply this staff access change?');">{{ selected_row.staff_toggle.label }}</button>
           </form>
         {% else %}
           <button type="button" class="planira-button-admin button-disabled" disabled title="{% if not account_state.is_admin %}Only admins can change staff access.{% else %}{{ selected_row.staff_toggle.title }}{% endif %}">{{ selected_row.staff_toggle.label }}</button>
         {% endif %}
-
-        <button type="button" class="planira-button-danger button-disabled" disabled title="{{ selected_row.suspension_action.title }}">{{ selected_row.suspension_action.label }}</button>
       </div>
     </section>
 
@@ -177,7 +175,7 @@
                     <input type="hidden" name="return_plan" value="{{ plan_filter }}">
                     <input type="hidden" name="return_manual_override" value="{{ manual_override_filter }}">
                     <input type="hidden" name="return_page" value="{{ return_page }}">
-                    <button type="submit" class="planira-button-danger btn-small">Revoke key</button>
+                    <button type="submit" class="planira-button-danger btn-small" onclick="return confirm('Revoke this API key? Existing integrations using it will stop working.');">Revoke key</button>
                   </form>
                 {% else %}
                   <button type="button" class="planira-button-danger btn-small button-disabled" disabled>Revoked</button>

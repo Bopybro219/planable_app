@@ -25,16 +25,18 @@
     <strong>{{ monetisation_stats.pending_comments }}</strong>
     <p class="muted">Verification tasks waiting on staff follow-up.</p>
   </article>
-  <article class="metric-card">
-    <span>Active users</span>
-    <strong>{{ user_stats.all_users }}</strong>
-    <p class="muted">Signed-in accounts available for growth and support.</p>
-  </article>
-  <article class="metric-card">
-    <span>Premium-ready</span>
-    <strong>{{ monetisation_stats.premium_ready }}</strong>
-    <p class="muted">High-confidence records ready for richer subscriber experiences.</p>
-  </article>
+  {% if show_admin_dashboard_widgets %}
+    <article class="metric-card">
+      <span>Active users</span>
+      <strong>{{ user_stats.all_users }}</strong>
+      <p class="muted">Signed-in accounts available for growth and support.</p>
+    </article>
+    <article class="metric-card">
+      <span>Premium-ready</span>
+      <strong>{{ monetisation_stats.premium_ready }}</strong>
+      <p class="muted">High-confidence records ready for richer subscriber experiences.</p>
+    </article>
+  {% endif %}
 </section>
 
 <section class="card-grid">
@@ -89,103 +91,109 @@
     </div>
   </article>
 
-  <article class="surface-panel">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">API preview</span>
-        <h2>Live preview usage</h2>
-      </div>
-    </div>
-    <div class="stack-list">
-      <div class="stack-row">
-        <strong>Active keys</strong>
-        <span>{{ api_operations.active_key_count }} active and {{ api_operations.revoked_key_count }} revoked.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Lookup events this month</strong>
-        <span>{{ api_operations.lookup_events_this_month }} tracked API lookups so far.</span>
-      </div>
-    </div>
-    <div class="activity-feed">
-      {% for item in api_operations.recent_events %}
-        <div class="activity-item">
-          <strong>{{ item.key_label }} · {{ item.status_code or 'No status' }}</strong>
-          <span>{{ item.user_email }}</span>
-          <p>{{ item.endpoint }}{% if item.query %} · {{ item.query }}{% endif %}</p>
+  {% if show_admin_dashboard_widgets %}
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">API preview</span>
+          <h2>Live preview usage</h2>
         </div>
-      {% else %}
-        <div class="empty-inline">No API lookup activity has been recorded yet.</div>
-      {% endfor %}
-    </div>
-  </article>
+      </div>
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong>Active keys</strong>
+          <span>{{ api_operations.active_key_count }} active and {{ api_operations.revoked_key_count }} revoked.</span>
+        </div>
+        <div class="stack-row">
+          <strong>Lookup events this month</strong>
+          <span>{{ api_operations.lookup_events_this_month }} tracked API lookups so far.</span>
+        </div>
+      </div>
+      <div class="activity-feed">
+        {% for item in api_operations.recent_events %}
+          <div class="activity-item">
+            <strong>{{ item.key_label }} · {{ item.status_code or 'No status' }}</strong>
+            <span>{{ item.user_email }}</span>
+            <p>{{ item.endpoint }}{% if item.query %} · {{ item.query }}{% endif %}</p>
+          </div>
+        {% else %}
+          <div class="empty-inline">No API lookup activity has been recorded yet.</div>
+        {% endfor %}
+      </div>
+    </article>
+  {% endif %}
 </section>
 
-<section class="dashboard-grid">
-  <article class="surface-panel">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">Revenue readiness</span>
-        <h2>Product health signals</h2>
-      </div>
-    </div>
-    <div class="stack-list">
-      <div class="stack-row">
-        <strong>API-ready records</strong>
-        <span>{{ monetisation_stats.api_ready }} records have the shape needed for packaged lookup products.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Community candidates</strong>
-        <span>{{ monetisation_stats.community_candidates }} verified venues can support trusted community loops.</span>
-      </div>
-      <div class="stack-row">
-        <strong>Mission queue</strong>
-        <span>{{ monetisation_stats.mission_queue }} venues are ready for the next call session.</span>
-      </div>
-    </div>
-  </article>
-</section>
-
-<section class="dashboard-grid">
-  <article class="surface-panel">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">Recent searches</span>
-        <h2>Search activity this team can learn from</h2>
-      </div>
-    </div>
-    <div class="activity-feed">
-      {% for item in recent_search_activity %}
-        <div class="activity-item">
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.meta }}</span>
-          <p>{{ item.detail }}</p>
+{% if show_admin_dashboard_widgets %}
+  <section class="dashboard-grid">
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Revenue readiness</span>
+          <h2>Product health signals</h2>
         </div>
-      {% else %}
-        <div class="empty-inline">No recent search events yet.</div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="surface-panel">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">Audit trail</span>
-        <h2>Recent moderation and data actions</h2>
       </div>
-    </div>
-    <div class="activity-feed">
-      {% for item in recent_audit_entries %}
-        <div class="activity-item">
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.meta }}</span>
-          <p>{{ item.detail }}</p>
+      <div class="stack-list">
+        <div class="stack-row">
+          <strong>API-ready records</strong>
+          <span>{{ monetisation_stats.api_ready }} records have the shape needed for packaged lookup products.</span>
         </div>
-      {% else %}
-        <div class="empty-inline">No audit entries yet.</div>
-      {% endfor %}
-    </div>
-  </article>
-</section>
+        <div class="stack-row">
+          <strong>Community candidates</strong>
+          <span>{{ monetisation_stats.community_candidates }} verified venues can support trusted community loops.</span>
+        </div>
+        <div class="stack-row">
+          <strong>Mission queue</strong>
+          <span>{{ monetisation_stats.mission_queue }} venues are ready for the next call session.</span>
+        </div>
+      </div>
+    </article>
+  </section>
+{% endif %}
+
+{% if show_admin_dashboard_widgets %}
+  <section class="dashboard-grid">
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Recent searches</span>
+          <h2>Search activity this team can learn from</h2>
+        </div>
+      </div>
+      <div class="activity-feed">
+        {% for item in recent_search_activity %}
+          <div class="activity-item">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.meta }}</span>
+            <p>{{ item.detail }}</p>
+          </div>
+        {% else %}
+          <div class="empty-inline">No recent search events yet.</div>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="surface-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Audit trail</span>
+          <h2>Recent moderation and data actions</h2>
+        </div>
+      </div>
+      <div class="activity-feed">
+        {% for item in recent_audit_entries %}
+          <div class="activity-item">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.meta }}</span>
+            <p>{{ item.detail }}</p>
+          </div>
+        {% else %}
+          <div class="empty-inline">No audit entries yet.</div>
+        {% endfor %}
+      </div>
+    </article>
+  </section>
+{% endif %}
 
 <section class="card-grid">
   <article class="surface-panel">
@@ -200,10 +208,12 @@
         <strong>Review submissions</strong>
         <span>Approve, reject, or refine community updates before they shape the experience.</span>
       </a>
-      <a class="action-card" href="{{ url_for('admin_users') }}">
-        <strong>Manage users</strong>
-        <span>Check activity, plan state, credits, API usage, and staff access from one place.</span>
-      </a>
+      {% if show_admin_dashboard_widgets %}
+        <a class="action-card" href="{{ url_for('admin_users') }}">
+          <strong>Manage users</strong>
+          <span>Check activity, plan state, credits, API usage, and staff access from one place.</span>
+        </a>
+      {% endif %}
       <a class="action-card" href="{{ url_for('admin_data') }}">
         <strong>Edit venue data</strong>
         <span>Move into the structured data view without leaving the shared staff system.</span>

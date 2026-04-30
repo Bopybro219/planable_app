@@ -184,6 +184,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn("quota exhaustion", docs)
         self.assertIn("Too many API search requests. Please wait and try again.", docs)
         self.assertIn("This API key has used its available lookup allowance.", docs)
+        self.assertNotIn("/home/bopybro/Desktop/planable_app", docs)
         self.assertNotIn('"error": "write_access_required"', docs)
 
     def png_bytes(self):
@@ -468,6 +469,28 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b'data-ad-placement="search_results"', response.data)
 
+    def test_paid_user_does_not_render_ad_shells_even_with_marketing_consent(self):
+        self.create_user_and_login(email="paid-no-ads@example.com", name="Paid No Ads", role="paid_consumer", plan="paid")
+        with app.app_context():
+            for index in range(6):
+                db.session.add(
+                    Place(
+                        name=f"Paid No Ads Place {index}",
+                        slug=f"paid-no-ads-place-{index}",
+                        town="Quiet Town",
+                        address1=f"{index} Calm Street",
+                        postcode=f"NN3 3N{index}",
+                    )
+                )
+            db.session.commit()
+
+        self.set_consent_cookie(marketing=True)
+        response = self.client.get("/search?q=Paid+No+Ads+Place&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'data-ad-placement="search_results"', response.data)
+        self.assertNotIn(b"pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", response.data)
+
     def test_place_page_renders_detail_ad_shell_only_with_marketing_consent(self):
         self.create_place(name="Accessible Cafe", slug="accessible-cafe", town="Northampton")
         self.set_consent_cookie(marketing=True)
@@ -538,6 +561,10 @@ class AppSmokeTests(unittest.TestCase):
         original_cookie_secure = app.config.get("SESSION_COOKIE_SECURE")
         original_scheme = app.config.get("PREFERRED_URL_SCHEME")
         original_secret_key = app.config.get("SECRET_KEY")
+        original_database_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
+        original_stripe_secret = app.config.get("STRIPE_SECRET_KEY")
+        original_stripe_publishable = app.config.get("STRIPE_PUBLISHABLE_KEY")
+        original_stripe_webhook = app.config.get("STRIPE_WEBHOOK_SECRET")
 
         app.config["ENVIRONMENT"] = "production"
         app.config["SERVER_NAME"] = None
@@ -545,9 +572,24 @@ class AppSmokeTests(unittest.TestCase):
         app.config["SESSION_COOKIE_SECURE"] = False
         app.config["PREFERRED_URL_SCHEME"] = "http"
         app.config["SECRET_KEY"] = "change-me"
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///planable.db"
+        app.config["STRIPE_SECRET_KEY"] = ""
+        app.config["STRIPE_PUBLISHABLE_KEY"] = ""
+        app.config["STRIPE_WEBHOOK_SECRET"] = ""
 
         try:
-            missing = app_module.missing_config_keys()
+            with patch.dict(
+                os.environ,
+                {
+                    "DATABASE_URL": "",
+                    "STRIPE_PRICE_PAID_CONSUMER": "",
+                    "STRIPE_PRICE_API_20": "",
+                    "STRIPE_PRICE_API_50": "",
+                    "STRIPE_PRICE_API_100": "",
+                },
+                clear=False,
+            ):
+                missing = app_module.missing_config_keys()
         finally:
             app.config["ENVIRONMENT"] = original_environment
             app.config["SERVER_NAME"] = original_server_name
@@ -555,12 +597,75 @@ class AppSmokeTests(unittest.TestCase):
             app.config["SESSION_COOKIE_SECURE"] = original_cookie_secure
             app.config["PREFERRED_URL_SCHEME"] = original_scheme
             app.config["SECRET_KEY"] = original_secret_key
+            app.config["SQLALCHEMY_DATABASE_URI"] = original_database_uri
+            app.config["STRIPE_SECRET_KEY"] = original_stripe_secret
+            app.config["STRIPE_PUBLISHABLE_KEY"] = original_stripe_publishable
+            app.config["STRIPE_WEBHOOK_SECRET"] = original_stripe_webhook
 
         self.assertTrue(any(item.startswith("SECRET_KEY") for item in missing))
+        self.assertIn("DATABASE_URL", missing)
         self.assertIn("SESSION_COOKIE_SECURE=true", missing)
         self.assertIn("TRUSTED_HOSTS", missing)
         self.assertIn("SERVER_NAME", missing)
         self.assertIn("REDIS_URL", missing)
+        self.assertIn("STRIPE_SECRET_KEY", missing)
+        self.assertIn("STRIPE_PUBLISHABLE_KEY", missing)
+        self.assertIn("STRIPE_WEBHOOK_SECRET", missing)
+        self.assertIn("STRIPE_PRICE_PAID_CONSUMER", missing)
+        self.assertNotIn("STRIPE_PRICE_API_20", missing)
+        self.assertNotIn("STRIPE_PRICE_API_50", missing)
+        self.assertNotIn("STRIPE_PRICE_API_100", missing)
+
+    def test_production_database_url_must_be_postgresql(self):
+        original_environment = app.config["ENVIRONMENT"]
+        original_database_uri = app.config.get("SQLALCHEMY_DATABASE_URI")
+        app.config["ENVIRONMENT"] = "production"
+
+        try:
+            app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:////tmp/planira.sqlite"
+            with patch.dict(os.environ, {"DATABASE_URL": "sqlite:////tmp/planira.sqlite"}, clear=False):
+                sqlite_missing = app_module.missing_config_keys()
+
+            app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql+psycopg2://planira:pass@db/planira"
+            with patch.dict(os.environ, {"DATABASE_URL": "postgresql+psycopg2://planira:pass@db/planira"}, clear=False):
+                postgres_missing = app_module.missing_config_keys()
+        finally:
+            app.config["ENVIRONMENT"] = original_environment
+            app.config["SQLALCHEMY_DATABASE_URI"] = original_database_uri
+
+        self.assertIn("DATABASE_URL must be PostgreSQL in production", sqlite_missing)
+        self.assertNotIn("DATABASE_URL", postgres_missing)
+        self.assertNotIn("DATABASE_URL must be PostgreSQL in production", postgres_missing)
+
+    def test_production_email_dev_mode_and_smtp_are_reported(self):
+        original_environment = app.config["ENVIRONMENT"]
+        original_email_enabled = app.config.get("EMAIL_ENABLED")
+        original_email_dev_mode = app.config.get("EMAIL_DEV_MODE")
+        original_mail_server = app.config.get("MAIL_SERVER")
+        original_sender = app.config.get("MAIL_DEFAULT_SENDER")
+        original_support_email = app.config.get("SUPPORT_EMAIL")
+
+        app.config["ENVIRONMENT"] = "production"
+        app.config["EMAIL_ENABLED"] = True
+        app.config["EMAIL_DEV_MODE"] = True
+        app.config["MAIL_SERVER"] = ""
+        app.config["MAIL_DEFAULT_SENDER"] = ""
+        app.config["SUPPORT_EMAIL"] = ""
+
+        try:
+            missing = app_module.missing_config_keys()
+        finally:
+            app.config["ENVIRONMENT"] = original_environment
+            app.config["EMAIL_ENABLED"] = original_email_enabled
+            app.config["EMAIL_DEV_MODE"] = original_email_dev_mode
+            app.config["MAIL_SERVER"] = original_mail_server
+            app.config["MAIL_DEFAULT_SENDER"] = original_sender
+            app.config["SUPPORT_EMAIL"] = original_support_email
+
+        self.assertIn("EMAIL_DEV_MODE=false", missing)
+        self.assertIn("MAIL_SERVER", missing)
+        self.assertIn("MAIL_DEFAULT_SENDER", missing)
+        self.assertIn("SUPPORT_EMAIL", missing)
 
     def test_env_example_documents_runtime_variables_without_legacy_api_key(self):
         env_example_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env.example")
@@ -571,8 +676,13 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn("REDIS_URL=", env_example)
         self.assertIn("RATE_LIMIT_ENABLED=", env_example)
         self.assertIn("RATE_LIMIT_FAIL_OPEN=", env_example)
+        self.assertIn("PUBLIC_SEARCH_RATE_LIMIT=", env_example)
+        self.assertIn("API_WRITE_RATE_LIMIT_BURST=", env_example)
         self.assertIn("MAIL_TIMEOUT_SECONDS=", env_example)
         self.assertIn("PLACE_IMAGE_MAX_MB=", env_example)
+        self.assertIn("PROFILE_IMAGE_UPLOAD_DIR=", env_example)
+        self.assertIn("PLACE_IMAGE_UPLOAD_DIR=", env_example)
+        self.assertIn("API packs remain disabled", env_example)
         self.assertNotIn("PLANIRA_API_KEY", env_example)
 
     def test_v2_schema_models_create_cleanly(self):
@@ -1080,7 +1190,7 @@ class AppSmokeTests(unittest.TestCase):
 
     def test_place_page_masks_comment_author_email(self):
         with app.app_context():
-            user = User(email="visible@example.com", name="Visible User", picture="", role="member", plan="free")
+            user = User(email="visible@example.com", name="Visible User", picture="", role="paid_consumer", plan="paid")
             place = Place(name="Masked Cafe", slug="masked-cafe", town="Mask Town")
             db.session.add_all([user, place])
             db.session.flush()
@@ -1130,7 +1240,7 @@ class AppSmokeTests(unittest.TestCase):
         with app.app_context():
             user = User.query.filter_by(email="usage@example.com").first()
             if not user:
-                user = User(email="usage@example.com", name="Usage User", picture="", role="member", plan="free")
+                user = User(email="usage@example.com", name="Usage User", picture="", role="paid_consumer", plan="paid")
                 db.session.add(user)
                 db.session.commit()
             if Place.query.count() == 0:
@@ -1188,6 +1298,53 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(end_total, start_total)
         self.assertEqual(refreshed.search_credits, 2)
 
+    def test_anonymous_filtered_search_without_submitted_is_abuse_throttled(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        with app.app_context():
+            db.session.add(Place(name="Throttle Browse", slug="throttle-browse", town="Browse Town"))
+            db.session.commit()
+
+        with patch.object(app_module, "PUBLIC_SEARCH_RATE_LIMIT", 2):
+            first_response = self.client.get("/search?q=Throttle")
+            second_response = self.client.get("/search?q=Throttle")
+            blocked_response = self.client.get("/search?q=Throttle")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+
+    def test_anonymous_submitted_search_is_abuse_throttled(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        with app.app_context():
+            db.session.add(Place(name="Submitted Throttle", slug="submitted-throttle", town="Browse Town"))
+            db.session.commit()
+
+        with patch.object(app_module, "PUBLIC_SEARCH_RATE_LIMIT", 1):
+            first_response = self.client.get("/search?q=Submitted&submitted=1")
+            blocked_response = self.client.get("/search?q=Submitted&submitted=1")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+
+    def test_anonymous_pagination_is_throttled_without_search_event(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        with app.app_context():
+            for index in range(1, 16):
+                db.session.add(Place(name=f"Anon Pager {index}", slug=f"anon-pager-{index}", town="Anon Town"))
+            db.session.commit()
+            start_total = SearchEvent.query.count()
+
+        with patch.object(app_module, "PUBLIC_SEARCH_RATE_LIMIT", 2):
+            first_response = self.client.get("/search?q=Anon+Pager&page=2")
+            second_response = self.client.get("/search?q=Anon+Pager&page=2")
+            blocked_response = self.client.get("/search?q=Anon+Pager&page=2")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 429)
+        with app.app_context():
+            self.assertEqual(SearchEvent.query.count(), start_total)
+
     def test_search_pagination_does_not_duplicate_usage_or_preserve_submitted_flag(self):
         with app.app_context():
             user = User(email="page-usage@example.com", name="Page Usage", picture="", role="member", plan="free")
@@ -1240,12 +1397,14 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/search?q=Limited&submitted=1", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"You&#39;ve used all free plan searches for this month.", response.data)
+        self.assertIn(b"You&#39;ve reached your free usage limit. Upgrade for more.", response.data)
         with app.app_context():
             user = User.query.filter_by(email="limited@example.com").first()
             end_count = SearchEvent.query.filter_by(user_id=user.id).count()
+            limit_event = AuditLog.query.filter_by(action="monetization.limit_hit").first()
         self.assertEqual(end_count, start_count)
         self.assertEqual(user.search_credits, 0)
+        self.assertIsNotNone(limit_event)
 
     def test_staff_admin_search_bypass_still_tracks_usage(self):
         admin_email = "limit-admin@example.com"
@@ -2013,14 +2172,14 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"NM", member_response.data)
         self.assertNotIn(b"Account overview", member_response.data)
         self.assertIn(b"Account settings", member_response.data)
-        self.assertNotIn(b"Staff tools", member_response.data)
+        self.assertNotIn(b"Staff workspace", member_response.data)
 
         self.login_session("nav-staff@example.com", "Nav Staff")
         staff_response = self.client.get("/account/settings")
         self.assertEqual(staff_response.status_code, 200)
         self.assertIn(b"account-avatar", staff_response.data)
         self.assertIn(b"NS", staff_response.data)
-        self.assertIn(b"Staff tools", staff_response.data)
+        self.assertIn(b"Staff workspace", staff_response.data)
         self.assertIn(b"Dashboard", staff_response.data)
 
     def test_account_dropdown_and_mobile_nav_use_account_settings_label(self):
@@ -2047,7 +2206,7 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/account/settings")
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn(b"Staff tools", response.data)
+        self.assertNotIn(b"Staff workspace", response.data)
         self.assertNotIn(b"Dashboard", response.data)
 
     def test_logged_out_pages_still_render_without_account_avatar(self):
@@ -2055,6 +2214,9 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Continue with Google", response.data)
+        self.assertIn(b"Free vs paid", response.data)
+        self.assertIn(b"Upgrade to Planira Plus", response.data)
+        self.assertIn(b"Verified-only results", response.data)
         self.assertNotIn(b"account-avatar", response.data)
 
     def test_plans_page_uses_consistent_quota_language_for_current_account(self):
@@ -2174,7 +2336,7 @@ class AppSmokeTests(unittest.TestCase):
                     response = self.client.get("/billing/success?session_id=cs_test_paid", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Paid consumer is now active on your account.", response.data)
+        self.assertIn(b"Planira Plus is now active on your account.", response.data)
         with app.app_context():
             refreshed = db.session.get(User, user_id)
         self.assertEqual(refreshed.role, "paid_consumer")
@@ -2676,7 +2838,7 @@ class AppSmokeTests(unittest.TestCase):
 
     def test_search_and_place_pages_prioritise_quick_answer_and_verification(self):
         with app.app_context():
-            user = User(email="clarity@example.com", name="Clarity User", picture="", role="member", plan="free")
+            user = User(email="clarity@example.com", name="Clarity User", picture="", role="paid_consumer", plan="paid")
             place = Place(
                 name="Clear Cafe",
                 slug="clear-cafe",
@@ -2743,10 +2905,83 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Anonymous Filter Cafe", response.data)
-        self.assertIn(b"Advanced filters are for signed-in members.", response.data)
+        self.assertIn(b"Advanced filters are available with Planira Plus.", response.data)
         self.assertNotIn(b"Last checked", response.data)
         self.assertNotIn(b"Recently verified", response.data)
         self.assertNotIn(b"Public comments", response.data)
+
+    def test_free_user_premium_filters_are_blocked_with_upgrade_message(self):
+        with app.app_context():
+            user = User(email="free-filter@example.com", name="Free Filter", picture="", role="member", plan="free")
+            matched = Place(name="Free Filter Match", slug="free-filter-match", town="Northampton")
+            hidden = Place(name="Free Filter Hidden", slug="free-filter-hidden", town="Northampton")
+            db.session.add_all([user, matched, hidden])
+            db.session.flush()
+            db.session.add_all(
+                [
+                    AccessibilityProfile(place_id=matched.id, confidence_score=92),
+                    AccessibilityProfile(place_id=hidden.id, confidence_score=20),
+                ]
+            )
+            db.session.commit()
+
+        self.login_session("free-filter@example.com", "Free Filter")
+        response = self.client.get("/search?q=Free+Filter&confidence=95&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Advanced filters are available with Planira Plus.", response.data)
+        self.assertIn(b"Free Filter Match", response.data)
+        self.assertIn(b"Free Filter Hidden", response.data)
+        with app.app_context():
+            event = AuditLog.query.filter_by(action="monetization.premium_feature_attempt").first()
+        self.assertIsNotNone(event)
+
+    def test_paid_user_can_use_premium_confidence_filter(self):
+        with app.app_context():
+            user = User(email="paid-filter@example.com", name="Paid Filter", picture="", role="paid_consumer", plan="paid")
+            matched = Place(name="Paid Filter Match", slug="paid-filter-match", town="Northampton")
+            hidden = Place(name="Paid Filter Hidden", slug="paid-filter-hidden", town="Northampton")
+            db.session.add_all([user, matched, hidden])
+            db.session.flush()
+            db.session.add_all(
+                [
+                    AccessibilityProfile(place_id=matched.id, confidence_score=96),
+                    AccessibilityProfile(place_id=hidden.id, confidence_score=20),
+                ]
+            )
+            db.session.commit()
+
+        self.login_session("paid-filter@example.com", "Paid Filter")
+        response = self.client.get("/search?q=Paid+Filter&confidence=95&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"Advanced filters are available with Planira Plus.", response.data)
+        self.assertIn(b"Paid Filter Match", response.data)
+        self.assertNotIn(b"Paid Filter Hidden", response.data)
+
+    def test_paid_user_can_use_verified_only_filter(self):
+        now = app_module.datetime.now(app_module.timezone.utc)
+        with app.app_context():
+            user = User(email="verified-filter@example.com", name="Verified Filter", picture="", role="paid_consumer", plan="paid")
+            matched = Place(name="Verified Only Match", slug="verified-only-match", town="Northampton")
+            hidden = Place(name="Verified Only Hidden", slug="verified-only-hidden", town="Northampton")
+            db.session.add_all([user, matched, hidden])
+            db.session.flush()
+            db.session.add_all(
+                [
+                    AccessibilityProfile(place_id=matched.id, last_verified_at=now),
+                    AccessibilityProfile(place_id=hidden.id),
+                ]
+            )
+            db.session.commit()
+
+        self.login_session("verified-filter@example.com", "Verified Filter")
+        response = self.client.get("/search?q=Verified+Only&verification=verified_only&submitted=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Verified Only Match", response.data)
+        self.assertNotIn(b"Verified Only Hidden", response.data)
+        self.assertIn(b"Verified only", response.data)
 
     def test_anonymous_place_page_hides_comments_and_verification_metadata(self):
         with app.app_context():
@@ -2765,6 +3000,7 @@ class AppSmokeTests(unittest.TestCase):
                     accessible_toilet="yes",
                     step_free_entrance="yes",
                     public_comments="Rear entrance has the easiest route.",
+                    sensory_notes="Music is quieter near the front windows.",
                     confidence_score=88,
                     last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=10),
                 )
@@ -2783,10 +3019,46 @@ class AppSmokeTests(unittest.TestCase):
         response = self.client.get("/place/quiet-signals")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Sign in to unlock comments and verification detail.", response.data)
+        self.assertIn(b"Unlock community insights and confidence scores", response.data)
         self.assertNotIn(b"Last checked", response.data)
         self.assertNotIn(b"Rear entrance has the easiest route.", response.data)
+        self.assertNotIn(b"Music is quieter near the front windows.", response.data)
+        self.assertNotIn(b"Quick highlights", response.data)
         self.assertNotIn(b"The accessible toilet is near the back corridor.", response.data)
+
+    def test_logged_in_place_page_shows_member_notes_and_highlights(self):
+        with app.app_context():
+            user = User(email="member-place-detail@example.com", name="Member Detail", picture="", role="paid_consumer", plan="paid")
+            place = Place(
+                name="Member Signals",
+                slug="member-signals",
+                address1="20 Station Road",
+                town="Northampton",
+                postcode="NN1 3CD",
+            )
+            db.session.add_all([user, place])
+            db.session.flush()
+            db.session.add(
+                AccessibilityProfile(
+                    place_id=place.id,
+                    accessible_toilet="yes",
+                    step_free_entrance="yes",
+                    public_comments="Use the side entrance for the smoothest route.",
+                    sensory_notes="Music is quieter near the front windows.",
+                    confidence_score=88,
+                    last_verified_at=app_module.datetime.now(app_module.timezone.utc) - app_module.timedelta(days=10),
+                )
+            )
+            db.session.commit()
+
+        self.login_session("member-place-detail@example.com", "Member Detail")
+        response = self.client.get("/place/member-signals")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Use the side entrance for the smoothest route.", response.data)
+        self.assertIn(b"Music is quieter near the front windows.", response.data)
+        self.assertIn(b"Quick highlights", response.data)
+        self.assertIn(b"Last checked", response.data)
 
     def test_developers_page_shows_upgrade_message_without_api_access(self):
         with app.app_context():
@@ -2799,7 +3071,7 @@ class AppSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Upgrade before creating keys", response.data)
-        self.assertIn(b"Free search access does not unlock the API.", response.data)
+        self.assertIn(b"Write-scoped keys are admin-only.", response.data)
         self.assertNotIn(b"Create new key", response.data)
 
 
@@ -2943,7 +3215,7 @@ class AppSmokeTests(unittest.TestCase):
         ADMIN_EMAILS.add(admin_email)
         with app.app_context():
             moderator = User(email=admin_email, name="Rejector", picture="", role="admin", plan="admin")
-            visitor = User(email="visitor@example.com", name="Visitor", picture="", role="member", plan="free")
+            visitor = User(email="visitor@example.com", name="Visitor", picture="", role="paid_consumer", plan="paid")
             place = Place(name="Hidden Venue", slug="hidden-venue", town="Hidden Town")
             approved = Comment(place=place, user_email="approved@example.com", body="Approved note", status="approved")
             pending = Comment(place=place, user_email=visitor.email, body="Pending note", status="pending")
@@ -3045,7 +3317,8 @@ class AppSmokeTests(unittest.TestCase):
         users_response = self.client.get("/admin/users")
 
         self.assertEqual(dashboard_response.status_code, 200)
-        self.assertIn(b"Live preview usage", dashboard_response.data)
+        self.assertNotIn(b"Live preview usage", dashboard_response.data)
+        self.assertNotIn(b"Manage users", dashboard_response.data)
         self.assertEqual(users_response.status_code, 302)
 
     def test_admin_staff_demote_uses_member_role_name(self):
@@ -3354,7 +3627,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(settings_response.status_code, 200)
         self.assertIn(b"Plan: Free", settings_response.data)
         self.assertIn(b"Access: Staff", settings_response.data)
-        self.assertIn(b"Staff tools", settings_response.data)
+        self.assertIn(b"Staff workspace", settings_response.data)
         self.assertIn(b"Account settings", settings_response.data)
         self.assertNotIn(b"Account overview", settings_response.data)
 
@@ -3362,7 +3635,7 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"on the Free plan with Staff access", plans_response.data)
 
         self.assertEqual(venues_response.status_code, 200)
-        self.assertIn(b"Legacy data view", venues_response.data)
+        self.assertIn(b"Data tools", venues_response.data)
 
     def test_staff_user_can_access_admin_venues(self):
         with app.app_context():
@@ -3547,6 +3820,54 @@ class AppSmokeTests(unittest.TestCase):
         self.assertIn(b"Missing key fields", response.data)
         self.assertIn(b"Last checked", response.data)
 
+    def test_call_worksheet_audits_place_updates(self):
+        staff_email = "worksheet-audit@example.com"
+        with app.app_context():
+            staff = User(email=staff_email, name="Worksheet Audit", picture="", role="staff", plan="free")
+            place = Place(name="Worksheet Audit Venue", slug="worksheet-audit-venue", town="Worksheet Town", status="needs_call")
+            db.session.add_all([staff, place])
+            db.session.flush()
+            db.session.add(AccessibilityProfile(place_id=place.id, confidence_score=20, accessible_toilet="unknown"))
+            db.session.commit()
+            place_id = place.id
+
+        self.login_session(staff_email, "Worksheet Audit")
+        response = self.client.post(
+            f"/admin/place/{place_id}/call",
+            data={
+                "csrf_token": "token123",
+                "call_result": "answered",
+                "contact_name": "Sam",
+                "call_notes": "Confirmed details.",
+                "toilets_available": "yes",
+                "toilet_location": "Ground floor",
+                "accessible_toilet": "yes",
+                "baby_changing": "unknown",
+                "baby_changing_location": "",
+                "step_free_entrance": "yes",
+                "stairs_inside": "no",
+                "lift_available": "unknown",
+                "disabled_parking": "unknown",
+                "sensory_notes": "",
+                "toilet_distance_from_bar": "Near the bar",
+                "toilet_distance_from_bar_m": "5",
+                "public_comments": "Confirmed by phone.",
+                "internal_notes": "Staff audit test.",
+                "source": "phone_verified",
+                "confidence_score": "85",
+                "status": "verified",
+                "mark_verified": "yes",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with app.app_context():
+            audit = AuditLog.query.filter_by(action="place.updated", entity_type="place", entity_id=str(place_id)).first()
+        self.assertIsNotNone(audit)
+        self.assertIn("accessible_toilet", audit.after_json["changed_fields"])
+        self.assertIn("confidence_score", audit.after_json["changed_fields"])
+
     def test_account_api_key_creation_stores_hash_only_and_returns_raw_once(self):
         with app.app_context():
             user = User(email="api-owner@example.com", name="API Owner", picture="", role="member", plan="business")
@@ -3602,6 +3923,45 @@ class AppSmokeTests(unittest.TestCase):
         )
         with app.app_context():
             self.assertIsNone(APIKey.query.filter_by(label="Blocked key").first())
+
+    def test_staff_cannot_create_write_scoped_api_key(self):
+        with app.app_context():
+            staff = User(email="staff-write-scope@example.com", name="Staff Write Scope", picture="", role="staff", plan="free")
+            db.session.add(staff)
+            db.session.commit()
+
+        self.login_session("staff-write-scope@example.com", "Staff Write Scope")
+        response = self.client.post(
+            "/account/api-keys",
+            data={"csrf_token": "token123", "label": "Staff write attempt", "scopes": "places:read,places:write"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("places:write", response.get_json()["message"])
+        with app.app_context():
+            self.assertIsNone(APIKey.query.filter_by(label="Staff write attempt").first())
+
+    def test_admin_write_scoped_api_key_creation_is_audited(self):
+        admin_email = "admin-write-scope@example.com"
+        ADMIN_EMAILS.add(admin_email)
+        with app.app_context():
+            admin = User(email=admin_email, name="Admin Write Scope", picture="", role="admin", plan="admin")
+            db.session.add(admin)
+            db.session.commit()
+
+        self.login_session(admin_email, "Admin Write Scope")
+        response = self.client.post(
+            "/account/api-keys",
+            data={"csrf_token": "token123", "label": "Admin write key", "scopes": "places:read,places:write"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        with app.app_context():
+            api_key = APIKey.query.filter_by(label="Admin write key").first()
+            audit = AuditLog.query.filter_by(action="api_key.created", entity_type="api_key", entity_id=str(api_key.id)).first()
+        self.assertIsNotNone(audit)
+        self.assertTrue(audit.after_json["write_scope"])
+        self.assertIn("places:write", audit.after_json["scopes"])
 
     def test_api_key_list_responses_do_not_expose_hashes(self):
         admin_email = "api-admin@example.com"
@@ -3739,7 +4099,7 @@ class AppSmokeTests(unittest.TestCase):
 
     def test_staff_api_key_can_create_and_update_place_accessibility_data(self):
         with app.app_context():
-            staff = User(email="writer-staff@example.com", name="Writer Staff", picture="", role="staff", plan="free")
+            staff = User(email="writer-staff@example.com", name="Writer Staff", picture="", role="admin", plan="admin")
             db.session.add(staff)
             db.session.commit()
             api_key, raw_key = app_module.create_api_key_for_user(staff, label="Staff write key")
@@ -3795,9 +4155,33 @@ class AppSmokeTests(unittest.TestCase):
         self.assertEqual(saved_profile.public_comments, "Recently verified by staff")
         self.assertEqual(saved_profile.last_verified_by, "writer-staff@example.com")
 
+    def test_api_write_rate_limit_blocks_after_burst_limit(self):
+        app.config["RATE_LIMIT_ENABLED"] = True
+        with app.app_context():
+            staff = User(email="write-throttle@example.com", name="Write Throttle", picture="", role="admin", plan="admin")
+            db.session.add(staff)
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(staff, label="Write throttle key")
+            db.session.commit()
+
+        payload = {"place": {"name": "Write Throttle Venue", "town": "Northampton"}}
+        headers = {"Authorization": f"Bearer {raw_key}"}
+        with patch.object(app_module, "API_WRITE_RATE_LIMIT_BURST", 1):
+            first_response = self.client.post("/api/v1/places", json=payload, headers=headers)
+            blocked_response = self.client.post(
+                "/api/v1/places",
+                json={"place": {"name": "Write Throttle Venue Two", "town": "Northampton"}},
+                headers=headers,
+            )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(blocked_response.status_code, 429)
+        self.assertEqual(blocked_response.json["error"], "rate_limited")
+        self.assertIn("Retry-After", blocked_response.headers)
+
     def test_staff_api_key_accepts_nested_verification_payload(self):
         with app.app_context():
-            staff = User(email="nested-writer@example.com", name="Nested Writer", picture="", role="staff", plan="free")
+            staff = User(email="nested-writer@example.com", name="Nested Writer", picture="", role="admin", plan="admin")
             db.session.add(staff)
             db.session.commit()
             api_key, raw_key = app_module.create_api_key_for_user(staff, label="Nested staff write key")
@@ -3831,7 +4215,7 @@ class AppSmokeTests(unittest.TestCase):
 
     def test_invalid_verification_payload_returns_400(self):
         with app.app_context():
-            staff = User(email="invalid-verification@example.com", name="Invalid Verification", picture="", role="staff", plan="free")
+            staff = User(email="invalid-verification@example.com", name="Invalid Verification", picture="", role="admin", plan="admin")
             db.session.add(staff)
             db.session.commit()
             api_key, raw_key = app_module.create_api_key_for_user(staff, label="Invalid verification key")
@@ -3946,6 +4330,30 @@ class AppSmokeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "monthly_lookup_limit_reached")
         self.assertEqual(event_count, 1)
+
+    def test_api_quota_429_includes_quota_shape_and_upgrade_url(self):
+        with app.app_context():
+            user = User(email="route-limited-api@example.com", name="Route Limited API", picture="", role="member", plan="business")
+            place = Place(name="Quota API Venue", slug="quota-api-venue", town="Northampton")
+            db.session.add_all([user, place])
+            db.session.commit()
+            api_key, raw_key = app_module.create_api_key_for_user(user, label="Route limited key", monthly_lookup_limit=1, lookup_credits=0)
+            db.session.commit()
+            db.session.add(APILookupEvent(api_key_id=api_key.id, user_id=user.id, endpoint="/api/v1/places/search", query="used", status_code=200))
+            db.session.commit()
+
+        response = self.client.get(
+            "/api/v1/places/search?q=Quota",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+        self.assertEqual(response.status_code, 429)
+        payload = response.get_json()
+        self.assertEqual(payload["error"], "limit_reached")
+        self.assertEqual(payload["limit_type"], "quota")
+        self.assertEqual(payload["quota"]["lookups_used"], 1)
+        self.assertEqual(payload["quota"]["lookup_limit"], 1)
+        self.assertIn("/plans", payload["upgrade_url"])
 
     def test_lookup_credits_allow_extra_usage(self):
         with app.app_context():
